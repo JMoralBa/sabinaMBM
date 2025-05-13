@@ -15,7 +15,18 @@ BugReports: https://github.com/JMoralBa/sabinaINLA/issues
 Depends:
     R (>= 4.3.0)
 Imports:
-    sabinaNSDM
+    sabinaNSDM,
+    inlabru,
+    sf,
+    ggplot2,
+    INLA,
+    glmnet,
+    stringi,
+    data.table,
+    tidyterra,
+    #raster,
+    fs,
+    sgsR
 Remotes:
     geoSABINA/sabinaNSDM
 
