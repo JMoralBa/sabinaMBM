@@ -2,80 +2,31 @@
 % Please edit documentation in R/NSBM.inlabru.R
 \name{NSBM.inlabru}
 \alias{NSBM.inlabru}
-\title{Nested species distribution modelling by means of hierarchical Bayesian models}
+\title{Nested species distribution modeling ...}
 \usage{
-NSBM.inlabru(nsbm_obj, output = "probability")
+NSBM.inlabru(
+  nsbm_obj,
+  mesh,
+  output = "probability",
+  prior.range = c(5, 0.01),
+  prior.sigma = c(1, 0.01)
+)
 }
 \arguments{
-\item{output}{A character. Either "intensity" or "probability".}
+\item{nsbm_obj}{An object of class \code{nsdm.vinput}, result from \code{sabinaNSDM::NSDM.SelectCovariates()}.}
 
-\item{nsdm_obj}{An object of class \class{nsdm.vinput} with all the required data to fit the model.}
+\item{mesh}{An INLA mesh object created externally with \code{create_mesh()}.}
+
+\item{output}{A character. Either \code{"intensity"} or \code{"probability"} (default).}
+
+\item{prior.range}{Numeric vector length 2. Prior on spatial range (e.g., \code{c(5, 0.01)}).}
+
+\item{prior.sigma}{Numeric vector length 2. Prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
 }
 \value{
-A list with three elements: \code{fit} (mode fit), \code{pred}
-(prediction from the model) and \code{pred_sp} (prediction of the
-spatial effect.
+A list with elements: \code{fit}, \code{pred}, and \code{pred_sp}.
 }
 \description{
-Estimation of presence probability by means of hierarchical
-Bayesian models.
-}
-\details{
-TBC.
-}
-\examples{
-Example from GitHub
-
-SpeciesName <- "Fagus.sylvativa"
-
-# Species occurrences
-data(Fagus.sylvatica.xy.global, package = "sabinaNSDM")
-spp.data.global <- Fagus.sylvatica.xy.global
-data(Fagus.sylvatica.xy.regional, package = "sabinaNSDM")
-spp.data.regional <- Fagus.sylvatica.xy.regional
-
-data(expl.var.global, package = "sabinaNSDM")
-data(expl.var.regional, package = "sabinaNSDM")
-expl.var.global <- terra::unwrap(expl.var.global)
-expl.var.regional <- terra::unwrap(expl.var.regional)
-
-# new escenarios
-data(new.env, package = "sabinaNSDM")
-new.env <- terra::unwrap(new.env)
-
-nsdm_input <- NSDM.InputData(SpeciesName = SpeciesName,
-  spp.data.global = Fagus.sylvatica.xy.global,
-  spp.data.regional = Fagus.sylvatica.xy.regional,
-  expl.var.global = expl.var.global,
-  expl.var.regional = expl.var.regional,
-  new.env = new.env,
-  new.env.names = "scenario1",
-  Background.Global = NULL,
-  Background.Regional = NULL,
-  Absences.Global = NULL,
-  Absences.Regional = NULL)
-
-nsdm_finput <- NSDM.FormattingData(nsdm_input,
-  nPoints = 100, # number of background points
-  Min.Dist.Global = "resolution",
-  Min.Dist.Regional = "resolution",
-  Background.method = "random", # method “random" or "stratified” to generate background points 
-  save.output = TRUE) #save outputs locally
-
-nsdm_selvars <- NSDM.SelectCovariates(nsdm_finput,
-  maxncov.Global = 3,   # Max number of covariates to be selected at the global scale
-  maxncov.Regional = 3, # Max number of covariates to be selected at the regional scale
-  corcut = 0.7, #  correlation threshold
-  algorithms = c("glm"),
-  ClimaticVariablesBands = NULL, # covariate bands to be excluded in the covariate selection at the regional scale
-  save.output = TRUE)
-
-# Probability of presence
-nsdm_inlabru_prob <- NSBM.inlabru(nsdm_selvars)
-# Intensity
-nsdm_inlabru_int <- NSBM.inlabru(nsdm_selvars, "intensity")
-
-}
-\seealso{
-\code{\link{NSDM.InputData}}, \code{\link{NSDM.FormattingData}}
+Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling
+with spatial structure via INLA and the inlabru.
 }
