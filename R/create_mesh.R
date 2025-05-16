@@ -40,10 +40,6 @@ create_mesh <- function(nsdm_obj, edge = c(0.5, 1), offset = c(0.25, 0.5), buffe
     world <- sf::st_transform(world, crs)
     sf::st_crs(points_global) <- crs
 
-    suppressPackageStartupMessages(library(ggplot2))
-    suppressPackageStartupMessages(library(ggtext))
-    suppressPackageStartupMessages(library(inlabru))
-
     print(
       ggplot() +
         geom_sf(data = world, fill = "grey92", color = "white", linewidth = 0.2) +
