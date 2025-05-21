@@ -6,27 +6,43 @@
 \usage{
 NSBM.inlabru(
   nsbm_obj,
-  mesh,
+  mesh = NULL,
   output = "probability",
+  spatial = TRUE,
   prior.range = c(5, 0.01),
-  prior.sigma = c(1, 0.01)
+  prior.sigma = c(1, 0.01),
+  proj.new.env = TRUE,
+  seed = NULL
 )
 }
 \arguments{
 \item{nsbm_obj}{An object of class \code{nsdm.vinput}, result from \code{sabinaNSDM::NSDM.SelectCovariates()}.}
 
-\item{mesh}{An INLA mesh object created externally with \code{create_mesh()}.}
+\item{mesh}{An INLA mesh object created externally with \code{create_mesh()}. Required only if \code{spatial = TRUE}. Ignored if \code{spatial = FALSE}.}
 
-\item{output}{A character. Either \code{"intensity"} or \code{"probability"} (default).}
+\item{output}{A character \code{"intensity"} or \code{"probability"} (default).}
+
+\item{spatial}{Logical. Include spatial latent field (SPDE) in the model (default: TRUE).}
 
 \item{prior.range}{Numeric vector length 2. Prior on spatial range (e.g., \code{c(5, 0.01)}).}
 
 \item{prior.sigma}{Numeric vector length 2. Prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
+
+\item{proj.new.env}{Logical. Whether to compute predictions under new scenarios (default: TRUE).}
+
+\item{seed}{Optional integer. If provided, sets a random seed for reproducibility.}
 }
 \value{
-A list with elements: \code{fit}, \code{pred}, and \code{pred_sp}.
+A named list of class \code{nsbm.inlabru} with the following elements:
+\item{Species.Name}{Species name}
+\item{args}{List of arguments used in the model fitting.}
+\item{Selected.Variables.Global}{Names of selected global-scale covariates.}
+\item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
+\item{current.projections}{List with: fitted model (\code{fit}), prediction (\code{pred}), spatial field (\code{pred_sp}).}
+\item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
+\item{Summary}{Empty placeholder (data.frame) for future model summaries.}
 }
 \description{
 Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling
-with spatial structure via INLA and the inlabru.
+with spatial structure via INLA and inlabru.
 }
