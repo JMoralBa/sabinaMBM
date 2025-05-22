@@ -9,7 +9,7 @@
 #' @param edge A numeric vector of length 2. Maximum triangle edge lengths for the inner and outer parts of the mesh (default: c(0.5, 1)). #@@@JMB los valores por defecto son para crs en grados, habrá que ajustar cosas aquí para cuando los rasters sean metros
 #' @param offset A numeric vector of length 2. Offsets to expand the domain inward and outward from the boundary (default: c(0.25, 0.5)).
 #' @param buffer A numeric scalar. Amount to buffer (expand) the convex hull before mesh creation (default: 0.01).
-#' @param boundary.method Character. Either `"convex_hull"` (default) or `"raster_mask"`.
+#' @param boundary.method Character. Either `"convex_hull"` (default), "concave_hull" or `"raster_mask"`. #@@@JMB in process
 #' @param plot Logical. If TRUE, plots the mesh for inspection (default: FALSE).
 #'
 #' @return An INLA mesh object (`inla.mesh`).
@@ -19,8 +19,9 @@ create_mesh <- function(nsdm_obj,
                         edge = c(0.5, 1),
                         offset = c(0.25, 0.5),
                         buffer = 0.01,
-                        boundary.method = "convex_hull", #"convex_hull" o "raster_mask"
-                        plot = FALSE) {
+                        boundary.method = "convex_hull", #"convex_hull", "concave_hull" o "raster_mask"
+                        concavity =3, # ajusta envolvente cuando concave_hull
+                       plot = FALSE) {
 
   if(!inherits(nsdm_obj, "nsdm.vinput")) {
     stop("The 'nsdm_obj' must be an object of class 'nsdm.vinput'.\nUse sabinaNSDM::NSDM.SelectCovariates() to obtain it.")
@@ -64,6 +65,7 @@ create_mesh <- function(nsdm_obj,
 
   # boudary method
   boundary <- switch(boundary.method,
+    convex_hull = boundary_convex_hull(points_sf, buffer),
     raster_mask = boundary_raster_mask(nsdm_obj, buffer),
     concave_hull  = boundary_concave_hull(nsdm_obj, concavity = 2, buffer = buffer)
   )
@@ -130,18 +132,17 @@ boundary_convex_hull <- function(points_sf, buffer) {
 }
 
 
-# concave_hull
-boundary_concave_hull <- function(nsdm_obj, concavity = 2, buffer = 0.01) {
-  # Requiere paquete concaveman
-  if (!requireNamespace("concaveman", quietly = TRUE)) {
-    stop("Please install the 'concaveman' package.")
   }
 
-  # Raster global desempaquetado
+
+
+# concave_hull
+boundary_concave_hull <- function(nsdm_obj, concavity, buffer) {
+  # Raster global
   r_glo <- terra::unwrap(nsdm_obj$IndVar.Global.Selected)
   crs <- sf::st_crs(r_glo)
 
-  # Reunir puntos globales + regionales
+  # puntos global + regional
   all_points <- do.call(rbind, list(
     nsdm_obj$SpeciesData.XY.Global,
     nsdm_obj$SpeciesData.XY.Regional,
@@ -153,10 +154,10 @@ boundary_concave_hull <- function(nsdm_obj, concavity = 2, buffer = 0.01) {
   all_points <- all_points[!sapply(all_points, is.null), , drop = FALSE]
   if (nrow(all_points) == 0) stop("No points available.")
 
-  # Convertir a sf
+  # to sf
   pts_sf <- sf::st_as_sf(all_points, coords = c("x", "y"), crs = crs)
 
-  # Filtrar puntos válidos (no NA en raster)
+  # Filtrar puntos no-NA
   vals <- terra::extract(r_glo, all_points[, c("x", "y")], ID = FALSE)
   valid <- apply(vals, 1, function(row) any(!is.na(row)))
   pts_valid <- pts_sf[valid, ]
@@ -165,12 +166,11 @@ boundary_concave_hull <- function(nsdm_obj, concavity = 2, buffer = 0.01) {
   # Concave hull
   boundary <- concaveman::concaveman(pts_valid, concavity = concavity)
 
-  # Buffer externo opcional
+  # Buffer
   if (buffer > 0) {
     boundary <- sf::st_buffer(boundary, dist = buffer)
   }
 
-  # Asegurar geometría válida
   boundary <- sf::st_make_valid(boundary)
   boundary <- sf::st_cast(boundary, "MULTIPOLYGON")
 
