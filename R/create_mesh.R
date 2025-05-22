@@ -125,18 +125,14 @@ create_mesh <- function(nsdm_obj,
 
 
 ## Different mesh
-#' mesh convex hull
+# mesh convex hull
 boundary_convex_hull <- function(points_sf, buffer) {
   boundary <- sf::st_convex_hull(sf::st_union(points_sf))
   sf::st_buffer(boundary, buffer)
 }
 
 
-  }
-
-
-
-# concave_hull
+# mesh concave_hull
 boundary_concave_hull <- function(nsdm_obj, concavity, buffer) {
   # Raster global
   r_glo <- terra::unwrap(nsdm_obj$IndVar.Global.Selected)
