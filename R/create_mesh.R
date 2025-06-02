@@ -113,8 +113,7 @@ create_mesh <- function(nsdm_obj,
           xlim = c(bbox_mesh["xmin"], bbox_mesh["xmax"]),
           ylim = c(bbox_mesh["ymin"], bbox_mesh["ymax"])
         ) +
-        ggtitle(
-          "INLA MESH",
+        ggtitle(paste0("MESH SPDE (",boundary.method,")"),
           subtitle = paste0(
             "<span style='color:darkgreen;'>Presences</span> │ ",
             "<span style='color:red;'>Absences/Background</span> │ ",
@@ -191,8 +190,13 @@ boundary_concave_hull <- function(nsdm_obj, concavity = concavity, buffer = buff
 
 # raster mask
 boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remove_holes) {
+  old_s2 <- suppressMessages(sf::sf_use_s2())
+  suppressMessages(sf::sf_use_s2(FALSE))
+  on.exit(suppressMessages(sf::sf_use_s2(old_s2)), add = TRUE)
+
   # Raster global y crs
-  r_glo <- terra::rast(nsdm_obj$IndVar.Global.Selected)
+  #r_glo <- terra::rast(nsdm_obj$IndVar.Global.Selected)
+  r_glo <- terra::unwrap(nsdm_obj$IndVar.Global.Selected)
   proj4  <- terra::crs(r_glo, proj = TRUE)
   crs_sf <- sf::st_crs(proj4)
 
@@ -217,6 +221,8 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
   poly_vec     <- terra::as.polygons(mask_combined, dissolve = TRUE)
   terra::crs(poly_vec) <- terra::crs(r_glo)
   boundary_all <- st_as_sf(poly_vec)
+  boundary_all <- sf::st_make_valid(boundary_all)
+  boundary_all <- sf::st_buffer(boundary_all, 0)
 
   # Holes internos
   extract_holes <- function(sf_poly) {
@@ -260,6 +266,12 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
     boundary_mesh <- st_cast(boundary_mesh, "MULTIPOLYGON")
   } else {
     boundary_mesh <- boundary_useful
+  }
+
+  # limpiar boudary
+  boundary_mesh <- sf::st_make_valid(boundary_mesh)
+  if(!sf::st_is_longlat(boundary_mesh)) {
+    boundary_mesh <- sf::st_buffer(boundary_mesh, 0)
   }
 
   # buffer
