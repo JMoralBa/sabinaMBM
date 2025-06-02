@@ -12,7 +12,8 @@ NSBM.inlabru(
   prior.range = c(5, 0.01),
   prior.sigma = c(1, 0.01),
   proj.new.env = TRUE,
-  seed = NULL
+  seed = NULL,
+  save.output = FALSE
 )
 }
 \arguments{
@@ -31,6 +32,8 @@ NSBM.inlabru(
 \item{proj.new.env}{Logical. Whether to compute predictions under new scenarios (default: TRUE).}
 
 \item{seed}{Optional integer. If provided, sets a random seed for reproducibility.}
+
+\item{save.output}{Logical. If TRUE, saves key model outputs (predictions, evaluation, summary ...).}
 }
 \value{
 A named list of class \code{nsbm.inlabru} with the following elements:
@@ -40,7 +43,7 @@ A named list of class \code{nsbm.inlabru} with the following elements:
 \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
 \item{current.projections}{List with: fitted model (\code{fit}), prediction (\code{pred}), spatial field (\code{pred_sp}).}
 \item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
-\item{Summary}{Empty placeholder (data.frame) for future model summaries.}
+\item{Summary}{Data frame with key evaluation metrics and significant variables.} #@@JMB revisar y refinar
 }
 \description{
 Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling

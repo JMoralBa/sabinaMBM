@@ -13,6 +13,7 @@
 #' @param spatial Logical. Include spatial latent field (SPDE) in the model (default: TRUE). 
 #' @param proj.new.env Logical. Whether to compute predictions under new scenarios (default: TRUE).
 #' @param seed Optional integer. If provided, sets a random seed for reproducibility.
+#' @param save.output Logical. If TRUE, saves key model outputs (predictions, evaluation, summary ...).
 #'
 #' @return A named list of class `nsbm.inlabru` with the following elements:
 #' \item{Species.Name}{Species name}
@@ -21,7 +22,7 @@
 #' \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
 #' \item{current.projections}{List with: fitted model (`fit`), prediction (`pred`), spatial field (`pred_sp`).}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
-#' \item{Summary}{Empty placeholder (data.frame) for future model summaries.}
+#' \item{Summary}{Data frame with key evaluation metrics and significant variables.} #@@@JMB revisar y refinar
 #'
 #' @export
 NSBM.inlabru <- function(nsbm_obj, 
@@ -31,20 +32,26 @@ NSBM.inlabru <- function(nsbm_obj,
                          prior.range = c(5, 0.01),
                          prior.sigma = c(1, 0.01),
                          proj.new.env = TRUE,
-                         seed = NULL) {
+                         seed = NULL,
+                         save.output = FALSE) {
 
   if(!inherits(nsbm_obj, "nsdm.vinput")) {
-    stop("The 'nsbm_obj' must be of class 'nsdm.vinput'.")
+    stop("The 'nsbm_obj' must be of class 'nsdm.vinput', Please see sabinaNSDM::NSDM.SelectCovariates().")
   }
   if(!(output %in% c("probability", "intensity"))) {
-    stop("Invalid 'output'. Use either 'probability' or 'intensity'.")
+    stop("Invalid 'output'. Please, use 'probability' or 'intensity'.")
   }
   if(spatial && is.null(mesh)) {
     stop("If spatial = TRUE, you must provide a mesh object using create_mesh().")
   }
-  if(!is.null(seed)){
-    set_seed(seed)
+  if(!is.null(seed)) {
+    if(!is.numeric(seed) || length(seed) != 1) {
+      stop("'seed' must be a numeric value.")
+    }
+    set.seed(seed)
   }
+
+  sabina <- list()
 
   # Data preparation
   pp_regional <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Regional, coords = c("x", "y"))
@@ -157,50 +164,143 @@ NSBM.inlabru <- function(nsbm_obj,
   }
 
   # Model fitting
-  fit <- inlabru::bru(cmp, lik_global, lik_regional)
+  fit <- inlabru::bru(
+    components = cmp,
+    lik_global,
+    lik_regional,
+    options = list(
+      control.compute = list(
+        cpo  = TRUE,
+        waic = TRUE,
+        dic  = TRUE
+      )
+    )
+  )
+
+  # log sum of conditional predictive ordinates
+  lcpo_val <- if(!is.null(fit$cpo$cpo)) round(sum(log(fit$cpo$cpo)), 2) else "Not computed"
 
   pred.df <- sf::st_as_sf(as.points(sp_covreg))
   sf::st_crs(pred.df) <- crs
   pred.df <- sf::st_transform(pred.df, crs)
 
   # Predictions
-  pred <- predict(fit, pred.df, pred_formula) # distribución esperada 
-  pred_sp <- if(spatial) {  # patrones espaciales residuales
-    predict(fit, pred.df, ~ spatial)
-  } else {
-    NULL
-  } 
+  pred <- predict(fit, pred.df, pred_formula)  
+  pred <- pred_as_tif(pred, sp_covreg) # from sf to tif
 
-  # Project new scenarios
+  if(spatial) {
+    pred_sp <- predict(fit, pred.df, ~ spatial)
+    pred_sp <- pred_as_tif(pred_sp, sp_covreg) # from sf to tif
+  } else {
+    pred_sp <- NULL
+  }
+
+  # New scenarios
   proj_list <- list()
   if (proj.new.env && !is.null(nsbm_obj$Scenarios)) {
     for (sc in names(nsbm_obj$Scenarios)) {
+      #sc <- 1
       scen_rast <- terra::unwrap(nsbm_obj$Scenarios[[sc]])
       scen_df <- sf::st_as_sf(as.points(scen_rast))
       sf::st_crs(scen_df) <- crs
       scen_df <- sf::st_transform(scen_df, crs)
       proj_pred <- predict(fit, scen_df, pred_formula)
-      proj_list[[paste0("proj_", sc)]] <- proj_pred
+      proj_list[[paste0("proj_", sc)]] <- pred_as_tif(proj_pred, template = scen_rast)  # from sf to tif
     }
   }
 
+  species <- nsbm_obj$Species.Name
+
+  # save outputs
+  if(save.output) {
+    base_results <- "Results"
+    nsbm_path <- file.path(base_results, "NSBM")
+    values_path <- file.path(nsbm_path, "Values")
+    projections_path <- file.path(nsbm_path, "Projections")
+
+    # Create directories
+    fs::dir_create(values_path, recurse = TRUE)
+    fs::dir_create(projections_path, recurse = TRUE)
+
+    # save fixed effects
+    if(!is.null(fit$summary.fixed)) {
+      write.csv(fit$summary.fixed, file = file.path(values_path, paste0(species, "_fixed_effects.csv")), row.names = TRUE)
+    }
+
+    # save spatial random effects
+    if(!is.null(fit$summary.random)) {
+       for(ran in names(fit$summary.random)) {
+        write.csv(fit$summary.random[[ran]], file = file.path(values_path, paste0(species, "_random_", ran, ".csv")), row.names = TRUE)
+      }
+    }
+
+    # save hypermarams
+    if(!is.null(fit$summary.hyperpar)) {
+      write.csv(fit$summary.hyperpar, file = file.path(values_path, paste0(species, "_hyperparameters.csv")), row.names = TRUE)
+    }
+
+    # save evaluation metrics
+    eval_metrics <- data.frame(
+      Metric = c("WAIC", "DIC", "MLik", "LCPO (sum log-CPO)"),
+      Value = c(fit$waic$waic, fit$dic$dic, fit$mlik[1], lcpo_val)
+    )
+    write.csv(eval_metrics, file = file.path(values_path, paste0(species, "_evaluation.csv")), row.names = FALSE)
+
+    # Save CPO values (one per observation)   #@@@JMB useful for leave-one-out diagnostics or model comparison??
+    write.csv(data.frame(CPO = fit$cpo$cpo), file = file.path(values_path, paste0(species, "_pointwise_CPO.csv")), row.names = FALSE)
+
+    # save full model object (fit)
+    saveRDS(fit, file = file.path(values_path, paste0(species, "_model_fit.rds")))
+
+    # save pred current
+    if(!is.null(pred)) {
+      #saveRDS(pred, file = file.path(projections_path, paste0(species, "_pred_Current.rds")))
+      file_path <- file.path(projections_path, paste0(species, "_pred_Current.tif"))
+      terra::writeRaster(terra::unwrap(pred), file_path, overwrite = TRUE)   
+    }
+
+    # save pred_sf
+    if(!is.null(pred_sp)) {
+      #saveRDS(pred_sp, file = file.path(projections_path, paste0(species, "_pred_sp_Current.rds")))
+      file_path <- file.path(projections_path, paste0(species, "_pred_sp_Current.tif"))
+      terra::writeRaster(terra::unwrap(pred_sp), file_path, overwrite = TRUE)
+    }
+
+    # save new scenarios
+    if(length(proj_list) > 0 && !is.null(nsbm_obj$Scenarios)) {
+      for(i in seq_along(proj_list)) {
+        sc_name <- names(proj_list)[i]
+        file_path <- file.path(projections_path, paste0(species, "_", sc_name, ".tif"))
+        terra::writeRaster(terra::unwrap(proj_list[[i]]), file_path, overwrite = TRUE)
+      }
+    }
+
+    message("Results saved in the following local folder(s):")
+    message(paste(
+    "  - Current projection (pred), spatial field (pred_sp), and new scenarios: ", projections_path, "\n",
+    " - Fixed/random spatial effects, hyperparameters, evaluation: ", values_path, "\n",
+    " - Full model object: ", file.path(values_path, paste0(species, "_model_fit.rds")), "\n"
+    ))
+  }
+
+  #
   sabina <- list(
       Species.Name = nsbm_obj$SpeciesName,
       args = list(
-        output = output,
         spatial = spatial,
         prior.range = prior.range,
-        prior.sigma = prior.sigma
+        prior.sigma = prior.sigma,
+        proj.new.env = proj.new.env
       ),
       Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
       Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
       current.projections = list(
         fit = fit,
-        pred = pred,
-        pred_sp = pred_sp
+        pred = terra::wrap(pred),
+        pred_sp = if (!is.null(pred_sp)) terra::wrap(pred_sp) else NULL
       ),
-      new.projections = proj_list,
-      Summary = data.frame() #@@@JMB pendiente
+      new.projections = rapply(proj_list, terra::wrap, how = "list"),
+      Summary = generate_summary_nsbm(fit, species, spatial, lcpo_val) #@@@JMB pendiente revisar/completar...
   )
  
   attr(sabina, "class") <- "nsbm.inlabru"
@@ -209,6 +309,7 @@ NSBM.inlabru <- function(nsbm_obj,
 }
 
 
+# formulas
 fcov <- function(obj, spobjglo, spobjreg) {
   vars <- unique(c(obj$Selected.Variables.Global, obj$Selected.Variables.Regional))
   cmp1 <- paste(paste(vars, "(1)", sep = ""), collapse = " + ")
@@ -236,3 +337,112 @@ fcov <- function(obj, spobjglo, spobjreg) {
 }
 
 
+
+# prepare summary
+generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val) {
+
+  # Fixed effects and hyperpar
+  summary_fixed <- fit$summary.fixed
+  hyper         <- fit$summary.hyperpar
+
+  # Filter valid vars
+  valid_vars <- summary_fixed[!is.na(summary_fixed$mean), ]
+  valid_vars$type <- ifelse(
+    rownames(valid_vars) %in% c("IGlobal", "IRegional"), "Intercept",
+    ifelse(grepl("GL$", rownames(valid_vars)), "Global",
+           ifelse(grepl("RE$", rownames(valid_vars)), "Regional", "Unclassified"))
+  )
+
+  # Filter significant vars (CI does not cross 0 and mean is relevant)
+  signif_vars <- valid_vars[
+    valid_vars[,"0.025quant"] * valid_vars[,"0.975quant"] > 0 &
+    abs(valid_vars[,"mean"]) > 0.05,
+  ]
+
+  # Order by abs mean (importance?)
+  signif_vars <- signif_vars[order(-abs(signif_vars[,"mean"])), ]
+
+  # Label
+  var_labels <- paste0(
+    rownames(signif_vars), " ",
+    ifelse(signif_vars$mean > 0, "(+)", "(–)")
+  )
+
+  # Evaluation metrics
+  dic_val  <- if (!is.null(fit$dic$dic) && !is.na(fit$dic$dic)) round(fit$dic$dic, 2) else "Not computed"
+  waic_val <- if (!is.null(fit$waic$waic) && !is.na(fit$waic$waic)) round(fit$waic$waic, 2) else "Not computed"
+  mlik_val <- if (!is.null(fit$mlik) && !is.na(fit$mlik[1,1])) round(fit$mlik[1, 1], 2) else "Not computed"
+  
+  # 
+  spatial_range <- if (!is.null(hyper) && "Range for spatial" %in% rownames(hyper)) {
+    paste0(round(hyper["Range for spatial", "mean"], 2), " ± ",
+           round(hyper["Range for spatial", "sd"], 2))
+  } else {
+    "Not computed"
+  }
+
+  #
+  summary_df <- data.frame(
+    Field = c(
+      "Species name:",
+      "Model type:",
+      "DIC;",
+      "WAIC:",
+      "Marginal log-likelihood:",
+      # log sum of conditional predictive ordinates: a bayesian metric for model validation (lower values indicate better fit)
+      "LCPO (sum log-CPO):",   
+      "SPDE spatial range (mean ± sd):",
+      "Significant variables (ordered):"
+    ),
+    Value = c(
+      gsub("\\.", " ", species),
+      if(spatial) {
+        "NSBM.inlabru (with SPDE)"
+      } else {
+        "NSBM.inlabru (no SPDE)"
+      },
+      dic_val,
+      waic_val,
+      mlik_val,
+      lcpo_val,
+      spatial_range,
+      if (length(var_labels) > 0) paste(var_labels, collapse = ", ") else "None"
+    ),
+    stringsAsFactors = FALSE
+  )
+
+  return(summary_df)
+}
+
+
+# from sf to tif
+pred_as_tif <- function(pred, template, vars_to_export = c("mean", 
+                                                           "sd", 
+                                                           "q0.025", 
+                                                           "q0.5", 
+                                                           "q0.975",
+                                                           "median",
+                                                           "sd.mc_std_err",
+                                                           "mean.mc_std_err")) {
+  stopifnot(inherits(pred, c("bru_prediction", "sf")))
+  stopifnot(inherits(template, "SpatRaster"))
+
+  r_stack <- lapply(vars_to_export, function(var) {
+    if (!is.null(pred[[var]])) {
+      df <- as.data.frame(cbind(sf::st_coordinates(pred), value = pred[[var]]))
+      sf_pts <- sf::st_as_sf(df, coords = c("X", "Y"), crs = sf::st_crs(pred))
+      sf_pts <- sf::st_transform(sf_pts, terra::crs(template))
+      r <- terra::rasterize(sf_pts, template, field = "value")
+      names(r) <- var
+      return(r)
+    } else {
+      return(NULL)
+    }
+  })
+
+  r_stack <- Filter(function(x) inherits(x, "SpatRaster"), r_stack)
+  if (length(r_stack) == 0) return(NULL)
+
+  r_pred <- do.call(c, r_stack)
+  return(r_pred)
+}
