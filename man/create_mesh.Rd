@@ -12,6 +12,7 @@ create_mesh(
   boundary.method = "convex_hull",
   concavity = NULL,
   remove_holes = FALSE,
+  proj.new.env = TRUE,
   plot = FALSE
 )
 }
@@ -24,17 +25,19 @@ create_mesh(
 
 \item{buffer}{A numeric scalar. Amount to buffer (expand) the convex hull before mesh creation (default: 0.01).}
 
-\item{boundary.method}{Character. One of \code{"convex_hull"} (default), \code{"concave_hull"} or \code{"raster_mask"}. #@@JMB raster mask funciona bien para fragmentos separados y para hacer predicciones en oceano. Para esto último preguntar a Virgilio si triangulos pequeños en borde del raster es apropiado...}
+\item{boundary.method}{Character. One of \code{"convex_hull"} (default), \code{"concave_hull"} or \code{"raster_mask"}. #@@JMB raster mask funciona bien para fragmentos separados y para hacer predicciones en oceano. Para esto último preguntar a Virgilio si triangulos pequeños en borde del raster es necesario...}
 
 \item{concavity}{Numeric. Required when \code{boundary.method = "concave_hull"}. Controls how tightly the concave hull wraps the points; lower values (e.g., 2–3) produce tighter boundaries.}
 
 \item{remove_holes}{Logical. Only used when \code{boundary.method = "raster_mask"}; if TRUE, internal holes are removed before mesh creation (default: FALSE).}
 
+\item{proj.new.env}{Logical. If TRUE, includes the extent of new scenarios in the mesh domain if they exist in \code{nsdm_obj$Scenarios} (default: TRUE). Only applies if \code{boundary.method = "raster_mask"}.}
+
 \item{plot}{Logical. If TRUE, plots the mesh for inspection (default: FALSE).}
 }
 \value{
-An INLA mesh object (\code{inla.mesh}).
+A \code{fmesher::fm_mesh_2d} object (mesh INLA for spde)). #@@JMB pensar si ponemos clase propia a este objeto (inla.mesh??)
 }
 \description{
-Generates a 2D mesh object using the convex hull of the global species presences from a processed \code{nsdm.vinput} object (output of \code{\link{NSDM.SelectCovariates}}).
+Generates a 2D mesh object using the convex hull, concave_hull, or raster_mask of the species presences/absences (plus optional new scenario rasters), from a processed \code{nsdm.vinput} object (output of \code{\link{NSDM.SelectCovariates}}).
 }
