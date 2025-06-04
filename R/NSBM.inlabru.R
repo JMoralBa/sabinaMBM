@@ -22,7 +22,7 @@
 #' \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
 #' \item{current.projections}{List with: fitted model (`fit`), prediction (`pred`), spatial field (`pred_sp`).}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
-#' \item{Summary}{Data frame with key evaluation metrics and significant variables.} #@@@JMB revisar y refinar
+#' \item{Summary}{\code{data.frame}  with key evaluation metrics and significant variables.} #@@@JMB revisar y refinar
 #'
 #' @export
 NSBM.inlabru <- function(nsbm_obj, 
@@ -254,15 +254,13 @@ NSBM.inlabru <- function(nsbm_obj,
 
     # save pred current
     if(!is.null(pred)) {
-      #saveRDS(pred, file = file.path(projections_path, paste0(species, "_pred_Current.rds")))
-      file_path <- file.path(projections_path, paste0(species, "_pred_Current.tif"))
+      file_path <- file.path(projections_path, paste0(species, "_Current.tif"))
       terra::writeRaster(terra::unwrap(pred), file_path, overwrite = TRUE)   
     }
 
     # save pred_sf
     if(!is.null(pred_sp)) {
-      #saveRDS(pred_sp, file = file.path(projections_path, paste0(species, "_pred_sp_Current.rds")))
-      file_path <- file.path(projections_path, paste0(species, "_pred_sp_Current.tif"))
+      file_path <- file.path(projections_path, paste0(species, "_Current_Spatial.tif"))
       terra::writeRaster(terra::unwrap(pred_sp), file_path, overwrite = TRUE)
     }
 
@@ -446,3 +444,4 @@ pred_as_tif <- function(pred, template, vars_to_export = c("mean",
   r_pred <- do.call(c, r_stack)
   return(r_pred)
 }
+

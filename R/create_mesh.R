@@ -2,18 +2,19 @@
 #'
 #' @title Create INLA mesh for spatial modeling
 #'
-#' @description Generates a 2D mesh object using the convex hull of the global species presences from a processed \code{nsdm.vinput} object (output of \code{\link{NSDM.SelectCovariates}}).
+#' @description Generates a 2D mesh object using the convex hull, concave_hull, or raster_mask of the species presences/absences (plus optional new scenario rasters), from a processed \code{nsdm.vinput} object (output of \code{\link{NSDM.SelectCovariates}}).
 #'
 #' @param nsdm_obj An object of class `nsdm.vinput` as returned by `sabinaNSDM::NSDM.SelectCovariates()`.
 #' @param edge A numeric vector of length 2. Maximum triangle edge lengths for the inner and outer parts of the mesh (default: c(0.5, 1)). #@@@JMB los valores por defecto son para crs en grados, habrá que ajustar cosas aquí para cuando los rasters sean metros
 #' @param offset A numeric vector of length 2. Offsets to expand the domain inward and outward from the boundary (default: c(0.25, 0.5)).
 #' @param buffer A numeric scalar. Amount to buffer (expand) the convex hull before mesh creation (default: 0.01).
-#' @param boundary.method Character. One of `"convex_hull"` (default), `"concave_hull"` or `"raster_mask"`. #@@@JMB raster mask funciona bien para fragmentos separados y para hacer predicciones en oceano. Para esto último preguntar a Virgilio si triangulos pequeños en borde del raster es apropiado...
+#' @param boundary.method Character. One of `"convex_hull"` (default), `"concave_hull"` or `"raster_mask"`. #@@@JMB raster mask funciona bien para fragmentos separados y para hacer predicciones en oceano. Para esto último preguntar a Virgilio si triangulos pequeños en borde del raster es necesario...
 #' @param concavity Numeric. Required when `boundary.method = "concave_hull"`. Controls how tightly the concave hull wraps the points; lower values (e.g., 2–3) produce tighter boundaries.
 #' @param remove_holes Logical. Only used when `boundary.method = "raster_mask"`; if TRUE, internal holes are removed before mesh creation (default: FALSE).
+#' @param proj.new.env Logical. If TRUE, includes the extent of new scenarios in the mesh domain if they exist in `nsdm_obj$Scenarios` (default: TRUE). Only applies if \code{boundary.method = "raster_mask"}. 
 #' @param plot Logical. If TRUE, plots the mesh for inspection (default: FALSE).
 #'
-#' @return An INLA mesh object (`inla.mesh`).
+#' @return A \code{fmesher::fm_mesh_2d} object (mesh INLA for spde)). #@@@JMB pensar si ponemos clase propia a este objeto (inla.mesh??)
 #'
 #' @export
 create_mesh <- function(nsdm_obj, 
@@ -23,10 +24,11 @@ create_mesh <- function(nsdm_obj,
                         boundary.method = "convex_hull", #"convex_hull", "concave_hull" o "raster_mask"
                         concavity = NULL,
                         remove_holes = FALSE,
+                        proj.new.env = TRUE,
                         plot = FALSE) {
 
   if(!inherits(nsdm_obj, "nsdm.vinput")) {
-    stop("The 'nsdm_obj' must be an object of class 'nsdm.vinput'.\nUse sabinaNSDM::NSDM.SelectCovariates() to obtain it.")
+    stop("The 'nsdm_obj' must be an object of class 'nsdm.vinput'.\nPlease, use sabinaNSDM::NSDM.SelectCovariates() to obtain it.")
   }
   if(!boundary.method %in% c("convex_hull", "raster_mask", "concave_hull")) {
     stop("Invalid 'boundary.method'. Please, select 'convex_hull', 'raster_mask' or 'concave_hull'.")
@@ -37,13 +39,19 @@ create_mesh <- function(nsdm_obj,
         "  Example: concavity = 3  # lower values produce tighter boundaries.")
     }
   } else if(!is.null(concavity)) {
-    warning("Param concavity is ignored unless boundary.method = 'concave_hull'.")
+    warning("concavity is ignored unless boundary.method = 'concave_hull'.")
   }
   if (boundary.method != "raster_mask" && remove_holes) {
     warning("remove_holes only applies when boundary.method = 'raster_mask'.")
   }
+  if (proj.new.env && boundary.method != "raster_mask") {
+    warning(
+      "proj.new.env = TRUE is ignored unless boundary.method = 'raster_mask'; ",
+      "'convex_hull' and 'concave_hull' derive their boundary from presence/absence/backgorund points only."
+    )
+  }
 
-  # Prepare data
+  # Prepare points
   pp <- do.call(rbind, list(
     nsdm_obj$SpeciesData.XY.Global,
     nsdm_obj$SpeciesData.XY.Regional
@@ -76,17 +84,18 @@ create_mesh <- function(nsdm_obj,
 
   points_sf <- dplyr::bind_rows(pp_sf, ap_sf)
 
-  # boudary method
+  # boundary method
   boundary <- switch(boundary.method,
-    convex_hull = boundary_convex_hull(points_sf, buffer = buffer),
-    raster_mask   = boundary_raster_mask(nsdm_obj, buffer = buffer, remove_holes = remove_holes),
-    concave_hull  = boundary_concave_hull(nsdm_obj, concavity = concavity, buffer = buffer)
+    convex_hull = { boundary_convex_hull(points_sf, buffer = buffer) },
+    concave_hull = { boundary_concave_hull(nsdm_obj, concavity = concavity, buffer = buffer) },
+    raster_mask = { 
+      b <- boundary_raster_mask(nsdm_obj, buffer = buffer, remove_holes = remove_holes)
+      if(proj.new.env && !is.null(nsdm_obj$Scenarios)) {
+        b <- add_new_scenario_boundary(b, nsdm_obj$Scenarios, remove_holes = remove_holes)
+      }
+      b
+    }
   )
-
-  # # ANTIGUO enfoque Virgilio (solo presencias globales) #@@@JMB debería ser presencias/ausencias, no?
-  # points_sf <- sf::st_as_sf(nsdm_obj$SpeciesData.XY.Global, coords = c("x", "y"))
-  # sf::st_crs(points_sf) <- crs
-  # boundary <- sf::st_convex_hull(sf::st_union(points_sf))
 
   # create mesh
   mesh <- fmesher::fm_mesh_2d(
@@ -138,15 +147,15 @@ create_mesh <- function(nsdm_obj,
 
 
 ## Different boundary_mesh
-
-# convex hull
+#-------------------------
+## convex hull
 boundary_convex_hull <- function(points_sf, buffer) {
   boundary <- sf::st_convex_hull(sf::st_union(points_sf))
   sf::st_buffer(boundary, buffer)
 }
 
 
-# concave_hull
+## concave_hull
 boundary_concave_hull <- function(nsdm_obj, concavity = concavity, buffer = buffer) {
   # Raster global
   r_glo <- terra::unwrap(nsdm_obj$IndVar.Global.Selected)
@@ -188,19 +197,18 @@ boundary_concave_hull <- function(nsdm_obj, concavity = concavity, buffer = buff
 }
 
 
-# raster mask
+## raster mask
 boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remove_holes) {
   old_s2 <- suppressMessages(sf::sf_use_s2())
   suppressMessages(sf::sf_use_s2(FALSE))
   on.exit(suppressMessages(sf::sf_use_s2(old_s2)), add = TRUE)
 
   # Raster global y crs
-  #r_glo <- terra::rast(nsdm_obj$IndVar.Global.Selected)
   r_glo <- terra::unwrap(nsdm_obj$IndVar.Global.Selected)
   proj4  <- terra::crs(r_glo, proj = TRUE)
   crs_sf <- sf::st_crs(proj4)
 
-  # Puntos
+  # Points
   pts_all <- do.call(rbind, list(
     nsdm_obj$SpeciesData.XY.Global,
     nsdm_obj$SpeciesData.XY.Regional,
@@ -210,17 +218,17 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
     nsdm_obj$Background.XY.Regional
   ))
   pts_all <- pts_all[!sapply(pts_all, is.null), , drop = FALSE]
-  pts_sf  <- st_as_sf(pts_all, coords = c("x","y"), crs = crs_sf)
+  pts_sf  <- sf::st_as_sf(pts_all, coords = c("x","y"), crs = crs_sf)
 
-  # Mask raster + puntos
+  # Mask raster + points
   r_pts         <- terra::rasterize(terra::vect(pts_sf), r_glo, field = 1)
   mask_raster   <- !is.na(terra::app(r_glo, sum, na.rm = TRUE))
   mask_combined <- mask_raster | !is.na(r_pts)
 
   # Mask a sf
-  poly_vec     <- terra::as.polygons(mask_combined, dissolve = TRUE)
+  poly_vec <- terra::as.polygons(mask_combined, dissolve = TRUE)
   terra::crs(poly_vec) <- terra::crs(r_glo)
-  boundary_all <- st_as_sf(poly_vec)
+  boundary_all <- sf::st_as_sf(poly_vec)
   boundary_all <- sf::st_make_valid(boundary_all)
   boundary_all <- sf::st_buffer(boundary_all, 0)
 
@@ -228,16 +236,16 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
   extract_holes <- function(sf_poly) {
     holes <- list()
     for (g in st_geometry(sf_poly)) {
-      tp <- st_geometry_type(g)
+      tp <- sf::st_geometry_type(g)
       if (tp == "POLYGON" && length(g) > 1) {
         for (i in 2:length(g)) {
-          holes <- c(holes, list(st_polygon(list(g[[i]]))))
+          holes <- c(holes, list(sf::st_polygon(list(g[[i]]))))
         }
       } else if (tp == "MULTIPOLYGON") {
         for (poly in g) {
           if (length(poly) > 1) {
             for (i in 2:length(poly)) {
-              holes <- c(holes, list(st_polygon(list(poly[[i]]))))
+              holes <- c(holes, list(sf::st_polygon(list(poly[[i]]))))
             }
           }
         }
@@ -248,27 +256,18 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
   }
   holes_sfc <- extract_holes(boundary_all)
 
-  # Fragments válidos (los que tienen puntos)
-  keep            <- st_intersects(boundary_all, pts_sf, sparse = FALSE)[,1]
+  # Valid polys (those with points)
+  keep <- sf::st_intersects(boundary_all, pts_sf, sparse = FALSE)[,1]
   boundary_useful <- boundary_all[keep, ]
 
   # boundary para mesh
   if (remove_holes) {
-    exteriors <- lapply(st_geometry(boundary_useful), function(g) {
-      if (st_geometry_type(g) == "POLYGON") {
-        st_polygon(list(g[[1]]))
-      } else {
-        rings <- lapply(g, function(poly) list(poly[[1]]))
-        st_multipolygon(rings)
-      }
-    })
-    boundary_mesh <- st_union(st_sf(geometry = st_sfc(exteriors, crs = crs_sf)))
-    boundary_mesh <- st_cast(boundary_mesh, "MULTIPOLYGON")
+    boundary_mesh <- remove_inner_holes(boundary_useful)
   } else {
     boundary_mesh <- boundary_useful
   }
 
-  # limpiar boudary
+  # Clean boundary
   boundary_mesh <- sf::st_make_valid(boundary_mesh)
   if(!sf::st_is_longlat(boundary_mesh)) {
     boundary_mesh <- sf::st_buffer(boundary_mesh, 0)
@@ -280,6 +279,72 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
   }
 
   boundary <- boundary_mesh
+  return(boundary)
+}
+
+
+# remove inner holes if remove_holes = TRUE
+remove_inner_holes <- function(multi_poly_sf) {
+  exteriors <- lapply(
+    sf::st_geometry(multi_poly_sf),
+    function(g) {
+      if (sf::st_geometry_type(g) == "POLYGON") {
+        sf::st_polygon(list(g[[1]]))
+      } else {
+        rings <- lapply(g, function(poly) list(poly[[1]]))
+        sf::st_multipolygon(rings)
+      }
+    }
+  )
+  result <- sf::st_union(
+    sf::st_sf(geometry = sf::st_sfc(exteriors, crs = sf::st_crs(multi_poly_sf)))
+  ) %>%
+    sf::st_cast("MULTIPOLYGON") %>%
+    sf::st_make_valid()
+  return(result)
+}
+
+
+# Add boundary of new scenariaos (pixels no-NA) if peoj.new.env = TRUE to extend the mesh if necessary
+add_new_scenario_boundary <- function(boundary, scenario_list, remove_holes = FALSE) {
+  for (r_scen in scenario_list) {
+    r_scen <- terra::unwrap(r_scen)
+
+    # Mask raster scenario
+    m_scen <- !is.na(r_scen[[1]])
+    m_scen[!m_scen] <- NA # only TRUE create polygon
+
+    # Dissolve boundary
+    poly_scen <- terra::as.polygons(m_scen, dissolve = TRUE, values = FALSE)
+    terra::crs(poly_scen) <- terra::crs(r_scen)
+    poly_scen_sf <- sf::st_as_sf(poly_scen) %>%
+      sf::st_make_valid() %>%
+      sf::st_cast("MULTIPOLYGON")
+
+    # rm holes
+    if (remove_holes) {
+      poly_scen_sf <- remove_inner_holes(poly_scen_sf)
+    }
+
+    # CRS
+    crs_bound   <- sf::st_crs(boundary)
+    poly_scen_sf <- sf::st_transform(poly_scen_sf, crs_bound)
+
+    # when scenario is within current boundary, next
+    if(all(sf::st_within(poly_scen_sf, boundary, sparse = FALSE))) {
+      next
+    }
+
+    # Extract only new pixels
+    new_frag <- sf::st_difference(poly_scen_sf, boundary) %>%
+      sf::st_make_valid()
+
+    # merge new pixels + boundary
+    if (!all(sf::st_is_empty(new_frag))) {
+      boundary <- sf::st_union(boundary, new_frag) %>%
+                  sf::st_make_valid()
+    }
+  }
   return(boundary)
 }
 

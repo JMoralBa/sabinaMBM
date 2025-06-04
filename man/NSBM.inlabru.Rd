@@ -43,7 +43,7 @@ A named list of class \code{nsbm.inlabru} with the following elements:
 \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
 \item{current.projections}{List with: fitted model (\code{fit}), prediction (\code{pred}), spatial field (\code{pred_sp}).}
 \item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
-\item{Summary}{Data frame with key evaluation metrics and significant variables.} #@@JMB revisar y refinar
+\item{Summary}{\code{data.frame}  with key evaluation metrics and significant variables.} #@@JMB revisar y refinar
 }
 \description{
 Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling
