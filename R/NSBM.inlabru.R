@@ -1,6 +1,6 @@
 #' @name NSBM.inlabru
 #'
-#' @title Nested species distribution modeling ...
+#' @title Nested species distribution modeling (pure bayes hierarchical)...
 #'
 #' @description Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling
 #' with spatial structure via INLA and inlabru.
@@ -11,6 +11,7 @@
 #' @param prior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
 #' @param prior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
 #' @param spatial Logical. Include spatial latent field (SPDE) in the model (default: TRUE). 
+#' @param nested_intercept Logical; TRUE = model regional intercept as deviation from global.
 #' @param proj.new.env Logical. Whether to compute predictions under new scenarios (default: TRUE).
 #' @param seed Optional integer. If provided, sets a random seed for reproducibility.
 #' @param save.output Logical. If TRUE, saves key model outputs (predictions, evaluation, summary ...).
@@ -31,6 +32,8 @@ NSBM.inlabru <- function(nsbm_obj,
                          spatial = TRUE,
                          prior.range = c(5, 0.01),
                          prior.sigma = c(1, 0.01),
+                         nested_intercept = TRUE,    # TRUE: IRegional se modela como desviación de IGlobal
+                         auto_select_terms = FALSE,
                          proj.new.env = TRUE,
                          seed = NULL,
                          save.output = FALSE) {
@@ -44,6 +47,9 @@ NSBM.inlabru <- function(nsbm_obj,
   if(spatial && is.null(mesh)) {
     stop("If spatial = TRUE, you must provide a mesh object using create_mesh().")
   }
+  #if(auto_select_terms && (is.null(spline.k))) {
+  #  stop("When auto_select_terms = TRUE you must supply both spline.k (e.g. spline.k = 10).")
+  #}
   if(!is.null(seed)) {
     if(!is.numeric(seed) || length(seed) != 1) {
       stop("'seed' must be a numeric value.")
@@ -54,33 +60,54 @@ NSBM.inlabru <- function(nsbm_obj,
   sabina <- list()
 
   # Data preparation
-  pp_regional <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Regional, coords = c("x", "y"))
-  pp_global   <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Global, coords = c("x", "y"))
-  sp_covglo   <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
-  sp_covreg   <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
+  pres_regional <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Regional, coords = c("x", "y"))
+  pres_global <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Global, coords = c("x", "y"))
+  sp_covglo <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
+  sp_covreg <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
 
   crs <- sf::st_crs(sp_covglo)
-  sf::st_crs(pp_global) <- crs
-  sf::st_crs(pp_regional) <- crs
+  sf::st_crs(pres_global) <- crs
+  sf::st_crs(pres_regional) <- crs
   
-  pp_global <- sf::st_transform(pp_global, crs)
-  pp_regional <- sf::st_transform(pp_regional, crs)
+  pres_global <- sf::st_transform(pres_global, crs)
+  pres_regional <- sf::st_transform(pres_regional, crs)
 
   pts_reg <- sf::st_as_sf(as.points(sp_covreg))
   sf::st_crs(pts_reg) <- crs
   pts_reg <- sf::st_transform(pts_reg, crs) 
 
-  geom_comb <- c(sf::st_geometry(pp_global), sf::st_geometry(pts_reg))
+  geom_comb <- c(sf::st_geometry(pres_global), sf::st_geometry(pts_reg))
   aux <- sf::st_sf(geometry = geom_comb)
   sf::st_crs(aux) <- crs
-  
+
   # Spatial domain definition
   bdy_global <- sf::st_convex_hull(sf::st_union(aux))
   bdy_regional <- sf::st_union(sf::st_make_valid(sf::st_as_sf(raster::rasterToPolygons(raster::raster(sp_covreg)))))
   sf::st_crs(bdy_global) <- crs
   sf::st_crs(bdy_regional) <- crs
 
-  # Description SPDE
+  pres_regional$region <- 1L  
+  pres_regional$presence <- 1L
+
+  pres_global$region <- 1L
+  pres_global$presence <- 1L  
+
+  abs_regional <- sf::st_as_sf(nsbm_obj$Background.XY.Regional, coords = c("x", "y"))
+  abs_regional$presence <- 0L
+  abs_regional$region <- 1L
+  sf::st_crs(abs_regional) <- crs
+  abs_regional <- sf::st_transform(abs_regional, crs)
+
+  abs_global <- sf::st_as_sf(nsbm_obj$Background.XY.Global, coords = c("x", "y"))
+  sf::st_crs(abs_global) <- crs
+  abs_global$presence <- 0L
+  abs_global$region   <- 1L
+  abs_global <- sf::st_transform(abs_global, crs) 
+
+  pp_regional <- rbind(pres_regional, abs_regional)
+  pp_global <- rbind(pres_global, abs_global)
+
+  # SPDE
   if(spatial) {
     matern <- INLA::inla.spde2.pcmatern(
       mesh,
@@ -89,31 +116,49 @@ NSBM.inlabru <- function(nsbm_obj,
     )
   }
 
-  # Model components
-  cmp_cov <- fcov(nsbm_obj, "sp_covglo", "sp_covreg")
-  cmp_formula <- if(spatial) {
-    paste0("~ IGlobal(1) + IRegional(1) + spatial(geometry, model = matern) + ", cmp_cov$cmp)
+  # nested intercept
+  if(nested_intercept) {
+    # IRegional anidado como desviación de IGlobal
+    intercept_terms <- c("IGlobal(1)", "IRegional(1, model='iid', group=region)")
   } else {
-    paste0("~ IGlobal(1) + IRegional(1) + ", cmp_cov$cmp)
+    # I independientes
+    intercept_terms <- c("IGlobal(1)", "IRegional(1)")
+  }
+  base_intercepts <- paste(intercept_terms, collapse = " + ")
+
+  # HACK: anular chequeo de distancia mínima en rw2
+  {
+    m <- get("inla.models", inla.get.inlaEnv())
+    m$latent$rw2$min.diff <- NULL
+    assign("inla.models", m, inla.get.inlaEnv())
+  }
+
+  # prefilter select terms
+  if(auto_select_terms) {
+    sm_g <- prefilter_mgcv(pp_global, sp_covglo, k = 10)  #@@@JMB poner k como argumento??
+    sm_r <- prefilter_mgcv(pp_regional, sp_covreg, k = 10)
+  } else {
+    sm_g <- setNames(rep("const", length(names(sp_covglo))), names(sp_covglo))
+    sm_r <- setNames(rep("const", length(names(sp_covreg))), names(sp_covreg))
+  }
+
+  # Model components
+  cmp_cov <- fcov(obj = nsbm_obj, 
+                  spobjglo = "sp_covglo", 
+                  spobjreg = "sp_covreg",
+                  splinegl   = sm_g,
+                  splinereg  = sm_r)
+ 
+  # Formula
+  cmp_formula <- if(spatial) {
+    paste0("~ ", base_intercepts, " + spatial(geometry, model = matern) + ", cmp_cov$cmp)
+  } else {
+    paste0("~ ", base_intercepts, " + ", cmp_cov$cmp)
   }
 
   cmp <- as.formula(cmp_formula)
 
   if(output == "probability") {
-    pp_regional$presence <- 1
-    pseudo_regional <- sf::st_as_sf(nsbm_obj$Background.XY.Regional, coords = c("x", "y"))
-    pseudo_regional$presence <- 0
-    sf::st_crs(pseudo_regional) <- crs
-    pseudo_regional <- sf::st_transform(pseudo_regional, crs)
-    pp_regional <- rbind(pp_regional, pseudo_regional)
-
-    pp_global$presence <- 1
-    pseudo_global <- sf::st_as_sf(nsbm_obj$Background.XY.Global, coords = c("x", "y"))
-    sf::st_crs(pseudo_global) <- crs
-    pseudo_global$presence <- 0
-    pseudo_global <- sf::st_transform(pseudo_global, crs) 
-    pp_global <- rbind(pp_global, pseudo_global)
-
     # Likelihoods
     f_spatial <- if(spatial) " + spatial" else ""
 
@@ -143,7 +188,7 @@ NSBM.inlabru <- function(nsbm_obj,
     lik_global <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal)),
-      data = pp_global,
+      data = pres_global,
       samplers = bdy_global,
       domain = list(geometry = mesh)
     )
@@ -151,7 +196,7 @@ NSBM.inlabru <- function(nsbm_obj,
     lik_regional <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IRegional", f_spatial, " + ", cmp_cov$like$fregional)),
-      data = pp_regional,
+      data = pres_regional,
       samplers = bdy_regional,
       domain = list(geometry = mesh)
     )
@@ -168,13 +213,7 @@ NSBM.inlabru <- function(nsbm_obj,
     components = cmp,
     lik_global,
     lik_regional,
-    options = list(
-      control.compute = list(
-        cpo  = TRUE,
-        waic = TRUE,
-        dic  = TRUE
-      )
-    )
+    options = list(control.compute = list(cpo = TRUE, waic = TRUE, dic  = TRUE))
   )
 
   # log sum of conditional predictive ordinates
@@ -183,6 +222,7 @@ NSBM.inlabru <- function(nsbm_obj,
   pred.df <- sf::st_as_sf(as.points(sp_covreg))
   sf::st_crs(pred.df) <- crs
   pred.df <- sf::st_transform(pred.df, crs)
+  pred.df$region <- 1L
 
   # Predictions
   pred <- predict(fit, pred.df, pred_formula)  
@@ -288,14 +328,14 @@ NSBM.inlabru <- function(nsbm_obj,
         spatial = spatial,
         prior.range = prior.range,
         prior.sigma = prior.sigma,
+        nested_intercept = nested_intercept,
         proj.new.env = proj.new.env
       ),
       Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
       Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
       current.projections = list(
-        fit = fit,
         pred = terra::wrap(pred),
-        pred_sp = if (!is.null(pred_sp)) terra::wrap(pred_sp) else NULL
+        pred_sp = if(!is.null(pred_sp)) terra::wrap(pred_sp) else NULL
       ),
       new.projections = rapply(proj_list, terra::wrap, how = "list"),
       Summary = generate_summary_nsbm(fit, species, spatial, lcpo_val) #@@@JMB pendiente revisar/completar...
@@ -307,10 +347,60 @@ NSBM.inlabru <- function(nsbm_obj,
 }
 
 
+### Helps/Auxiliars
+
+# prefilter mgcv term selection
+               #@@@JMB no es multivariante, probar funcion gamsel
+prefilter_mgcv <- function(pp,       # sf con columnas $presence (0/1) y %region (entero)
+                           cov_rast, # SpatRaster
+                           k) {      # número de bases spline para cada GAM
+
+  # 1) Construye data.frame sin geometría
+  df <- sf::st_drop_geometry(pp)
+  coords <- sf::st_coordinates(pp)
+  cov_vals <- terra::extract(cov_rast, coords)[, names(cov_rast), drop = FALSE]
+  df <- cbind(df, cov_vals)
+  
+  # 2) Formula multivariante con splines
+  vars   <- names(cov_rast)
+  smooth <- paste0("s(", vars, ", k=", k, ", bs='tp')")
+  fmla   <- as.formula(paste("presence ~", paste(smooth, collapse = " + ")))
+  
+  # 3) Ajusta GAM con select=TRUE (penaliza EDF → puede bajarlos a 0)
+  gm <- mgcv::gam(
+    formula = fmla,
+    data    = df,
+    family  = binomial(link = "logit"),
+    select  = TRUE,
+    method  = "REML"
+  )
+  
+  # 4) Extrae tabla de suavizados (EDF y p-valor)
+  st <- summary(gm)$s.table
+  
+  # 5) Decide por variable
+  sel <- setNames(rep("const", length(vars)), vars)
+  for (v in vars) {
+    rownm <- paste0("s(", v, ")")
+    if (!rownm %in% rownames(st)) next
+    edf  <- st[rownm, "edf"]
+    pval <- st[rownm, "p-value"]
+    if (pval > 0.05)       sel[v] <- "const"
+    else if (edf < 1.5)    sel[v] <- "linear"
+    else                   sel[v] <- "rw2"
+  }
+  
+  return(sel)
+}
+
 # formulas
-fcov <- function(obj, spobjglo, spobjreg) {
+# original (desuso)
+fcov0 <- function(obj, 
+                 spobjglo, 
+                 spobjreg) {
+
   vars <- unique(c(obj$Selected.Variables.Global, obj$Selected.Variables.Regional))
-  cmp1 <- paste(paste(vars, "(1)", sep = ""), collapse = " + ")
+  cmp1 <- paste(paste(vars, "(1)", sep = ""), collapse = " + ") # efecto constante
 
   cmpglobal <- paste(sapply(obj$Selected.Variables.Global, function(X) {
     paste0(X, "GL(main = ", spobjglo, ", main_layer = \"", X, "\", model = \"const\")")
@@ -334,17 +424,56 @@ fcov <- function(obj, spobjglo, spobjreg) {
   )
 }
 
+# adaptado a auto spline
+fcov <- function(obj, 
+                 spobjglo,
+                 spobjreg,
+                 splinegl,
+                 splinereg) {
 
+  vg <- obj$Selected.Variables.Global
+  vr <- obj$Selected.Variables.Regional
+  cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
+  
+  cmpglobal <- paste(sapply(vg, function(X) {
+    m <- splinegl[X]
+    paste0(X, "GL(main=", spobjglo,
+           ", main_layer='", X,
+           "', model='", m, "')")
+  }), collapse = " + ")
+  
+  cmpregional <- paste(sapply(vr, function(X) {
+    m <- splinereg[X]
+    paste0(X, "RE(main=", spobjreg,
+           ", main_layer='", X,
+           "', model='", m, "'",
+           if (m == "rw2") ", group=region" else "",
+           ")")
+  }), collapse = " + ")
+  
+  fglobal <- paste(sprintf("%s * %sGL", vg, vg), collapse = " + ")
+  fregional <- paste(sprintf("%s * %sRE", vr, vr), collapse = " + ")
+  
+  list(
+    cmp = paste(c(cmp1, cmpglobal, cmpregional), collapse = " + "),
+    like = list(fglobal = fglobal, fregional = fregional)
+  )
+}
+
+
+
+###----------------###
 
 # prepare summary
 generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val) {
 
   # Fixed effects and hyperpar
   summary_fixed <- fit$summary.fixed
-  hyper         <- fit$summary.hyperpar
+  hyper <- fit$summary.hyperpar
 
   # Filter valid vars
   valid_vars <- summary_fixed[!is.na(summary_fixed$mean), ]
+
   valid_vars$type <- ifelse(
     rownames(valid_vars) %in% c("IGlobal", "IRegional"), "Intercept",
     ifelse(grepl("GL$", rownames(valid_vars)), "Global",
@@ -367,12 +496,12 @@ generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val) {
   )
 
   # Evaluation metrics
-  dic_val  <- if (!is.null(fit$dic$dic) && !is.na(fit$dic$dic)) round(fit$dic$dic, 2) else "Not computed"
-  waic_val <- if (!is.null(fit$waic$waic) && !is.na(fit$waic$waic)) round(fit$waic$waic, 2) else "Not computed"
-  mlik_val <- if (!is.null(fit$mlik) && !is.na(fit$mlik[1,1])) round(fit$mlik[1, 1], 2) else "Not computed"
+  dic_val <- if(!is.null(fit$dic$dic) && !is.na(fit$dic$dic)) round(fit$dic$dic, 2) else "Not computed"
+  waic_val <- if(!is.null(fit$waic$waic) && !is.na(fit$waic$waic)) round(fit$waic$waic, 2) else "Not computed"
+  mlik_val <- if(!is.null(fit$mlik) && !is.na(fit$mlik[1,1])) round(fit$mlik[1, 1], 2) else "Not computed"
   
   # 
-  spatial_range <- if (!is.null(hyper) && "Range for spatial" %in% rownames(hyper)) {
+  spatial_range <- if(!is.null(hyper) && "Range for spatial" %in% rownames(hyper)) {
     paste0(round(hyper["Range for spatial", "mean"], 2), " ± ",
            round(hyper["Range for spatial", "sd"], 2))
   } else {
@@ -404,7 +533,7 @@ generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val) {
       mlik_val,
       lcpo_val,
       spatial_range,
-      if (length(var_labels) > 0) paste(var_labels, collapse = ", ") else "None"
+      if(length(var_labels) > 0) paste(var_labels, collapse = ", ") else "None"
     ),
     stringsAsFactors = FALSE
   )
@@ -412,6 +541,8 @@ generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val) {
   return(summary_df)
 }
 
+
+###----------------###
 
 # from sf to tif
 pred_as_tif <- function(pred, template, vars_to_export = c("mean", 
@@ -444,4 +575,9 @@ pred_as_tif <- function(pred, template, vars_to_export = c("mean",
   r_pred <- do.call(c, r_stack)
   return(r_pred)
 }
+
+
+
+
+
 
