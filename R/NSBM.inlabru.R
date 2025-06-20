@@ -8,10 +8,15 @@
 #' @param nsbm_obj An object of class `nsdm.vinput`, result from `sabinaNSDM::NSDM.SelectCovariates()`.
 #' @param mesh An INLA mesh object created externally with `create_mesh()`. Required only if \code{spatial = TRUE}. Ignored if \code{spatial = FALSE}.
 #' @param output A character `"intensity"` or `"probability"` (default).
+#' @param spatial Logical. Include spatial latent field (SPDE) in the model (default: TRUE). 
 #' @param prior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
 #' @param prior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
-#' @param spatial Logical. Include spatial latent field (SPDE) in the model (default: TRUE). 
 #' @param nested_intercept Logical; TRUE = model regional intercept as deviation from global.
+#' @param auto_select_terms Logical; if TRUE, select for each covariate automatically between “const”, “linear” or “rw2”.  #@@@JMB no funciona bien aun
+#' @param family  character `"binomial"` (default), supported `"poisson"`, `"nbinomial"`, or `"cp"`.
+#' @param link  character; link function `"logit"` (default for `family = "binomial"`), otherwise `"log"`.
+#' @param cv.folds Number of k-folds for cross-validation (default: 1 = no CV). If >1, returns mean ± sd AUC.
+#' @param n.threads Number of CPU threads for analysis
 #' @param proj.new.env Logical. Whether to compute predictions under new scenarios (default: TRUE).
 #' @param seed Optional integer. If provided, sets a random seed for reproducibility.
 #' @param save.output Logical. If TRUE, saves key model outputs (predictions, evaluation, summary ...).
