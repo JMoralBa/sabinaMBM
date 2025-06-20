@@ -34,6 +34,10 @@ NSBM.inlabru <- function(nsbm_obj,
                          prior.sigma = c(1, 0.01),
                          nested_intercept = TRUE,    # TRUE: IRegional se modela como desviación de IGlobal
                          auto_select_terms = FALSE,
+                         family = "binomial",        # #@@@JMB arg util si vamos a aceptar counts
+                         link = if(family=="binomial") "logit" else "log", 
+                         cv.folds = 1,
+                         n.threads = 1, 
                          proj.new.env = TRUE,
                          seed = NULL,
                          save.output = FALSE) {
@@ -56,6 +60,11 @@ NSBM.inlabru <- function(nsbm_obj,
     }
     set.seed(seed)
   }
+  available_cores <- parallel::detectCores(logical = TRUE)
+  if (!is.null(n.threads) && n.threads > available_cores) {
+    stop(paste0("Requested n.threads = ", n.threads, " exceeds available hardware threads (", available_cores,")."))
+  }
+  INLA::inla.setOption(num.threads = n.threads)
 
   sabina <- list()
 
@@ -101,7 +110,7 @@ NSBM.inlabru <- function(nsbm_obj,
   abs_global <- sf::st_as_sf(nsbm_obj$Background.XY.Global, coords = c("x", "y"))
   sf::st_crs(abs_global) <- crs
   abs_global$presence <- 0L
-  abs_global$region   <- 1L
+  abs_global$region <- 1L
   abs_global <- sf::st_transform(abs_global, crs) 
 
   pp_regional <- rbind(pres_regional, abs_regional)
@@ -125,13 +134,6 @@ NSBM.inlabru <- function(nsbm_obj,
     intercept_terms <- c("IGlobal(1)", "IRegional(1)")
   }
   base_intercepts <- paste(intercept_terms, collapse = " + ")
-
-  # HACK: anular chequeo de distancia mínima en rw2
-  {
-    m <- get("inla.models", inla.get.inlaEnv())
-    m$latent$rw2$min.diff <- NULL
-    assign("inla.models", m, inla.get.inlaEnv())
-  }
 
   # prefilter select terms
   if(auto_select_terms) {
@@ -163,26 +165,46 @@ NSBM.inlabru <- function(nsbm_obj,
     f_spatial <- if(spatial) " + spatial" else ""
 
     lik_global <- inlabru::like(
-      family = "binomial",
+      family = family,
       formula = as.formula(paste0("presence ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal)),
+      #formula = as.formula(      #@@@JMB para un futuro uso con datos de abundancia por ejemplo, pero hay que adaptar pres_regional$region <- 1L, global y abs regional y global
+      #  paste0(
+      #    if(family=="binomial") "presence" else  
+      #    if(family%in%c("poisson","nbinomial")) "count" else "geometry",
+      #    " ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal
+      #  )
+      #),
       data = pp_global,
       samplers = bdy_global,
-      domain = list(geometry = mesh)
+      domain = list(geometry = mesh),
+      control.family = list(link = link)
     )
 
     lik_regional <- inlabru::like(
-      family = "binomial",
+      family = family,
       formula = as.formula(paste0("presence ~ IRegional", f_spatial, " + ", cmp_cov$like$fregional)),
+      #formula = as.formula(
+      #  paste0(
+      #    if(family=="binomial") "presence" else  
+      #    if(family%in%c("poisson","nbinomial")) "count" else "geometry",
+      #    " ~ IRegional", f_spatial, " + ", cmp_cov$like$fregional
+      #  )
+      #),
       data = pp_regional,
       samplers = bdy_regional,
-      domain = list(geometry = mesh)
+      domain = list(geometry = mesh),
+      control.family = list(link = link)
     )
 
-    pred_formula <- if(spatial) {
-      as.formula(paste0("~ 1 / (1 + exp(-(IRegional + spatial + ", cmp_cov$like$fregional, ")))"))
-      } else {
-        as.formula(paste0("~ 1 / (1 + exp(-(IRegional + ", cmp_cov$like$fregional, ")))"))
-      }
+    pred_formula <- as.formula(paste0("~ 1 / (1 + exp(-(IRegional", f_spatial, " + ", cmp_cov$like$fregional,")))"))
+
+    # Pred formula para dif family/link
+    #pred_formula <- switch(family,
+    #  binomial = as.formula(paste0("~ 1/(1 + exp(-(IRegional", f_spatial, " + ", cmp_cov$like$fregional, ")))")),
+    #  poisson = as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_cov$like$fregional, ")")),
+    #  nbinomial = as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_cov$like$fregional, ")")),
+    #  stop("Family unavailable")
+    #)
 
   } else {
     lik_global <- inlabru::like(
@@ -201,13 +223,75 @@ NSBM.inlabru <- function(nsbm_obj,
       domain = list(geometry = mesh)
     )
 
-    pred_formula <- if(spatial) {
-      as.formula(paste0("~ exp(IRegional + spatial + ", cmp_cov$like$fregional, ")"))
-    } else {
-      as.formula(paste0("~ exp(IRegional + ", cmp_cov$like$fregional, ")"))
-    }
+    pred_formula <- as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_cov$like$fregional,")"))
+  
   }
 
+  frm_g <- lik_global$formula
+  dom_g <- lik_global$domain
+  sam_g <- lik_global$samplers
+
+  frm_r <- lik_regional$formula
+  dom_r <- lik_regional$domain
+  sam_r <- lik_regional$samplers
+
+  # k-fold CV
+  if(cv.folds > 1) {
+    # stratified k folds
+    folds_g <- make_stratified_kfolds(pp_global$presence, cv.folds)
+    folds_r <- make_stratified_kfolds(pp_regional$presence, cv.folds)
+
+    aucs <- numeric(cv.folds)
+
+    for(k in seq_len(cv.folds)) {
+      train_g <- pp_global[folds_g != k, ]
+      test_g <- pp_global[folds_g == k, ]
+      train_r <- pp_regional[folds_r != k, ]
+      test_r <- pp_regional[folds_r == k, ]
+
+      # fit fold k
+      fit_k <- inlabru::bru(
+        components = cmp,
+        inlabru::like(
+          family = family,
+          formula = frm_g,
+          data = train_g,
+          samplers = sam_g,
+          domain = dom_g,
+          control.family = list(link = link)
+        ),
+        inlabru::like(
+          family = family,
+          formula = frm_r,
+          data = train_r,
+          samplers = sam_r,
+          domain = dom_r,
+          control.family = list(link = link)
+        ),
+        options = list(control.compute = list(cpo = FALSE))
+      )
+
+      # rm NAs
+      coords_t <- sf::st_coordinates(test_g)
+      cov_g <- terra::extract(sp_covglo, coords_t)[, names(sp_covglo), drop = FALSE]
+      cov_r <- terra::extract(sp_covreg, coords_t)[, names(sp_covreg), drop = FALSE]
+      keep <- complete.cases(cov_g, cov_r)
+
+      # pred and AUC
+      pk <- predict(fit_k, test_r, pred_formula)
+      aucs[k] <- as.numeric(pROC::auc(test_r$presence, pk$mean))
+    }
+
+    cv_res <- list(
+      cv.folds = cv.folds, 
+      auc_mean = mean(aucs, na.rm=TRUE),
+      auc_sd = sd(aucs, na.rm=TRUE)
+    )
+  } else {
+    cv_res <- NULL
+  }
+
+  # si cv.folds == 1, final fit complete
   # Model fitting
   fit <- inlabru::bru(
     components = cmp,
@@ -321,6 +405,17 @@ NSBM.inlabru <- function(nsbm_obj,
     ))
   }
 
+  # summary          #@@@JMB pendiente revisar/completar...
+  summary_df <- generate_summary_nsbm(fit, species, spatial, lcpo_val) 
+  if(!is.null(cv_res)) {
+    cv_rows <- data.frame(
+      Field = c("CV folds:", "AUC mean ± sd:"),
+      Value = c(as.character(cv_res$cv.folds), sprintf("%.2f ± %.2f", cv_res$auc_mean, cv_res$auc_sd)),
+      stringsAsFactors = FALSE
+    )
+    summary_df <- rbind(summary_df, cv_rows)
+  }
+
   #
   sabina <- list(
       Species.Name = nsbm_obj$SpeciesName,
@@ -329,6 +424,10 @@ NSBM.inlabru <- function(nsbm_obj,
         prior.range = prior.range,
         prior.sigma = prior.sigma,
         nested_intercept = nested_intercept,
+        family = family,
+        link = link,
+        cv.folds = cv.folds,
+        n.threads = n.threads,
         proj.new.env = proj.new.env
       ),
       Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
@@ -338,7 +437,7 @@ NSBM.inlabru <- function(nsbm_obj,
         pred_sp = if(!is.null(pred_sp)) terra::wrap(pred_sp) else NULL
       ),
       new.projections = rapply(proj_list, terra::wrap, how = "list"),
-      Summary = generate_summary_nsbm(fit, species, spatial, lcpo_val) #@@@JMB pendiente revisar/completar...
+      Summary = summary_df
   )
  
   attr(sabina, "class") <- "nsbm.inlabru"
@@ -355,39 +454,39 @@ prefilter_mgcv <- function(pp,       # sf con columnas $presence (0/1) y %region
                            cov_rast, # SpatRaster
                            k) {      # número de bases spline para cada GAM
 
-  # 1) Construye data.frame sin geometría
+  # df without geom
   df <- sf::st_drop_geometry(pp)
   coords <- sf::st_coordinates(pp)
   cov_vals <- terra::extract(cov_rast, coords)[, names(cov_rast), drop = FALSE]
   df <- cbind(df, cov_vals)
   
-  # 2) Formula multivariante con splines
-  vars   <- names(cov_rast)
+  # Formula multivariante con splines??
+  vars <- names(cov_rast)
   smooth <- paste0("s(", vars, ", k=", k, ", bs='tp')")
-  fmla   <- as.formula(paste("presence ~", paste(smooth, collapse = " + ")))
+  fmla <- as.formula(paste("presence ~", paste(smooth, collapse = " + ")))
   
-  # 3) Ajusta GAM con select=TRUE (penaliza EDF → puede bajarlos a 0)
+  # Fit GAM. if select=TRUE penaliza EDF y puede bajarlos a 0???
   gm <- mgcv::gam(
     formula = fmla,
-    data    = df,
-    family  = binomial(link = "logit"),
-    select  = TRUE,
-    method  = "REML"
+    data = df,
+    family = binomial(link = "logit"),
+    select = TRUE,
+    method = "REML"
   )
   
-  # 4) Extrae tabla de suavizados (EDF y p-valor)
+  # EDF and p-value)
   st <- summary(gm)$s.table
   
-  # 5) Decide por variable
+  # Decision by covariable
   sel <- setNames(rep("const", length(vars)), vars)
   for (v in vars) {
     rownm <- paste0("s(", v, ")")
     if (!rownm %in% rownames(st)) next
-    edf  <- st[rownm, "edf"]
+    edf <- st[rownm, "edf"]
     pval <- st[rownm, "p-value"]
-    if (pval > 0.05)       sel[v] <- "const"
-    else if (edf < 1.5)    sel[v] <- "linear"
-    else                   sel[v] <- "rw2"
+    if (pval > 0.05) sel[v] <- "const"
+    else if (edf < 1.5) sel[v] <- "linear"
+    else sel[v] <- "rw2"
   }
   
   return(sel)
@@ -576,8 +675,19 @@ pred_as_tif <- function(pred, template, vars_to_export = c("mean",
   return(r_pred)
 }
 
+###----------------###
 
 
+make_stratified_kfolds <- function(y, K) {
+  # y: vector de 0/1
+  # K: número de folds
+  idx1 <- which(y == 1)
+  idx0 <- which(y == 0)
+  f    <- integer(length(y))
+  f[idx1] <- sample(rep(seq_len(K), length.out = length(idx1)))
+  f[idx0] <- sample(rep(seq_len(K), length.out = length(idx0)))
+  f
+}
 
 
 
