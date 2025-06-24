@@ -688,7 +688,7 @@ make_stratified_kfolds <- function(y, K) {
   # K: número de folds
   idx1 <- which(y == 1)
   idx0 <- which(y == 0)
-  f    <- integer(length(y))
+  f <- integer(length(y))
   f[idx1] <- sample(rep(seq_len(K), length.out = length(idx1)))
   f[idx0] <- sample(rep(seq_len(K), length.out = length(idx0)))
   f
