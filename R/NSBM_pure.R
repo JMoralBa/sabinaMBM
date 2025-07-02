@@ -1,4 +1,4 @@
-#' @name NSBM.inlabru
+#' @name NSBM.pure
 #'
 #' @title Nested species distribution modeling (pure bayes hierarchical)...
 #'
@@ -7,18 +7,18 @@
 #'
 #' @param nsbm_obj An object of class `nsdm.vinput`, result from `sabinaNSDM::NSDM.SelectCovariates()`.
 #' @param mesh An INLA mesh object created externally with `create_mesh()`. Required only if \code{spatial = TRUE}. Ignored if \code{spatial = FALSE}.
-#' @param output A character `"intensity"` or `"probability"` (default).
-#' @param spatial Logical. Include spatial latent field (SPDE) in the model (default: TRUE). 
+#' @param output Character, `"intensity"` or `"probability"` (default).
+#' @param spatial Logical; include spatial latent field (SPDE) in the model (default: TRUE). 
 #' @param prior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
 #' @param prior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
-#' @param nested_intercept Logical; TRUE = model regional intercept as deviation from global.
+#' @param nested_intercept Logical; if TRUE = model regional intercept as deviation from global.
 #' @param auto_select_terms Logical; if TRUE, select for each covariate automatically between “const”, “linear” or “rw2”.  #@@@JMB no funciona bien aun
-#' @param family  character `"binomial"` (default), supported `"poisson"`, `"nbinomial"`, or `"cp"`.
-#' @param link  character; link function `"logit"` (default for `family = "binomial"`), otherwise `"log"`.
-#' @param cv.folds Number of k-folds for cross-validation (default: 1 = no CV). If >1, returns mean ± sd AUC.
-#' @param n.threads Number of CPU threads for analysis
+#' @param family  Character; `"binomial"` (default), supported `"poisson"`, `"nbinomial"`, or `"cp"`.
+#' @param link  Character; link function `"logit"` (default for `family = "binomial"`), otherwise `"log"`.
+#' @param cv.folds Number of k-folds for cross-validation (default: 1 = no CV). If >1, returns mean ± sd AUC for global and regional models.
+#' @param n.threads Number of threads for analysis
 #' @param proj.new.env Logical. Whether to compute predictions under new scenarios (default: TRUE).
-#' @param seed Optional integer. If provided, sets a random seed for reproducibility.
+#' @param seed Optional integer to set the random seed for reproducibility.
 #' @param save.output Logical. If TRUE, saves key model outputs (predictions, evaluation, summary ...).
 #'
 #' @return A named list of class `nsbm.inlabru` with the following elements:
@@ -26,23 +26,23 @@
 #' \item{args}{List of arguments used in the model fitting.}
 #' \item{Selected.Variables.Global}{Names of selected global-scale covariates.}
 #' \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
-#' \item{current.projections}{List with: fitted model (`fit`), prediction (`pred`), spatial field (`pred_sp`).}
+#' \item{current.projections}{List with: prediction (`pred`) and spatial field (`pred_sp`).}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
-#' \item{Summary}{\code{data.frame}  with key evaluation metrics and significant variables.} #@@@JMB revisar y refinar
+#' \item{Summary}{\code{data.frame} with key evaluation metrics and significant variables.} #@@@JMB revisar y refinar
 #'
 #' @export
-NSBM.inlabru <- function(nsbm_obj, 
-                         mesh = NULL, 
+NSBM.pure <- function(nsbm_obj, 
                          output = "probability",
-                         spatial = TRUE,
+                         family = "binomial",        # #@@@JMB arg util si vamos a aceptar counts
+                         link = "logit",             #if(family=="binomial") "logit" else "log", 
                          prior.range = c(5, 0.01),
                          prior.sigma = c(1, 0.01),
                          nested_intercept = TRUE,    # TRUE: IRegional se modela como desviación de IGlobal
                          auto_select_terms = FALSE,
-                         family = "binomial",        # #@@@JMB arg util si vamos a aceptar counts
-                         link = if(family=="binomial") "logit" else "log", 
-                         cv.folds = 1,
+                         spatial = TRUE,
+                         mesh = NULL, 
                          n.threads = 1, 
+                         cv.folds = 1,
                          proj.new.env = TRUE,
                          seed = NULL,
                          save.output = FALSE) {
@@ -66,7 +66,7 @@ NSBM.inlabru <- function(nsbm_obj,
     set.seed(seed)
   }
   available_cores <- parallel::detectCores(logical = TRUE)
-  if (!is.null(n.threads) && n.threads > available_cores) {
+  if(!is.null(n.threads) && n.threads > available_cores) {
     stop(paste0("Requested n.threads = ", n.threads, " exceeds available hardware threads (", available_cores,")."))
   }
   INLA::inla.setOption(num.threads = n.threads)
@@ -74,52 +74,52 @@ NSBM.inlabru <- function(nsbm_obj,
   sabina <- list()
 
   # Data preparation
-  pres_regional <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Regional, coords = c("x", "y"))
-  pres_global <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Global, coords = c("x", "y"))
+  pres_reg <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Regional, coords = c("x", "y"))
+  pres_glo <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Global, coords = c("x", "y"))
   sp_covglo <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
   sp_covreg <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
 
   crs <- sf::st_crs(sp_covglo)
-  sf::st_crs(pres_global) <- crs
-  sf::st_crs(pres_regional) <- crs
+  sf::st_crs(pres_glo) <- crs
+  sf::st_crs(pres_reg) <- crs
   
-  pres_global <- sf::st_transform(pres_global, crs)
-  pres_regional <- sf::st_transform(pres_regional, crs)
+  pres_glo <- sf::st_transform(pres_glo, crs)
+  pres_reg <- sf::st_transform(pres_reg, crs)
 
   pts_reg <- sf::st_as_sf(as.points(sp_covreg))
   sf::st_crs(pts_reg) <- crs
   pts_reg <- sf::st_transform(pts_reg, crs) 
 
-  geom_comb <- c(sf::st_geometry(pres_global), sf::st_geometry(pts_reg))
+  geom_comb <- c(sf::st_geometry(pres_glo), sf::st_geometry(pts_reg))
   aux <- sf::st_sf(geometry = geom_comb)
   sf::st_crs(aux) <- crs
 
   # Spatial domain definition
-  bdy_global <- sf::st_convex_hull(sf::st_union(aux))
-  bdy_regional <- sf::st_union(sf::st_make_valid(sf::st_as_sf(raster::rasterToPolygons(raster::raster(sp_covreg)))))
-  sf::st_crs(bdy_global) <- crs
-  sf::st_crs(bdy_regional) <- crs
+  bdy_glo <- sf::st_convex_hull(sf::st_union(aux))
+  bdy_reg <- sf::st_union(sf::st_make_valid(sf::st_as_sf(raster::rasterToPolygons(raster::raster(sp_covreg)))))
+  sf::st_crs(bdy_glo) <- crs
+  sf::st_crs(bdy_reg) <- crs
 
-  pres_regional$region <- 1L  
-  pres_regional$presence <- 1L
+  pres_reg$region <- 1L  
+  pres_reg$presence <- 1L
 
-  pres_global$region <- 1L
-  pres_global$presence <- 1L  
+  pres_glo$region <- 1L
+  pres_glo$presence <- 1L  
 
-  abs_regional <- sf::st_as_sf(nsbm_obj$Background.XY.Regional, coords = c("x", "y"))
-  abs_regional$presence <- 0L
-  abs_regional$region <- 1L
-  sf::st_crs(abs_regional) <- crs
-  abs_regional <- sf::st_transform(abs_regional, crs)
+  abs_reg <- sf::st_as_sf(nsbm_obj$Background.XY.Regional, coords = c("x", "y"))
+  abs_reg$presence <- 0L
+  abs_reg$region <- 1L
+  sf::st_crs(abs_reg) <- crs
+  abs_reg <- sf::st_transform(abs_reg, crs)
 
-  abs_global <- sf::st_as_sf(nsbm_obj$Background.XY.Global, coords = c("x", "y"))
-  sf::st_crs(abs_global) <- crs
-  abs_global$presence <- 0L
-  abs_global$region <- 1L
-  abs_global <- sf::st_transform(abs_global, crs) 
+  abs_glo <- sf::st_as_sf(nsbm_obj$Background.XY.Global, coords = c("x", "y"))
+  sf::st_crs(abs_glo) <- crs
+  abs_glo$presence <- 0L
+  abs_glo$region <- 1L
+  abs_glo <- sf::st_transform(abs_glo, crs) 
 
-  pp_regional <- rbind(pres_regional, abs_regional)
-  pp_global <- rbind(pres_global, abs_global)
+  pp_reg <- rbind(pres_reg, abs_reg)
+  pp_glo <- rbind(pres_glo, abs_glo)
 
   # SPDE
   if(spatial) {
@@ -142,8 +142,8 @@ NSBM.inlabru <- function(nsbm_obj,
 
   # prefilter select terms
   if(auto_select_terms) {
-    sm_g <- prefilter_mgcv(pp_global, sp_covglo, k = 10)  #@@@JMB poner k como argumento??
-    sm_r <- prefilter_mgcv(pp_regional, sp_covreg, k = 10)
+    sm_g <- prefilter_mgcv(pp_glo, sp_covglo, k = 10)  #@@@JMB poner k como argumento??
+    sm_r <- prefilter_mgcv(pp_reg, sp_covreg, k = 10)
   } else {
     sm_g <- setNames(rep("const", length(names(sp_covglo))), names(sp_covglo))
     sm_r <- setNames(rep("const", length(names(sp_covreg))), names(sp_covreg))
@@ -153,8 +153,8 @@ NSBM.inlabru <- function(nsbm_obj,
   cmp_cov <- fcov(obj = nsbm_obj, 
                   spobjglo = "sp_covglo", 
                   spobjreg = "sp_covreg",
-                  splinegl   = sm_g,
-                  splinereg  = sm_r)
+                  splinegl = sm_g,
+                  splinereg = sm_r)
  
   # Formula
   cmp_formula <- if(spatial) {
@@ -169,7 +169,7 @@ NSBM.inlabru <- function(nsbm_obj,
     # Likelihoods
     f_spatial <- if(spatial) " + spatial" else ""
 
-    lik_global <- inlabru::like(
+    lik_glo <- inlabru::like(
       family = family,
       formula = as.formula(paste0("presence ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal)),
       #formula = as.formula(      #@@@JMB para un futuro uso con datos de abundancia por ejemplo, pero hay que adaptar pres_regional$region <- 1L, global y abs regional y global
@@ -179,13 +179,13 @@ NSBM.inlabru <- function(nsbm_obj,
       #    " ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal
       #  )
       #),
-      data = pp_global,
-      samplers = bdy_global,
+      data = pp_glo,
+      samplers = bdy_glo,
       domain = list(geometry = mesh),
       control.family = list(link = link)
     )
 
-    lik_regional <- inlabru::like(
+    lik_reg <- inlabru::like(
       family = family,
       formula = as.formula(paste0("presence ~ IRegional", f_spatial, " + ", cmp_cov$like$fregional)),
       #formula = as.formula(
@@ -195,8 +195,8 @@ NSBM.inlabru <- function(nsbm_obj,
       #    " ~ IRegional", f_spatial, " + ", cmp_cov$like$fregional
       #  )
       #),
-      data = pp_regional,
-      samplers = bdy_regional,
+      data = pp_reg,
+      samplers = bdy_reg,
       domain = list(geometry = mesh),
       control.family = list(link = link)
     )
@@ -212,19 +212,19 @@ NSBM.inlabru <- function(nsbm_obj,
     #)
 
   } else {
-    lik_global <- inlabru::like(
+    lik_glo <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal)),
-      data = pres_global,
-      samplers = bdy_global,
+      data = pres_glo,
+      samplers = bdy_glo,
       domain = list(geometry = mesh)
     )
 
-    lik_regional <- inlabru::like(
+    lik_reg <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IRegional", f_spatial, " + ", cmp_cov$like$fregional)),
-      data = pres_regional,
-      samplers = bdy_regional,
+      data = pres_reg,
+      samplers = bdy_reg,
       domain = list(geometry = mesh)
     )
 
@@ -232,27 +232,27 @@ NSBM.inlabru <- function(nsbm_obj,
   
   }
 
-  frm_g <- lik_global$formula
-  dom_g <- lik_global$domain
-  sam_g <- lik_global$samplers
-
-  frm_r <- lik_regional$formula
-  dom_r <- lik_regional$domain
-  sam_r <- lik_regional$samplers
-
   # k-fold CV
   if(cv.folds > 1) {
+    frm_g <- lik_glo$formula
+    dom_g <- lik_glo$domain
+    sam_g <- lik_glo$samplers
+
+    frm_r <- lik_reg$formula
+    dom_r <- lik_reg$domain
+    sam_r <- lik_reg$samplers
+
     # stratified k folds
-    folds_g <- make_stratified_kfolds(pp_global$presence, cv.folds)
-    folds_r <- make_stratified_kfolds(pp_regional$presence, cv.folds)
+    folds_g <- make_stratified_kfolds(pp_glo$presence, cv.folds)
+    folds_r <- make_stratified_kfolds(pp_reg$presence, cv.folds)
 
     aucs <- numeric(cv.folds)
 
     for(k in seq_len(cv.folds)) {
-      train_g <- pp_global[folds_g != k, ]
-      test_g <- pp_global[folds_g == k, ]
-      train_r <- pp_regional[folds_r != k, ]
-      test_r <- pp_regional[folds_r == k, ]
+      train_g <- pp_glo[folds_g != k, ]
+      test_g <- pp_glo[folds_g == k, ]
+      train_r <- pp_reg[folds_r != k, ]
+      test_r <- pp_reg[folds_r == k, ]
 
       # fit fold k
       fit_k <- inlabru::bru(
@@ -300,8 +300,8 @@ NSBM.inlabru <- function(nsbm_obj,
   # Model fitting
   fit <- inlabru::bru(
     components = cmp,
-    lik_global,
-    lik_regional,
+    lik_glo,
+    lik_reg,
     options = list(control.compute = list(cpo = TRUE, waic = TRUE, dic  = TRUE))
   )
 
@@ -326,7 +326,7 @@ NSBM.inlabru <- function(nsbm_obj,
 
   # New scenarios
   proj_list <- list()
-  if (proj.new.env && !is.null(nsbm_obj$Scenarios)) {
+  if(proj.new.env && !is.null(nsbm_obj$Scenarios)) {
     for (sc in names(nsbm_obj$Scenarios)) {
       #sc <- 1
       scen_rast <- terra::unwrap(nsbm_obj$Scenarios[[sc]])
@@ -342,10 +342,8 @@ NSBM.inlabru <- function(nsbm_obj,
 
   # save outputs
   if(save.output) {
-    base_results <- "Results"
-    nsbm_path <- file.path(base_results, "NSBM")
-    values_path <- file.path(nsbm_path, "Values")
-    projections_path <- file.path(nsbm_path, "Projections")
+    values_path <- file.path("Results", "NSBM_pure", "Values")
+    projections_path <- file.path("Results", "NSBM_pure", "Projections")
 
     # Create directories
     fs::dir_create(values_path, recurse = TRUE)
@@ -411,7 +409,7 @@ NSBM.inlabru <- function(nsbm_obj,
   }
 
   # summary          #@@@JMB pendiente revisar/completar...
-  summary_df <- generate_summary_nsbm(fit, species, spatial, lcpo_val) 
+  summary_df <- generate_summary_nsbm(fit, species, spatial, lcpo_val, model = "pure") 
   if(!is.null(cv_res)) {
     cv_rows <- data.frame(
       Field = c("CV folds:", "AUC mean ± sd:"),
@@ -423,26 +421,26 @@ NSBM.inlabru <- function(nsbm_obj,
 
   #
   sabina <- list(
-      Species.Name = nsbm_obj$SpeciesName,
-      args = list(
-        spatial = spatial,
-        prior.range = prior.range,
-        prior.sigma = prior.sigma,
-        nested_intercept = nested_intercept,
-        family = family,
-        link = link,
-        cv.folds = cv.folds,
-        n.threads = n.threads,
-        proj.new.env = proj.new.env
-      ),
-      Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
-      Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
-      current.projections = list(
-        pred = terra::wrap(pred),
-        pred_sp = if(!is.null(pred_sp)) terra::wrap(pred_sp) else NULL
-      ),
-      new.projections = rapply(proj_list, terra::wrap, how = "list"),
-      Summary = summary_df
+    Species.Name = nsbm_obj$SpeciesName,
+    args = list(
+      spatial = spatial,
+      prior.range = prior.range,
+      prior.sigma = prior.sigma,
+      nested_intercept = nested_intercept,
+      family = family,
+      link = link,
+      cv.folds = cv.folds,
+      n.threads = n.threads,
+      proj.new.env = proj.new.env
+    ),
+    Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
+    Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
+    current.projections = list(
+      pred = terra::wrap(pred),
+      pred_sp = if(!is.null(pred_sp)) terra::wrap(pred_sp) else NULL
+    ),
+    new.projections = rapply(proj_list, terra::wrap, how = "list"),
+    Summary = summary_df
   )
  
   attr(sabina, "class") <- "nsbm.inlabru"
@@ -486,11 +484,11 @@ prefilter_mgcv <- function(pp,       # sf con columnas $presence (0/1) y %region
   sel <- setNames(rep("const", length(vars)), vars)
   for (v in vars) {
     rownm <- paste0("s(", v, ")")
-    if (!rownm %in% rownames(st)) next
+    if(!rownm %in% rownames(st)) next
     edf <- st[rownm, "edf"]
     pval <- st[rownm, "p-value"]
-    if (pval > 0.05) sel[v] <- "const"
-    else if (edf < 1.5) sel[v] <- "linear"
+    if(pval > 0.05) sel[v] <- "const"
+    else if(edf < 1.5) sel[v] <- "linear"
     else sel[v] <- "rw2"
   }
   
@@ -551,7 +549,7 @@ fcov <- function(obj,
     paste0(X, "RE(main=", spobjreg,
            ", main_layer='", X,
            "', model='", m, "'",
-           if (m == "rw2") ", group=region" else "",
+           if(m == "rw2") ", group=region" else "",
            ")")
   }), collapse = " + ")
   
@@ -569,7 +567,7 @@ fcov <- function(obj,
 ###----------------###
 
 # prepare summary
-generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val) {
+generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val, model) {
 
   # Fixed effects and hyperpar
   summary_fixed <- fit$summary.fixed
@@ -628,9 +626,9 @@ generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val) {
     Value = c(
       gsub("\\.", " ", species),
       if(spatial) {
-        "NSBM.inlabru (with SPDE)"
+        paste0("NSBM.", model," (with SPDE)")
       } else {
-        "NSBM.inlabru (no SPDE)"
+        paste0("NSBM.", model," (no SPDE)")
       },
       dic_val,
       waic_val,
@@ -661,7 +659,7 @@ pred_as_tif <- function(pred, template, vars_to_export = c("mean",
   stopifnot(inherits(template, "SpatRaster"))
 
   r_stack <- lapply(vars_to_export, function(var) {
-    if (!is.null(pred[[var]])) {
+    if(!is.null(pred[[var]])) {
       df <- as.data.frame(cbind(sf::st_coordinates(pred), value = pred[[var]]))
       sf_pts <- sf::st_as_sf(df, coords = c("X", "Y"), crs = sf::st_crs(pred))
       sf_pts <- sf::st_transform(sf_pts, terra::crs(template))
@@ -674,7 +672,7 @@ pred_as_tif <- function(pred, template, vars_to_export = c("mean",
   })
 
   r_stack <- Filter(function(x) inherits(x, "SpatRaster"), r_stack)
-  if (length(r_stack) == 0) return(NULL)
+  if(length(r_stack) == 0) return(NULL)
 
   r_pred <- do.call(c, r_stack)
   return(r_pred)
@@ -688,7 +686,7 @@ make_stratified_kfolds <- function(y, K) {
   # K: número de folds
   idx1 <- which(y == 1)
   idx0 <- which(y == 0)
-  f <- integer(length(y))
+  f    <- integer(length(y))
   f[idx1] <- sample(rep(seq_len(K), length.out = length(idx1)))
   f[idx0] <- sample(rep(seq_len(K), length.out = length(idx0)))
   f
