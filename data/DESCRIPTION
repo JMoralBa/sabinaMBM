@@ -1,0 +1,31 @@
+Package: sabinaINLA
+Title: What the Package Does (One Line, Title Case)
+Version: 0.0.0.9000
+Authors@R: 
+    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),
+           comment = c(ORCID = "YOUR-ORCID-ID"))
+Description: What the package does (one paragraph).
+License: MIT + file LICENSE
+LazyData: true
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+URL: https://github.com/JMoralBa/sabinaINLA
+BugReports: https://github.com/JMoralBa/sabinaINLA/issues
+Depends:
+    R (>= 4.3.0)
+Imports:
+    sabinaNSDM,
+    inlabru,
+    sf,
+    ggplot2,
+    INLA,
+    glmnet,
+    stringi,
+    data.table,
+    tidyterra,
+    fs,
+    sgsR
+Remotes:
+    geoSABINA/sabinaNSDM
+
