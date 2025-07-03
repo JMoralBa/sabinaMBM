@@ -473,8 +473,9 @@ NSBM.multiply <- function(nsbm_obj,
       stringsAsFactors = FALSE
     )
     summary_reg <- rbind(summary_reg, cv_rows)
-    summary_df <- rbind(summary_glo, separator, summary_reg[-1,])
   }
+  summary_df <- rbind(summary_glo, separator, summary_reg[-1,])
+
   				#@@@JMB add auc de multiply???????
   				#@@@JMB rm a objetos innecesarios donde toque
   #

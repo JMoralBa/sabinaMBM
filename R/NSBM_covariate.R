@@ -470,7 +470,6 @@ NSBM.covariate <- function(nsbm_obj,
     summary_glo <- rbind(summary_glo, cv_rows)
   }
   summary_cov <- generate_summary_nsbm(fit_cov, species, spatial, lcpo_val_cov, model = "covariate")
-
   if(cv.folds > 1) {
     cv_rows <- data.frame(
       Field = c("CV folds:", "AUC mean ± sd:"),
@@ -478,8 +477,8 @@ NSBM.covariate <- function(nsbm_obj,
       stringsAsFactors = FALSE
     )
     summary_cov <- rbind(summary_cov, cv_rows)
-    summary_df <- rbind(summary_glo, separator, summary_cov[-1,])
   }
+  summary_df <- rbind(summary_glo, separator, summary_cov[-1,])
 
   #
   sabina <- list(
