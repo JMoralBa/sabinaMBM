@@ -1,8 +1,8 @@
 #' @name NSBM.covariate
 #'
-#' @title Covariate-based species distribution model
+#' @title Covariate-based species distribution model....
 #'
-#' @description bla bla
+#' @description bla bla...
 #'
 #' @param nsbm_obj An object of class `nsdm.vinput`, result from `sabinaNSDM::NSDM.SelectCovariates()`.
 #' @param output Character; `"intensity"` or `"probability"` (default).
@@ -145,6 +145,7 @@ NSBM.covariate <- function(nsbm_obj,
   cmp_glo <- indiv_fcov(vars = nsbm_obj$Selected.Variables.Global,
                         spobj = "sp_covglo",
                         tag = "GL")
+
   # Formula global
   cmp_formula_glo <- if(spatial) {
     paste0("~ IGlobal(1) + spatial(geometry, model = matern) + ", cmp_glo$cmp)
@@ -154,9 +155,8 @@ NSBM.covariate <- function(nsbm_obj,
   cmp_formula_glo <- as.formula(cmp_formula_glo)
 
   if(output == "probability") {
-    # Likelihoods
     f_spatial <- if(spatial) " + spatial" else ""
-
+    # Likelihoods
     lik_glo <- inlabru::like(
       family = family,
       formula = as.formula(paste0("presence ~ IGlobal ", f_spatial, " + ", cmp_glo$like)),
@@ -165,9 +165,7 @@ NSBM.covariate <- function(nsbm_obj,
       domain = list(geometry = mesh),
       control.family = list(link = link)
     )
-
     pred_formula_glo <- as.formula(paste0("~ 1 / (1 + exp(-(IGlobal", f_spatial, " + ", cmp_glo$like,")))"))
-
   } else {  # output = "intensity"
     lik_glo <- inlabru::like(
       family = "cp",
@@ -176,9 +174,7 @@ NSBM.covariate <- function(nsbm_obj,
       samplers = bdy_glo,
       domain = list(geometry = mesh)
     )
-
     pred_formula_glo <- as.formula(paste0("~ exp(IGlobal", f_spatial, " + ", cmp_glo$like,")"))
-  
   }
 
   # Fit global
@@ -204,7 +200,7 @@ NSBM.covariate <- function(nsbm_obj,
 
   sp_covglo <- old_sp_covglo # restore
 
-  pred_glo <- pred_as_tif(pred_glo, sp_covglo_reg) # from sf to tif
+  pred_glo <- pred_as_tif(pred_glo, sp_covglo_reg)       #@@@JMB save uncertainty?????
 
   if(spatial) {
     pred_sp_glo <- predict(fit_glo, pred.df, ~ spatial)
@@ -214,7 +210,7 @@ NSBM.covariate <- function(nsbm_obj,
   }
 
   # Add global model as new covariate of regional model.
-  SDM.global <- pred_glo[["mean"]]      #@@@JMB save uncertainty?????
+  SDM.global <- pred_glo[["mean"]]
   names(SDM.global) <- "SDM.global"
   sp_covreg <- c(sp_covreg, SDM.global)
 
@@ -232,7 +228,8 @@ NSBM.covariate <- function(nsbm_obj,
     IndVar.Regional.Covariate <- intersect(names(sel_df), names(sp_covreg))
     dropped <- setdiff(names(sp_covreg), names(sel_df))
     sp_covreg <- sp_covreg[[IndVar.Regional.Covariate]]
-    message("Removed covariates: ", paste(dropped, collapse = ", "))
+    dropped_msg <- if(length(dropped) == 0) "None" else paste(dropped, collapse = ", ")
+    message("\nRemoved covariates: ", dropped_msg, "\n")
   }
 
   # cmp regional/covariate
@@ -249,8 +246,8 @@ NSBM.covariate <- function(nsbm_obj,
   cmp_formula_cov <- as.formula(cmp_formula_cov)
 
   if(output == "probability") {
-    # Likelihoods
     f_spatial <- if(spatial) " + spatial" else ""
+    # Likelihoods
     lik_cov <- inlabru::like(
       family = family,
       formula = as.formula(paste0("presence ~ IRegional ", f_spatial, " + ", cmp_cov$like)),
@@ -260,7 +257,6 @@ NSBM.covariate <- function(nsbm_obj,
       control.family = list(link = link)
     )
     pred_formula_cov <- as.formula(paste0("~ 1 / (1 + exp(-(IRegional", f_spatial, " + ", cmp_cov$like,")))"))
-
   } else {  # output = "intensity"
     lik_cov <- inlabru::like(
       family = "cp",
@@ -270,7 +266,6 @@ NSBM.covariate <- function(nsbm_obj,
       domain = list(geometry = mesh)
     )
     pred_formula_cov <- as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_cov$like,")"))
-  
   }
 
   # fit model covariate
@@ -341,14 +336,12 @@ NSBM.covariate <- function(nsbm_obj,
     cv_res_glo <- cv_res_cov <- NULL
   }
 
-  species <- nsbm_obj$Species.Name
-
   # save covariate
+  species <- nsbm_obj$Species.Name
   if(save.output) {
+    # Create directories
     values_path <- file.path("Results", "NSBM_covariate", "Values")
     projections_path <- file.path("Results", "NSBM_covariate", "Projections")
-
-    # Create directories
     fs::dir_create(values_path, recurse = TRUE)
     fs::dir_create(projections_path, recurse = TRUE)
 
@@ -499,7 +492,7 @@ NSBM.covariate <- function(nsbm_obj,
     ),
     Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
     Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
-    Selected.Variables.Regional <- names(sp_covreg),
+    Selected.Variables.Covariate <- names(sp_covreg),
     current.projections = current.projections,
     new.projections = if(!is.null(proj_list)) rapply(proj_list, terra::wrap, how = "list") else NULL,
     Summary = summary_df
