@@ -2,7 +2,7 @@
 % Please edit documentation in R/NSBM_covariate.R
 \name{NSBM.covariate}
 \alias{NSBM.covariate}
-\title{Covariate-based species distribution model}
+\title{Covariate-based species distribution model....}
 \usage{
 NSBM.covariate(
   nsbm_obj,
@@ -61,5 +61,5 @@ A \code{logical} controlling whether environmental covariates correlated with th
 A named list of class \verb{nsbm.inlabru, including: \\item\{Species.Name\}\{Species name.\} \\item\{args\}\{List of arguments used in the function.\} \\item\{Selected.Variables.Global\}\{Names of selected global-scale covariates.\} \\item\{Selected.Variables.Regional\}\{Names of selected regional-scale covariates.\} \\item\{Selected.Variables.Covariate\}\{Names of regional covariates after dropping high correlation.\} \\item\{current.projections\}\{List with prediction: \code{pred.covariate} and, if requested, separate \code{pred.global}.\} \\item\{new.projections\}\{List of combined projections under new environmental scenarios (if }proj.new.env = TRUE\verb{).\} \\item\{Summary\}\{A }data.frame` with key evaluation metrics and significant variables.}
 }
 \description{
-bla bla
+bla bla...
 }

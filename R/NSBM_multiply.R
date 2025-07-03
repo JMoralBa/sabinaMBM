@@ -167,9 +167,8 @@ NSBM.multiply <- function(nsbm_obj,
   cmp_formula_reg <- as.formula(cmp_formula_reg)
 
   if(output == "probability") {
-    # Likelihoods
     f_spatial <- if(spatial) " + spatial" else ""
-
+    # Likelihoods
     lik_glo <- inlabru::like(
       family = family,
       formula = as.formula(paste0("presence ~ IGlobal ", f_spatial, " + ", cmp_glo$like)),
@@ -178,7 +177,6 @@ NSBM.multiply <- function(nsbm_obj,
       domain = list(geometry = mesh),
       control.family = list(link = link)
     )
-
     lik_reg <- inlabru::like(
       family = family,
       formula = as.formula(paste0("presence ~ IRegional ", f_spatial, " + ", cmp_reg$like)),
@@ -187,10 +185,8 @@ NSBM.multiply <- function(nsbm_obj,
       domain = list(geometry = mesh),
       control.family = list(link = link)
     )
-
     pred_formula_glo <- as.formula(paste0("~ 1 / (1 + exp(-(IGlobal", f_spatial, " + ", cmp_glo$like,")))"))
     pred_formula_reg <- as.formula(paste0("~ 1 / (1 + exp(-(IRegional", f_spatial, " + ", cmp_reg$like,")))"))
-
   } else {  # output = "intensity"
     lik_glo <- inlabru::like(
       family = "cp",
@@ -199,7 +195,6 @@ NSBM.multiply <- function(nsbm_obj,
       samplers = bdy_glo,
       domain = list(geometry = mesh)
     )
-
     lik_reg <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IRegional", f_spatial, " + ", cmp_reg$like)),
@@ -207,10 +202,8 @@ NSBM.multiply <- function(nsbm_obj,
       samplers = bdy_reg,
       domain = list(geometry = mesh)
     )
-
     pred_formula_glo <- as.formula(paste0("~ exp(IGlobal", f_spatial, " + ", cmp_glo$like,")"))
     pred_formula_reg <- as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_reg$like,")"))
-  
   }
 
   # Model fitting
@@ -218,13 +211,13 @@ NSBM.multiply <- function(nsbm_obj,
     components = cmp_formula_glo,
     lik_glo,
     options = list(control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE))
-    )
+  )
 
   fit_reg <- inlabru::bru(
     components = cmp_formula_reg,
     lik_reg,
     options = list(control.compute = list(dic = TRUE, waic = TRUE, cpo = TRUE))
-    )
+  )
 
   # log sum of conditional predictive ordinates
   lcpo_val_glo <- if(!is.null(fit_glo$cpo$cpo)) round(sum(log(fit_glo$cpo$cpo)), 2) else "Not computed"
@@ -243,7 +236,7 @@ NSBM.multiply <- function(nsbm_obj,
 
   sp_covglo <- old_sp_covglo # restore
 
-  pred_glo <- pred_as_tif(pred_glo, sp_covglo_reg) # from sf to tif
+  pred_glo <- pred_as_tif(pred_glo, sp_covglo_reg)
   
   if(spatial) {
     pred_sp_glo <- predict(fit_glo, pred.df, ~ spatial)
@@ -257,7 +250,7 @@ NSBM.multiply <- function(nsbm_obj,
   pred.df <- sf::st_transform(pred.df, crs)
 
   pred_reg <- predict(fit_reg, pred.df, pred_formula_reg)  
-  pred_reg <- pred_as_tif(pred_reg, sp_covreg) # from sf to tif
+  pred_reg <- pred_as_tif(pred_reg, sp_covreg)
 
   if(spatial) {
     pred_sp_reg <- predict(fit_reg, pred.df, ~ spatial)
@@ -328,7 +321,7 @@ NSBM.multiply <- function(nsbm_obj,
       warning("No new projections available!\n")
     }
 
-    # rescale 1–1000  #@@@JMB reescalar la suitability de NSBM.pure() para coherencia????
+    # rescale 1–1000  #@@@JMB reescalar la suitability de NSBM.pure() y covariate() para coherencia con sabinaNSDM?, o rescalar 0-1 multiply???
     if(rescale) {
       # global
       mn <- min(terra::values(Pred.global), na.rm = TRUE)
@@ -364,10 +357,9 @@ NSBM.multiply <- function(nsbm_obj,
 
     # save multiply
     if(save.output) {
+      # Create directories
       values_path <- file.path("Results", "NSBM_multiply", "Values")
       projections_path <- file.path("Results", "NSBM_multiply", "Projections")
-
-      # Create directories
       fs::dir_create(values_path, recurse = TRUE)
       fs::dir_create(projections_path, recurse = TRUE)
 
@@ -508,6 +500,7 @@ NSBM.multiply <- function(nsbm_obj,
 
 
 ### Helps/Auxiliars
+
 # bru model
 indiv_fcov <- function(vars,
                        spobj,
@@ -549,7 +542,6 @@ cv_individual_inlabru <- function(lik_obj,
   for (k in seq_len(cv.folds)) {
     train <- pp_data[folds != k, ]
     test <- pp_data[folds == k, ]
-
     # like for train
     lik_k <- inlabru::like(
       family = lik_obj$family,
@@ -559,19 +551,16 @@ cv_individual_inlabru <- function(lik_obj,
       domain = lik_obj$domain,
       control.family = list(link = lik_obj$control.family$link)
     )
-
     # fit mldel
     fit_k <- inlabru::bru(
       components = cmp_formula,
       lik_k,
       options = list(control.compute = list(cpo = FALSE))
     )
-
     # predcit on test & auc
     pk <- predict(fit_k, test, pred_formula)
     aucs[k] <- as.numeric(pROC::auc(test$presence, pk$mean, quiet = TRUE))
   }
-
   list(
     auc_mean = mean(aucs, na.rm = TRUE),
     auc_sd = sd(aucs, na.rm = TRUE)

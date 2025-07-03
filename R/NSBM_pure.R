@@ -166,9 +166,8 @@ NSBM.pure <- function(nsbm_obj,
   cmp <- as.formula(cmp_formula)
 
   if(output == "probability") {
-    # Likelihoods
     f_spatial <- if(spatial) " + spatial" else ""
-
+    # Likelihoods
     lik_glo <- inlabru::like(
       family = family,
       formula = as.formula(paste0("presence ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal)),
@@ -184,7 +183,6 @@ NSBM.pure <- function(nsbm_obj,
       domain = list(geometry = mesh),
       control.family = list(link = link)
     )
-
     lik_reg <- inlabru::like(
       family = family,
       formula = as.formula(paste0("presence ~ IRegional", f_spatial, " + ", cmp_cov$like$fregional)),
@@ -200,9 +198,7 @@ NSBM.pure <- function(nsbm_obj,
       domain = list(geometry = mesh),
       control.family = list(link = link)
     )
-
     pred_formula <- as.formula(paste0("~ 1 / (1 + exp(-(IRegional", f_spatial, " + ", cmp_cov$like$fregional,")))"))
-
     # Pred formula para dif family/link
     #pred_formula <- switch(family,
     #  binomial = as.formula(paste0("~ 1/(1 + exp(-(IRegional", f_spatial, " + ", cmp_cov$like$fregional, ")))")),
@@ -210,7 +206,6 @@ NSBM.pure <- function(nsbm_obj,
     #  nbinomial = as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_cov$like$fregional, ")")),
     #  stop("Family unavailable")
     #)
-
   } else {
     lik_glo <- inlabru::like(
       family = "cp",
@@ -219,7 +214,6 @@ NSBM.pure <- function(nsbm_obj,
       samplers = bdy_glo,
       domain = list(geometry = mesh)
     )
-
     lik_reg <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IRegional", f_spatial, " + ", cmp_cov$like$fregional)),
@@ -227,21 +221,11 @@ NSBM.pure <- function(nsbm_obj,
       samplers = bdy_reg,
       domain = list(geometry = mesh)
     )
-
     pred_formula <- as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_cov$like$fregional,")"))
-  
   }
 
   # k-fold CV
   if(cv.folds > 1) {
-    frm_g <- lik_glo$formula
-    dom_g <- lik_glo$domain
-    sam_g <- lik_glo$samplers
-
-    frm_r <- lik_reg$formula
-    dom_r <- lik_reg$domain
-    sam_r <- lik_reg$samplers
-
     # stratified k folds
     folds_g <- make_stratified_kfolds(pp_glo$presence, cv.folds)
     folds_r <- make_stratified_kfolds(pp_reg$presence, cv.folds)
@@ -259,18 +243,18 @@ NSBM.pure <- function(nsbm_obj,
         components = cmp,
         inlabru::like(
           family = family,
-          formula = frm_g,
+          formula = lik_glo$formula,
           data = train_g,
-          samplers = sam_g,
-          domain = dom_g,
+          samplers = lik_glo$samplers,
+          domain = lik_glo$domain,
           control.family = list(link = link)
         ),
         inlabru::like(
           family = family,
-          formula = frm_r,
+          formula = lik_reg$formula,
           data = train_r,
-          samplers = sam_r,
-          domain = dom_r,
+          samplers = lik_reg$samplers,
+          domain = lik_reg$domain,
           control.family = list(link = link)
         ),
         options = list(control.compute = list(cpo = FALSE))
@@ -342,10 +326,9 @@ NSBM.pure <- function(nsbm_obj,
 
   # save outputs
   if(save.output) {
+    # Create directories
     values_path <- file.path("Results", "NSBM_pure", "Values")
     projections_path <- file.path("Results", "NSBM_pure", "Projections")
-
-    # Create directories
     fs::dir_create(values_path, recurse = TRUE)
     fs::dir_create(projections_path, recurse = TRUE)
 
@@ -356,7 +339,7 @@ NSBM.pure <- function(nsbm_obj,
 
     # save spatial random effects
     if(!is.null(fit$summary.random)) {
-       for(ran in names(fit$summary.random)) {
+      for(ran in names(fit$summary.random)) {
         write.csv(fit$summary.random[[ran]], file = file.path(values_path, paste0(species, "_random_", ran, ".csv")), row.names = TRUE)
       }
     }
@@ -423,15 +406,16 @@ NSBM.pure <- function(nsbm_obj,
   sabina <- list(
     Species.Name = nsbm_obj$SpeciesName,
     args = list(
-      spatial = spatial,
-      prior.range = prior.range,
-      prior.sigma = prior.sigma,
-      nested_intercept = nested_intercept,
       family = family,
       link = link,
+      prior.range = prior.range,
+      prior.sigma = prior.sigma,
+      spatial = spatial,
+      nested_intercept = nested_intercept,
+      proj.new.env = proj.new.env,
       cv.folds = cv.folds,
       n.threads = n.threads,
-      proj.new.env = proj.new.env
+      seed = seed
     ),
     Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
     Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
@@ -655,6 +639,7 @@ pred_as_tif <- function(pred, template, vars_to_export = c("mean",
                                                            "median",
                                                            "sd.mc_std_err",
                                                            "mean.mc_std_err")) {
+
   stopifnot(inherits(pred, c("bru_prediction", "sf")))
   stopifnot(inherits(template, "SpatRaster"))
 
@@ -682,11 +667,11 @@ pred_as_tif <- function(pred, template, vars_to_export = c("mean",
 
 
 make_stratified_kfolds <- function(y, K) {
-  # y: vector de 0/1
+  # y: vector de 1/0
   # K: número de folds
   idx1 <- which(y == 1)
   idx0 <- which(y == 0)
-  f    <- integer(length(y))
+  f <- integer(length(y))
   f[idx1] <- sample(rep(seq_len(K), length.out = length(idx1)))
   f[idx0] <- sample(rep(seq_len(K), length.out = length(idx0)))
   f
