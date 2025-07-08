@@ -8,10 +8,9 @@
 #' @param output Character; `"intensity"` or `"probability"` (default).
 #' @param family  Character; `"binomial"` (default), supported `"poisson"`, `"nbinomial"`, or `"cp"`.
 #' @param link  Character; link function `"logit"` (default for `family = "binomial"`), otherwise `"log"`.
-#' @param prior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
-#' @param prior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
-#' @param spatial Logical. Include spatial latent field (SPDE) in the model (default: TRUE). 
-#' @param mesh An INLA mesh object created externally with `create_mesh()`. Required if `spatial = TRUE`.
+#' @param spde.mesh An INLA mesh object created externally with `create_mesh()`. includes spatial latent field (SPDE) in the model (default: NULL). 
+#' @param spde.pcprior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
+#' @param spde.pcprior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
 #' @param rm.corr (\emph{optional, default} \code{TRUE}) \cr
 #' A \code{logical} controlling whether environmental covariates correlated with the global model should be removed. The threshold value used for identifying collinearity is the same used with \code{\link{NSDM.SelectCovariates}} function.
 #' #@param corcut (\emph{optional, default} \code{0.7}) \cr
@@ -39,10 +38,9 @@ NSBM.covariate <- function(nsbm_obj,
                            output = "probability",
                            family = "binomial",
                            link = "logit",
-                           prior.range = c(5, 0.01),
-                           prior.sigma = c(1, 0.01),
-                           spatial = TRUE,
-                           mesh = NULL,
+                           spde.pcprior.range = c(5, 0.01),
+                           spde.pcprior.sigma = c(1, 0.01),
+                           spde.mesh = NULL,
                            rm.corr = TRUE,
                            corcut = 0.7,     #@@@JMB podemos obligar a tomar el de nsbm_obj$args$corcut
                            proj.new.env = TRUE,
@@ -58,8 +56,9 @@ NSBM.covariate <- function(nsbm_obj,
   if(!(output %in% c("probability", "intensity"))) {
     stop("Invalid 'output'. Please, use 'probability' or 'intensity'.")
   }
-  if(spatial && is.null(mesh)) {
-    stop("If spatial = TRUE, you must provide a mesh object using create_mesh().")
+  if(is.null(spde.mesh)) {
+    warning("`spde.mesh` is NULL, so the spatial (SPDE) component will be omitted. ",
+            "To include it, create a mesh with `create_mesh()` and pass it to `spde.mesh`.")
   }
   if(!is.null(seed)) {
     if(!is.numeric(seed) || length(seed) != 1) {
@@ -134,8 +133,8 @@ NSBM.covariate <- function(nsbm_obj,
   sf::st_crs(bdy_reg) <- crs
 
   # SPDE
-  if(spatial) {
-    matern <- INLA::inla.spde2.pcmatern(mesh, prior.range = prior.range, prior.sigma = prior.sigma)
+  if(!is.null(spde.mesh)) {
+    matern <- INLA::inla.spde2.pcmatern(mesh, prior.range = spde.pcprior.range, prior.sigma = spde.pcprior.sigma)
   }
 
   # prefilter select terms
@@ -147,15 +146,15 @@ NSBM.covariate <- function(nsbm_obj,
                         tag = "GL")
 
   # Formula global
-  cmp_formula_glo <- if(spatial) {
+  cmp_formula_glo <- if(!is.null(spde.mesh)) {
     paste0("~ IGlobal(1) + spatial(geometry, model = matern) + ", cmp_glo$cmp)
   } else {
     paste0("~ IGlobal(1) + ", cmp_glo$cmp)
   }
   cmp_formula_glo <- as.formula(cmp_formula_glo)
 
+  f_spatial <- if(!is.null(spde.mesh)) " + spatial" else ""
   if(output == "probability") {
-    f_spatial <- if(spatial) " + spatial" else ""
     # Likelihoods
     lik_glo <- inlabru::like(
       family = family,
@@ -202,7 +201,7 @@ NSBM.covariate <- function(nsbm_obj,
 
   pred_glo <- pred_as_tif(pred_glo, sp_covglo_reg)       #@@@JMB save uncertainty?????
 
-  if(spatial) {
+  if(!is.null(spde.mesh)) {
     pred_sp_glo <- predict(fit_glo, pred.df, ~ spatial)
     pred_sp_glo <- pred_as_tif(pred_sp_glo, sp_covglo_reg)
   } else {
@@ -238,15 +237,15 @@ NSBM.covariate <- function(nsbm_obj,
                         tag = "RE")
 
   # Formula
-  cmp_formula_cov <- if(spatial) {
+  cmp_formula_cov <- if(!is.null(spde.mesh)) {
     paste0("~ IRegional(1) + spatial(geometry, model = matern) + ", cmp_cov$cmp)
   } else {
     paste0("~ IRegional(1) + ", cmp_cov$cmp)
   }
   cmp_formula_cov <- as.formula(cmp_formula_cov)
 
+  f_spatial <- if(!is.null(spde.mesh)) " + spatial" else ""
   if(output == "probability") {
-    f_spatial <- if(spatial) " + spatial" else ""
     # Likelihoods
     lik_cov <- inlabru::like(
       family = family,
@@ -286,7 +285,7 @@ NSBM.covariate <- function(nsbm_obj,
   pred_cov <- predict(fit_cov, pred.df, pred_formula_cov)  
   pred_cov <- pred_as_tif(pred_cov, sp_covreg)
 
-  if(spatial) {
+  if(!is.null(spde.mesh)) {
     pred_sp_cov <- predict(fit_cov, pred.df, ~ spatial)
     pred_sp_cov <- pred_as_tif(pred_sp_cov, sp_covreg)
   } else {
@@ -452,6 +451,7 @@ NSBM.covariate <- function(nsbm_obj,
   }
 
   # summary
+  spatial <- if(!is.null(spde.mesh)) TRUE else FALSE
   separator <- data.frame(Field = "--------------------------------", Value = "---------------------------", stringsAsFactors = FALSE)
   summary_glo <- generate_summary_nsbm(fit_glo, species, spatial, lcpo_val_glo, model = "global")
   if(cv.folds > 1) {
@@ -479,9 +479,9 @@ NSBM.covariate <- function(nsbm_obj,
     args = list(output = output,
        family = family, 
        link = link,
-       prior.range = prior.range,
-       prior.sigma = prior.sigma,
-       spatial = spatial, 
+       spde.mesh = if(!is.null(spde.mesh)) TRUE else FALSE,
+       spde.pcprior.range = spde.pcprior.range,
+       spde.pcprior.sigma = spde.pcprior.sigma,
        rm.corr = rm.corr,
        corcut = corcut,
        proj.new.env = proj.new.env,

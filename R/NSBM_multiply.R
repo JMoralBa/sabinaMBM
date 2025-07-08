@@ -9,10 +9,9 @@
 #' @param output Character; `"intensity"` or `"probability"` (default).
 #' @param family  Character; `"binomial"` (default), supported `"poisson"`, `"nbinomial"`, or `"cp"`.
 #' @param link  Character; link function `"logit"` (default for `family = "binomial"`), otherwise `"log"`.
-#' @param prior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
-#' @param prior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
-#' @param spatial Logical. Include spatial latent field (SPDE) in the model (default: TRUE). 
-#' @param mesh An INLA mesh object created externally with `create_mesh()`. Required if `spatial = TRUE`.
+#' @param spde.mesh An INLA mesh object created externally with `create_mesh()`. includes spatial latent field (SPDE) in the model (default: NULL). 
+#' @param spde.pcprior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
+#' @param spde.pcprior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
 #' @param method Character; combination rule for predictions: \code{"geometric"} (default) or \code{"arithmetic"}.
 #' @param rescale Logical; if `TRUE` (default), rescales combined prediction to the range [0,1].
 #' @param proj.new.env Logical; whether to compute predictions under new scenarios (default: TRUE).
@@ -36,10 +35,9 @@ NSBM.multiply <- function(nsbm_obj,
                           output = "probability",
                           family = "binomial",
                           link = "logit",
-                          prior.range = c(5, 0.01),
-                          prior.sigma = c(1, 0.01),
-                          spatial = TRUE,
-                          mesh = NULL,
+                          spde.mesh = NULL,
+                          spde.pcprior.range = c(5, 0.01),
+                          spde.pcprior.sigma = c(1, 0.01),
                           method = "geometric",
                           rescale = TRUE,
                           proj.new.env = TRUE,
@@ -55,8 +53,9 @@ NSBM.multiply <- function(nsbm_obj,
   if(!(output %in% c("probability", "intensity"))) {
     stop("Invalid 'output'. Please, use 'probability' or 'intensity'.")
   }
-  if(spatial && is.null(mesh)) {
-    stop("If spatial = TRUE, you must provide a mesh object using create_mesh().")
+  if(is.null(spde.mesh)) {
+    warning("`spde.mesh` is NULL, so the spatial (SPDE) component will be omitted. ",
+            "To include it, create a mesh with `create_mesh()` and pass it to `spde.mesh`.")
   }
   if(!is.null(seed)) {
     if(!is.numeric(seed) || length(seed) != 1) {
@@ -135,8 +134,8 @@ NSBM.multiply <- function(nsbm_obj,
   sf::st_crs(bdy_reg) <- crs
 
   # SPDE
-  if(spatial) {
-    matern <- INLA::inla.spde2.pcmatern(mesh, prior.range = prior.range, prior.sigma = prior.sigma)
+  if(!is.null(spde.mesh)) {
+    matern <- INLA::inla.spde2.pcmatern(spde.mesh, prior.range = spde.pcprior.range, prior.sigma = spde.pcprior.sigma)
   }
 
   ## prefilter select terms
@@ -174,7 +173,7 @@ NSBM.multiply <- function(nsbm_obj,
       formula = as.formula(paste0("presence ~ IGlobal ", f_spatial, " + ", cmp_glo$like)),
       data = pp_glo,
       samplers = bdy_glo,
-      domain = list(geometry = mesh),
+      domain = list(geometry = spde.mesh),
       control.family = list(link = link)
     )
     lik_reg <- inlabru::like(
@@ -182,7 +181,7 @@ NSBM.multiply <- function(nsbm_obj,
       formula = as.formula(paste0("presence ~ IRegional ", f_spatial, " + ", cmp_reg$like)),
       data = pp_reg,
       samplers = bdy_reg,
-      domain = list(geometry = mesh),
+      domain = list(geometry = spde.mesh),
       control.family = list(link = link)
     )
     pred_formula_glo <- as.formula(paste0("~ 1 / (1 + exp(-(IGlobal", f_spatial, " + ", cmp_glo$like,")))"))
@@ -193,14 +192,14 @@ NSBM.multiply <- function(nsbm_obj,
       formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, " + ", cmp_glo$like)),
       data = pres_glo,
       samplers = bdy_glo,
-      domain = list(geometry = mesh)
+      domain = list(geometry = spde.mesh)
     )
     lik_reg <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IRegional", f_spatial, " + ", cmp_reg$like)),
       data = pres_reg,
       samplers = bdy_reg,
-      domain = list(geometry = mesh)
+      domain = list(geometry = spde.mesh)
     )
     pred_formula_glo <- as.formula(paste0("~ exp(IGlobal", f_spatial, " + ", cmp_glo$like,")"))
     pred_formula_reg <- as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_reg$like,")"))
@@ -238,7 +237,7 @@ NSBM.multiply <- function(nsbm_obj,
 
   pred_glo <- pred_as_tif(pred_glo, sp_covglo_reg)
   
-  if(spatial) {
+  if(!is.null(spde.mesh)) {
     pred_sp_glo <- predict(fit_glo, pred.df, ~ spatial)
     pred_sp_glo <- pred_as_tif(pred_sp_glo, sp_covglo_reg)
   } else {
@@ -252,7 +251,7 @@ NSBM.multiply <- function(nsbm_obj,
   pred_reg <- predict(fit_reg, pred.df, pred_formula_reg)  
   pred_reg <- pred_as_tif(pred_reg, sp_covreg)
 
-  if(spatial) {
+  if(!is.null(spde.mesh)) {
     pred_sp_reg <- predict(fit_reg, pred.df, ~ spatial)
     pred_sp_reg <- pred_as_tif(pred_sp_reg, sp_covreg)
   } else {
@@ -447,6 +446,7 @@ NSBM.multiply <- function(nsbm_obj,
   }
 
   # summary
+  spatial <- if(!is.null(spde.mesh)) TRUE else FALSE
   separator <- data.frame(Field = "--------------------------------", Value = "---------------------------", stringsAsFactors = FALSE)
   summary_glo <- generate_summary_nsbm(fit_glo, species, spatial, lcpo_val_glo, model = "global")
   if(cv.folds > 1) {
@@ -476,9 +476,9 @@ NSBM.multiply <- function(nsbm_obj,
     args = list(output = output,
        family = family, 
        link = link,
-       prior.range = prior.range,
-       prior.sigma = prior.sigma,
-       spatial = spatial, 
+       prior.range = spde.pcprior.range,
+       prior.sigma = spde.pcprior.sigma,
+       spde.mesh = if(!is.null(spde.mesh)) TRUE else FALSE,
        method = method,
        rescale = rescale,
        proj.new.env = proj.new.env,
