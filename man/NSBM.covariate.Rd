@@ -9,10 +9,9 @@ NSBM.covariate(
   output = "probability",
   family = "binomial",
   link = "logit",
-  prior.range = c(5, 0.01),
-  prior.sigma = c(1, 0.01),
-  spatial = TRUE,
-  mesh = NULL,
+  spde.pcprior.range = c(5, 0.01),
+  spde.pcprior.sigma = c(1, 0.01),
+  spde.mesh = NULL,
   rm.corr = TRUE,
   corcut = 0.7,
   proj.new.env = TRUE,
@@ -32,13 +31,11 @@ NSBM.covariate(
 
 \item{link}{Character; link function \code{"logit"} (default for \code{family = "binomial"}), otherwise \code{"log"}.}
 
-\item{prior.range}{Numeric vector length 2. Prior on spatial range (e.g., \code{c(5, 0.01)}).}
+\item{spde.pcprior.range}{Numeric vector length 2. Prior on spatial range (e.g., \code{c(5, 0.01)}).}
 
-\item{prior.sigma}{Numeric vector length 2. Prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
+\item{spde.pcprior.sigma}{Numeric vector length 2. Prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
 
-\item{spatial}{Logical. Include spatial latent field (SPDE) in the model (default: TRUE).}
-
-\item{mesh}{An INLA mesh object created externally with \code{create_mesh()}. Required if \code{spatial = TRUE}.}
+\item{spde.mesh}{An INLA mesh object created externally with \code{create_mesh()}. includes spatial latent field (SPDE) in the model (default: NULL).}
 
 \item{rm.corr}{(\emph{optional, default} \code{TRUE}) \cr
 A \code{logical} controlling whether environmental covariates correlated with the global model should be removed. The threshold value used for identifying collinearity is the same used with \code{\link{NSDM.SelectCovariates}} function.

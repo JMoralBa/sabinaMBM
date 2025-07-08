@@ -6,18 +6,15 @@
 \usage{
 NSBM.pure(
   nsbm_obj,
-  output = "probability",
-  family = "binomial",
-  link = "logit",
-  prior.range = c(5, 0.01),
-  prior.sigma = c(1, 0.01),
-  nested_intercept = TRUE,
-  auto_select_terms = FALSE,
-  spatial = TRUE,
-  mesh = NULL,
-  n.threads = 1,
-  cv.folds = 1,
+  family = binomial(link = "logit"),
+  nested.intercept = TRUE,
+  spde.mesh = NULL,
+  spde.pcprior.range = NULL,
+  spde.pcprior.sigma = NULL,
+  covariate.pcprior.smoothness = NULL,
   proj.new.env = TRUE,
+  cv.folds = 1,
+  n.threads = 1,
   seed = NULL,
   save.output = FALSE
 )
@@ -25,29 +22,28 @@ NSBM.pure(
 \arguments{
 \item{nsbm_obj}{An object of class \code{nsdm.vinput}, result from \code{sabinaNSDM::NSDM.SelectCovariates()}.}
 
-\item{output}{Character, \code{"intensity"} or \code{"probability"} (default).}
+\item{family}{A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity).}
 
-\item{family}{Character; \code{"binomial"} (default), supported \code{"poisson"}, \code{"nbinomial"}, or \code{"cp"}.}
+\item{nested.intercept}{Logical; if TRUE = model regional intercept as deviation from global.}
 
-\item{link}{Character; link function \code{"logit"} (default for \code{family = "binomial"}), otherwise \code{"log"}.}
+\item{spde.mesh}{An INLA mesh object created externally with \code{create_mesh()}. includes spatial latent field (SPDE) in the model (default: NULL).}
 
-\item{prior.range}{Numeric vector length 2. Prior on spatial range (e.g., \code{c(5, 0.01)}).}
+\item{spde.pcprior.range}{Numeric vector length 2. Prior on spatial range (e.g., \code{c(5, 0.01)}).}
 
-\item{prior.sigma}{Numeric vector length 2. Prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
+\item{spde.pcprior.sigma}{Numeric vector length 2. Prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
 
-\item{nested_intercept}{Logical; if TRUE = model regional intercept as deviation from global.}
+\item{covariate.pcprior.smoothness}{PC-prior for RW2 smoothing of covariates:
+\itemize{
+\item \code{NULL} (default): no smoothing, all effects constant
+\item \code{list(u, alpha)}: choose your smoothing (e.g., list(u=0.5, alpha=0.01)
+\item \code{"auto"}: analyse a few (u, alpha) combinations and take the one with best fit (lowest WAIC)
+}}
 
-\item{auto_select_terms}{Logical; if TRUE, select for each covariate automatically between “const”, “linear” or “rw2”.  #@@JMB no funciona bien aun}
-
-\item{spatial}{Logical; include spatial latent field (SPDE) in the model (default: TRUE).}
-
-\item{mesh}{An INLA mesh object created externally with \code{create_mesh()}. Required only if \code{spatial = TRUE}. Ignored if \code{spatial = FALSE}.}
-
-\item{n.threads}{Number of threads for analysis}
+\item{proj.new.env}{Logical. Whether to compute predictions under new scenarios (default: TRUE).}
 
 \item{cv.folds}{Number of k-folds for cross-validation (default: 1 = no CV). If >1, returns mean ± sd AUC for global and regional models.}
 
-\item{proj.new.env}{Logical. Whether to compute predictions under new scenarios (default: TRUE).}
+\item{n.threads}{Number of threads for analysis}
 
 \item{seed}{Optional integer to set the random seed for reproducibility.}
 
@@ -61,9 +57,22 @@ A named list of class \code{nsbm.inlabru} with the following elements:
 \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
 \item{current.projections}{List with: prediction (\code{pred}) and spatial field (\code{pred_sp}).}
 \item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
-\item{Summary}{\code{data.frame} with key evaluation metrics and significant variables.} #@@JMB revisar y refinar
+\item{Summary}{\code{data.frame} with key evaluation metrics and significant variables.}  #@@JMB revisar y refinar
 }
 \description{
 Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling
-with spatial structure via INLA and inlabru.
+with spatial structure via INLA and inlabru...
+}
+\details{
+\itemize{
+\item binomial(logit): Use for presence–absence (1/0) data. Output: probability.    #@@JMB revisar todo lo relacionado con family-link (opciones, inverse link in pred, ...)
+\item binomial(cloglog): Use for presence–absence (1/0) data when 1s are very rare (lots of 0s). Output: probability.
+\item poisson(log): Use for non-overdispersed counts (e.g. abundance counts 0,1,2…). Output: expected count
+\item nbinomial(log): Use for overdispersed counts (variance > mean) (e.g. xx). Output: expected count
+\item gaussian(identity): Use for continuous responses normal distribution (e.g. xx). Output: predicted value on original scale.
+\item gaussian(log): Use for strictly positive, skewed continuous data (e.g. xx). Output: predicted value on original scale.
+\item beta(logit): Use for proportions in (0,1) (e.g. rescaled canopy cover). Output: predicted proportion
+\item tweedie(log): Use for semicontinuous data with many zeros and a continuous positive tail (e.g. xx). Output: expected value
+\item cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
+}
 }
