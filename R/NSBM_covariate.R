@@ -543,7 +543,7 @@ NSBM.covariate <- function(nsbm_obj,
     ),
     Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
     Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
-    Selected.Variables.Covariate <- names(sp_covreg),
+    Selected.Variables.Covariate = names(sp_covreg),
     current.projections = current.projections,
     new.projections = if(!is.null(proj_list)) rapply(proj_list, terra::wrap, how = "list") else NULL,
     Summary = summary_df
