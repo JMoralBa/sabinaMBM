@@ -93,41 +93,38 @@ NSBM.multiply <- function(nsbm_obj,
     new.projections <- NULL
   }
 
-  # Prepare data
-  # GLOBAL
-  pres_glo <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Global, coords = c("x", "y"))
-  abs_glo <- sf::st_as_sf(nsbm_obj$Background.XY.Global, coords = c("x", "y"))
+  # Data preparation
   sp_covglo <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
-  crs <- sf::st_crs(sp_covglo)
-  sf::st_crs(pres_glo) <- crs
-  sf::st_crs(abs_glo) <- crs
-
-  pres_glo <- sf::st_transform(pres_glo, crs)
-  pres_glo$presence <- 1L
-  abs_glo$presence <- 0L
-  pp_glo <- rbind(pres_glo, abs_glo)
-
-  # REGIONAL
-  pres_reg <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Regional, coords = c("x", "y"))
-  abs_reg  <- sf::st_as_sf(nsbm_obj$Background.XY.Regional, coords = c("x", "y"))
   sp_covreg <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
-  sf::st_crs(pres_reg) <- crs
-  sf::st_crs(abs_reg) <- crs
 
-  pres_reg <- sf::st_transform(pres_reg, crs)
-  pres_reg$presence <- 1L
-  abs_reg$presence  <- 0L
-  pp_reg <- rbind(pres_reg, abs_reg)
+  crs <- sf::st_crs(sp_covglo)
 
+  pp_glo <- rbind(
+    cbind(nsbm_obj$SpeciesData.XY.Global,
+          resp = if(!is.null(nsbm_obj$Response.Global)) nsbm_obj$Response.Global else 1L),  #@@@JMB nsbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
+    cbind(nsbm_obj$Background.XY.Global,                                                    # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
+          resp = 0L)
+  )
+  pp_reg <- rbind(
+    cbind(nsbm_obj$SpeciesData.XY.Regional,
+          resp = if(!is.null(nsbm_obj$Response.Regional)) nsbm_obj$Response.Regional else 1L),  
+    cbind(nsbm_obj$Background.XY.Regional,
+          resp = 0L)
+  )
+
+  pp_glo <- sf::st_as_sf(pp_glo, coords = c("x","y"), crs = crs) %>%  
+            sf::st_transform(crs)
+  pp_reg <- sf::st_as_sf(pp_reg, coords = c("x","y"), crs = crs) %>% 
+            sf::st_transform(crs)
+
+  # Spatial domain definition
   pts_reg <- sf::st_as_sf(as.points(sp_covreg))
   sf::st_crs(pts_reg) <- crs
   pts_reg <- sf::st_transform(pts_reg, crs) 
 
-  geom_comb <- c(sf::st_geometry(pres_glo), sf::st_geometry(pts_reg))
-  aux <- sf::st_sf(geometry = geom_comb)
+  aux <- sf::st_sf(geometry = c(sf::st_geometry(pp_glo), sf::st_geometry(pts_reg)))
   sf::st_crs(aux) <- crs
 
-  # Spatial domain definition
   bdy_glo <- sf::st_convex_hull(sf::st_union(aux))
   bdy_reg <- sf::st_union(sf::st_make_valid(sf::st_as_sf(raster::rasterToPolygons(raster::raster(sp_covreg)))))
   sf::st_crs(bdy_glo) <- crs
@@ -135,10 +132,14 @@ NSBM.multiply <- function(nsbm_obj,
 
   # SPDE
   if(!is.null(spde.mesh)) {
-    matern <- INLA::inla.spde2.pcmatern(spde.mesh, prior.range = spde.pcprior.range, prior.sigma = spde.pcprior.sigma)
+    matern <- INLA::inla.spde2.pcmatern(
+      mesh = spde.mesh, 
+      prior.range = spde.pcprior.range, 
+      prior.sigma = spde.pcprior.sigma
+    )
   }
 
-  ## prefilter select terms
+  # auto pc-prior spline rw2 selection
   #...
 
   # cmp
@@ -165,12 +166,13 @@ NSBM.multiply <- function(nsbm_obj,
   }
   cmp_formula_reg <- as.formula(cmp_formula_reg)
 
+  f_spatial <- if(spatial) " + spatial" else ""
+
   if(output == "probability") {
-    f_spatial <- if(spatial) " + spatial" else ""
     # Likelihoods
     lik_glo <- inlabru::like(
       family = family,
-      formula = as.formula(paste0("presence ~ IGlobal ", f_spatial, " + ", cmp_glo$like)),
+      formula = as.formula(paste0("resp ~ IGlobal ", f_spatial, " + ", cmp_glo$like)),
       data = pp_glo,
       samplers = bdy_glo,
       domain = list(geometry = spde.mesh),
@@ -178,7 +180,7 @@ NSBM.multiply <- function(nsbm_obj,
     )
     lik_reg <- inlabru::like(
       family = family,
-      formula = as.formula(paste0("presence ~ IRegional ", f_spatial, " + ", cmp_reg$like)),
+      formula = as.formula(paste0("resp ~ IRegional ", f_spatial, " + ", cmp_reg$like)),
       data = pp_reg,
       samplers = bdy_reg,
       domain = list(geometry = spde.mesh),
@@ -307,7 +309,6 @@ NSBM.multiply <- function(nsbm_obj,
 
   for(i in seq_along(Scenarios)) {
     projmodel <- Scenarios[i]
-
     if(projmodel == "Current") {
       Pred.global <- pred_glo[["mean"]]    #@@@JMB ver si guardamos incertidumbres de pred_glo y pred_reg
       Pred.regional <- pred_reg[["mean"]]
@@ -315,11 +316,9 @@ NSBM.multiply <- function(nsbm_obj,
       Pred.global <- pred_glo_scenarios[[projmodel]]
       Pred.regional <- pred_reg_scenarios[[projmodel]]
     }
-
     if(projmodel != "Current" && (is.null(nsbm_obj$Scenarios) || length(nsbm_obj$Scenarios) == 0)) {
       warning("No new projections available!\n")
     }
-
     # rescale 1–1000  #@@@JMB reescalar la suitability de NSBM.pure() y covariate() para coherencia con sabinaNSDM?, o rescalar 0-1 multiply???
     if(rescale) {
       # global
@@ -337,7 +336,6 @@ NSBM.multiply <- function(nsbm_obj,
         fun = function(x) ((x - mn) / (mx - mn) * 999) + 1
       )
     }
-
     # geometric/arithmetic
     if(tolower(method) == "geometric") {
       res.average <- sqrt(Pred.global * Pred.regional)
@@ -346,14 +344,12 @@ NSBM.multiply <- function(nsbm_obj,
     }
     names(res.average) <- "mean"
     res.average <- terra::rast(terra::wrap(res.average))
-
     if(projmodel == "Current") {
       current.projections$pred.multiply <- setNames(res.average, paste0(species, ".Current"))
     } else if (!is.null(new.projections)) {
       nm <- paste0("pred.", projmodel)
       new.projections[[nm]] <- setNames(res.average, paste0(species, ".", projmodel))
     }
-
     # save multiply
     if(save.output) {
       # Create directories
@@ -409,7 +405,7 @@ NSBM.multiply <- function(nsbm_obj,
     )
     write.csv(eval_metrics, file = file.path(values_path, paste0(species, "_evaluation_regional.csv")), row.names = FALSE)
 
-    # Save CPO values (one per observation)   #@@@JMB useful for leave-one-out diagnostics or model comparison??
+    # Save CPO values (one per observation)
     write.csv(data.frame(CPO = fit_glo$cpo$cpo), file = file.path(values_path, paste0(species, "_pointwise_CPO_global.csv")), row.names = FALSE)
     write.csv(data.frame(CPO = fit_reg$cpo$cpo), file = file.path(values_path, paste0(species, "_pointwise_CPO_regional.csv")), row.names = FALSE)
 
@@ -559,7 +555,7 @@ cv_individual_inlabru <- function(lik_obj,
     )
     # predcit on test & auc
     pk <- predict(fit_k, test, pred_formula)
-    aucs[k] <- as.numeric(pROC::auc(test$presence, pk$mean, quiet = TRUE))
+    aucs[k] <- as.numeric(pROC::auc(test$resp, pk$mean, quiet = TRUE))
   }
   list(
     auc_mean = mean(aucs, na.rm = TRUE),

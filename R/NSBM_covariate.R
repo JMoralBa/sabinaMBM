@@ -5,9 +5,7 @@
 #' @description bla bla...
 #'
 #' @param nsbm_obj An object of class `nsdm.vinput`, result from `sabinaNSDM::NSDM.SelectCovariates()`.
-#' @param output Character; `"intensity"` or `"probability"` (default).
-#' @param family  Character; `"binomial"` (default), supported `"poisson"`, `"nbinomial"`, or `"cp"`.
-#' @param link  Character; link function `"logit"` (default for `family = "binomial"`), otherwise `"log"`.
+#' @param family  A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity). 
 #' @param spde.mesh An INLA mesh object created externally with `create_mesh()`. includes spatial latent field (SPDE) in the model (default: NULL). 
 #' @param spde.pcprior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
 #' @param spde.pcprior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
@@ -22,6 +20,16 @@
 #' @param save.output Logical; if TRUE, saves key model outputs (predictions, evaluation, summary ...).
 #' @param save.independent Logical; if `TRUE`, also saves the individual global and regional model vlaues and predictions.
 #'
+#' @details
+#' - binomial(logit): Use for presence–absence (1/0) data. Output: probability.    #@@@JMB revisar todo lo relacionado con family-link (opciones, inverse link in pred, ...)
+#' - binomial(cloglog): Use for presence–absence (1/0) data when 1s are very rare (lots of 0s). Output: probability.
+#' - poisson(log): Use for non-overdispersed counts (e.g. abundance counts 0,1,2…). Output: expected count
+#' - nbinomial(log): Use for overdispersed counts (variance > mean) (e.g. xx). Output: expected count
+#' - gaussian(identity): Use for continuous responses normal distribution (e.g. xx). Output: predicted value on original scale.
+#' - gaussian(log): Use for strictly positive, skewed continuous data (e.g. xx). Output: predicted value on original scale.
+#' - beta(logit): Use for proportions in (0,1) (e.g. rescaled canopy cover). Output: predicted proportion
+#' - tweedie(log): Use for semicontinuous data with many zeros and a continuous positive tail (e.g. xx). Output: expected value
+#' - cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
 #'
 #' @return A named list of class `nsbm.inlabru, including:
 #' \item{Species.Name}{Species name.}
@@ -35,9 +43,7 @@
 #'
 #' @export
 NSBM.covariate <- function(nsbm_obj,
-                           output = "probability",
-                           family = "binomial",
-                           link = "logit",
+                           family = binomial(link = "logit"), # family object binomial(), poisson(), etc., o "cp" para intensity (procesos puntuales)
                            spde.pcprior.range = c(5, 0.01),
                            spde.pcprior.sigma = c(1, 0.01),
                            spde.mesh = NULL,
@@ -48,13 +54,38 @@ NSBM.covariate <- function(nsbm_obj,
                            cv.folds = 1,
                            seed = NULL,
                            save.output = FALSE,
-                          save.independent = FALSE) {
+                           save.independent = FALSE) {
 
   if(!inherits(nsbm_obj, "nsdm.vinput")) {
     stop("The 'nsbm_obj' must be of class 'nsdm.vinput', Please see sabinaNSDM::NSDM.SelectCovariates().")
   }
-  if(!(output %in% c("probability", "intensity"))) {
-    stop("Invalid 'output'. Please, use 'probability' or 'intensity'.")
+  if(inherits(family, "family")) {
+    fam <- family$family
+    lnk <- family$link
+  } else if(is.character(family) && length(family) == 1 && family == "cp") {
+    fam <- "cp"
+    lnk <- NULL
+  } else {
+    stop("`family` must be either\n",
+         "  - a standard family() object (e.g. binomial(link = 'logit'), poisson(link = 'log'), etc.)\n",
+         "  - the string 'cp' for a Cox process.")  #@@@JMB poner permitidos o enviar a ?NSBM.pure details?
+  }
+  valid_links <- list(binomial = c("logit", "cloglog"),
+                      poisson = "log",
+                      nbinomial = "log",
+                      gaussian = c("identity", "log"),
+                      beta = "logit",
+                      tweedie = "log",
+                      cp = NULL)
+  if(!fam %in% names(valid_links)) {
+    stop("Unsupported family ", fam, ".\n",
+    "Supported families are: ", paste(names(valid_links), collapse = ", "), "\n",
+    "Please, see ?NSBM.covariate details for more.")
+  }
+  if(!is.null(lnk) && !lnk %in% valid_links[[fam]]) {
+    stop("Link `", lnk, "` is not allowed for family `", fam, "`.\n",
+    "Allowed links for '", fam, "': ", paste(valid_links[[fam]], collapse = ", "), ".\n",
+   "Please, see ?NSBM.covariate details for more.")
   }
   if(is.null(spde.mesh)) {
     warning("`spde.mesh` is NULL, so the spatial (SPDE) component will be omitted. ",
@@ -92,41 +123,38 @@ NSBM.covariate <- function(nsbm_obj,
     new.projections <- NULL
   }
 
-  # Prepare data
-  # GLOBAL
-  pres_glo <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Global, coords = c("x", "y"))
-  abs_glo  <- sf::st_as_sf(nsbm_obj$Background.XY.Global, coords = c("x", "y"))
+  # Data preparation
   sp_covglo <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
-  crs <- sf::st_crs(sp_covglo)
-  sf::st_crs(pres_glo) <- crs
-  sf::st_crs(abs_glo) <- crs
-
-  pres_glo <- sf::st_transform(pres_glo, crs)
-  pres_glo$presence <- 1L
-  abs_glo$presence <- 0L
-  pp_glo <- rbind(pres_glo, abs_glo)
-
-  # REGIONAL
-  pres_reg <- sf::st_as_sf(nsbm_obj$SpeciesData.XY.Regional, coords = c("x", "y"))
-  abs_reg <- sf::st_as_sf(nsbm_obj$Background.XY.Regional, coords = c("x", "y"))
   sp_covreg <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
-  sf::st_crs(pres_reg) <- crs
-  sf::st_crs(abs_reg) <- crs
 
-  pres_reg <- sf::st_transform(pres_reg, crs)
-  pres_reg$presence <- 1L
-  abs_reg$presence  <- 0L
-  pp_reg <- rbind(pres_reg, abs_reg)
+  crs <- sf::st_crs(sp_covglo)
 
+  pp_glo <- rbind(
+    cbind(nsbm_obj$SpeciesData.XY.Global,
+          resp = if(!is.null(nsbm_obj$Response.Global)) nsbm_obj$Response.Global else 1L),  #@@@JMB nsbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
+    cbind(nsbm_obj$Background.XY.Global,                                                    # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
+          resp = 0L)
+  )
+  pp_reg <- rbind(
+    cbind(nsbm_obj$SpeciesData.XY.Regional,
+          resp = if(!is.null(nsbm_obj$Response.Regional)) nsbm_obj$Response.Regional else 1L),  
+    cbind(nsbm_obj$Background.XY.Regional,
+          resp = 0L)
+  )
+
+  pp_glo <- sf::st_as_sf(pp_glo, coords = c("x","y"), crs = crs) %>%  
+            sf::st_transform(crs)
+  pp_reg <- sf::st_as_sf(pp_reg, coords = c("x","y"), crs = crs) %>% 
+            sf::st_transform(crs)
+
+  # Spatial domain definition
   pts_reg <- sf::st_as_sf(as.points(sp_covreg))
   sf::st_crs(pts_reg) <- crs
   pts_reg <- sf::st_transform(pts_reg, crs) 
 
-  geom_comb <- c(sf::st_geometry(pres_glo), sf::st_geometry(pts_reg))
-  aux <- sf::st_sf(geometry = geom_comb)
+  aux <- sf::st_sf(geometry = c(sf::st_geometry(pp_glo), sf::st_geometry(pts_reg)))
   sf::st_crs(aux) <- crs
 
-  # Spatial domain definition
   bdy_glo <- sf::st_convex_hull(sf::st_union(aux))
   bdy_reg <- sf::st_union(sf::st_make_valid(sf::st_as_sf(raster::rasterToPolygons(raster::raster(sp_covreg)))))
   sf::st_crs(bdy_glo) <- crs
@@ -134,13 +162,17 @@ NSBM.covariate <- function(nsbm_obj,
 
   # SPDE
   if(!is.null(spde.mesh)) {
-    matern <- INLA::inla.spde2.pcmatern(mesh, prior.range = spde.pcprior.range, prior.sigma = spde.pcprior.sigma)
+    matern <- INLA::inla.spde2.pcmatern(
+      mesh = spde.mesh, 
+      prior.range = spde.pcprior.range, 
+      prior.sigma = spde.pcprior.sigma
+    )
   }
 
-  # prefilter select terms
+  # auto pc-prior spline rw2 selection
   #.....
 
-  # cmp global
+  # Model cmp global
   cmp_glo <- indiv_fcov(vars = nsbm_obj$Selected.Variables.Global,
                         spobj = "sp_covglo",
                         tag = "GL")
@@ -154,26 +186,36 @@ NSBM.covariate <- function(nsbm_obj,
   cmp_formula_glo <- as.formula(cmp_formula_glo)
 
   f_spatial <- if(!is.null(spde.mesh)) " + spatial" else ""
-  if(output == "probability") {
+
+  if(fam == "cp") {  
+    # output = "intensity"
+    pres_glo <- pp_glo[pp_glo$resp != 0L, ]
     # Likelihoods
-    lik_glo <- inlabru::like(
-      family = family,
-      formula = as.formula(paste0("presence ~ IGlobal ", f_spatial, " + ", cmp_glo$like)),
-      data = pp_glo,
-      samplers = bdy_glo,
-      domain = list(geometry = mesh),
-      control.family = list(link = link)
-    )
-    pred_formula_glo <- as.formula(paste0("~ 1 / (1 + exp(-(IGlobal", f_spatial, " + ", cmp_glo$like,")))"))
-  } else {  # output = "intensity"
     lik_glo <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, " + ", cmp_glo$like)),
       data = pres_glo,
       samplers = bdy_glo,
-      domain = list(geometry = mesh)
+      domain = list(geometry = spde.mesh)
     )
     pred_formula_glo <- as.formula(paste0("~ exp(IGlobal", f_spatial, " + ", cmp_glo$like,")"))
+  } else {  
+    # for any type of family-object (e.g, binomial(), etc.)
+    # Likelihoods
+    lik_glo <- inlabru::like(
+      family = fam,
+      formula = as.formula(paste0("resp ~ IGlobal ", f_spatial, " + ", cmp_glo$like)),
+      data = pp_glo,
+      samplers = bdy_glo,
+      domain = list(geometry = spde.mesh),
+      control.family = list(link = lnk)
+    )
+    eta <- paste0("IGlobal", f_spatial, " + ", cmp_glo$like)
+    pred_formula_glo <- switch(lnk,
+      "logit" = as.formula(paste0("~ 1 / (1 + exp(-(", eta, ")))")),
+      "cloglog" = as.formula(paste0("~ 1 - exp(-exp(", eta, "))")), 
+      "log" = as.formula(paste0("~ exp(", eta, ")")),
+      "identity" = as.formula(paste0("~ ", eta)))
   }
 
   # Fit global
@@ -199,7 +241,7 @@ NSBM.covariate <- function(nsbm_obj,
 
   sp_covglo <- old_sp_covglo # restore
 
-  pred_glo <- pred_as_tif(pred_glo, sp_covglo_reg)       #@@@JMB save uncertainty?????
+  pred_glo <- pred_as_tif(pred_glo, sp_covglo_reg)       #@@@JMB save uncertainty global model?????
 
   if(!is.null(spde.mesh)) {
     pred_sp_glo <- predict(fit_glo, pred.df, ~ spatial)
@@ -220,7 +262,7 @@ NSBM.covariate <- function(nsbm_obj,
     # covsel.filteralgo
     sel_df <- covsel::covsel.filteralgo(
       covdata = myExpl.covsel,
-      pa = as.vector(pp_reg$presence),
+      pa = as.vector(pp_reg$resp),
       force = "SDM.global",
       corcut = corcut
     )
@@ -228,7 +270,7 @@ NSBM.covariate <- function(nsbm_obj,
     dropped <- setdiff(names(sp_covreg), names(sel_df))
     sp_covreg <- sp_covreg[[IndVar.Regional.Covariate]]
     dropped_msg <- if(length(dropped) == 0) "None" else paste(dropped, collapse = ", ")
-    message("\nRemoved covariates: ", dropped_msg, "\n")
+    message("\nRemoved regional covariates: ", dropped_msg, "\n")
   }
 
   # cmp regional/covariate
@@ -242,29 +284,38 @@ NSBM.covariate <- function(nsbm_obj,
   } else {
     paste0("~ IRegional(1) + ", cmp_cov$cmp)
   }
+
   cmp_formula_cov <- as.formula(cmp_formula_cov)
 
-  f_spatial <- if(!is.null(spde.mesh)) " + spatial" else ""
-  if(output == "probability") {
+  if(fam == "cp") {
+    # for intensity, Cox process (cp)
+    pres_reg <- pp_reg[pp_reg$resp != 0L, ]
     # Likelihoods
-    lik_cov <- inlabru::like(
-      family = family,
-      formula = as.formula(paste0("presence ~ IRegional ", f_spatial, " + ", cmp_cov$like)),
-      data = pp_reg,
-      samplers = bdy_reg,
-      domain = list(geometry = mesh),
-      control.family = list(link = link)
-    )
-    pred_formula_cov <- as.formula(paste0("~ 1 / (1 + exp(-(IRegional", f_spatial, " + ", cmp_cov$like,")))"))
-  } else {  # output = "intensity"
     lik_cov <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IRegional", f_spatial, " + ", cmp_cov$like)),
       data = pres_reg,
       samplers = bdy_reg,
-      domain = list(geometry = mesh)
+      domain = list(geometry = spde.mesh)
     )
     pred_formula_cov <- as.formula(paste0("~ exp(IRegional", f_spatial, " + ", cmp_cov$like,")"))
+  } else {  # output = "intensity"
+    # for any type of family-object (e.g, binomial(), etc.)
+    # Likelihoods
+    lik_cov <- inlabru::like(
+      family = fam,
+      formula = as.formula(paste0("resp ~ IRegional ", f_spatial, " + ", cmp_cov$like)),
+      data = pp_reg,
+      samplers = bdy_reg,
+      domain = list(geometry = spde.mesh),
+      control.family = list(link = lnk)
+    )
+    eta <- paste0("IRegional", f_spatial, " + ", cmp_cov$like)
+    pred_formula_cov <- switch(lnk,
+      "logit" = as.formula(paste0("~ 1 / (1 + exp(-(", eta, ")))")),
+      "cloglog" = as.formula(paste0("~ 1 - exp(-exp(", eta, "))")), 
+      "log" = as.formula(paste0("~ exp(", eta, ")")),
+      "identity" = as.formula(paste0("~ ", eta)))
   }
 
   # fit model covariate
@@ -375,7 +426,7 @@ NSBM.covariate <- function(nsbm_obj,
     saveRDS(fit_cov, file = file.path(values_path, paste0(species, "_model_fit.rds")))
 
     # save pred current
-    if(!is.null(pred)) {
+    if(!is.null(pred_cov)) {
       file_path <- file.path(projections_path, paste0(species, "_Current.tif"))
       terra::writeRaster(terra::unwrap(pred_cov), file_path, overwrite = TRUE)   
     }
@@ -476,12 +527,12 @@ NSBM.covariate <- function(nsbm_obj,
   #
   sabina <- list(
     Species.Name = species,
-    args = list(output = output,
-       family = family, 
-       link = link,
+    args = list(
+       family = fam, 
+       link = lnk,
        spde.mesh = if(!is.null(spde.mesh)) TRUE else FALSE,
-       spde.pcprior.range = spde.pcprior.range,
-       spde.pcprior.sigma = spde.pcprior.sigma,
+       spde.pcprior.range = if(!is.null(spde.mesh)) spde.pcprior.range else NULL,
+       spde.pcprior.sigma = if(!is.null(spde.mesh)) spde.pcprior.sigma else NULL,
        rm.corr = rm.corr,
        corcut = corcut,
        proj.new.env = proj.new.env,

@@ -78,10 +78,13 @@ NSBM.pure <- function(nsbm_obj,
                       cp = NULL)
   if(!fam %in% names(valid_links)) {
     stop("Unsupported family ", fam, ".\n",
-         "Please, see ?NSBM.pure details for more.")
+    "Supported families are: ", paste(names(valid_links), collapse = ", "), "\n",
+    "Please, see ?NSBM.pure details for more.")
   }
   if(!is.null(lnk) && !lnk %in% valid_links[[fam]]) {
-    stop(paste0("Link ", lnk, " is not allowed for family ", fam))
+    stop("Link `", lnk, "` is not allowed for family `", fam, "`.\n",
+    "Allowed links for '", fam, "': ", paste(valid_links[[fam]], collapse = ", "), ".\n",
+   "Please, see ?NSBM.pure details for more.")
   }
   if(is.null(spde.mesh)) {
     warning("`spde.mesh` is NULL, so the spatial (SPDE) component will be omitted. \n",
@@ -144,7 +147,6 @@ NSBM.pure <- function(nsbm_obj,
 
   bdy_glo <- sf::st_convex_hull(sf::st_union(aux))
   bdy_reg <- sf::st_union(sf::st_make_valid(sf::st_as_sf(raster::rasterToPolygons(raster::raster(sp_covreg)))))
-
   sf::st_crs(bdy_glo) <- crs
   sf::st_crs(bdy_reg) <- crs
 
@@ -175,7 +177,7 @@ NSBM.pure <- function(nsbm_obj,
     grid <- expand.grid(u = u_vals, alpha = alpha_vals)
 
     waics <- numeric(nrow(grid))
-    for (i in seq_len(nrow(grid))) {
+    for(i in seq_len(nrow(grid))) {
       u_i <- grid$u[i]
       alpha_i <- grid$alpha[i]
       pc_i <- list(u = u_i, alpha = alpha_i)
@@ -285,6 +287,7 @@ NSBM.pure <- function(nsbm_obj,
       "log" = as.formula(paste0("~ exp(", eta, ")")),
       "identity" = as.formula(paste0("~ ", eta)))
   }
+
   # k-fold CV
   if(cv.folds > 1) {
     # stratified k folds
