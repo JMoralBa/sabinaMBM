@@ -6,9 +6,7 @@
 \usage{
 NSBM.covariate(
   nsbm_obj,
-  output = "probability",
-  family = "binomial",
-  link = "logit",
+  family = binomial(link = "logit"),
   spde.pcprior.range = c(5, 0.01),
   spde.pcprior.sigma = c(1, 0.01),
   spde.mesh = NULL,
@@ -25,11 +23,7 @@ NSBM.covariate(
 \arguments{
 \item{nsbm_obj}{An object of class \code{nsdm.vinput}, result from \code{sabinaNSDM::NSDM.SelectCovariates()}.}
 
-\item{output}{Character; \code{"intensity"} or \code{"probability"} (default).}
-
-\item{family}{Character; \code{"binomial"} (default), supported \code{"poisson"}, \code{"nbinomial"}, or \code{"cp"}.}
-
-\item{link}{Character; link function \code{"logit"} (default for \code{family = "binomial"}), otherwise \code{"log"}.}
+\item{family}{A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity).}
 
 \item{spde.pcprior.range}{Numeric vector length 2. Prior on spatial range (e.g., \code{c(5, 0.01)}).}
 
@@ -59,4 +53,17 @@ A named list of class \verb{nsbm.inlabru, including: \\item\{Species.Name\}\{Spe
 }
 \description{
 bla bla...
+}
+\details{
+\itemize{
+\item binomial(logit): Use for presence–absence (1/0) data. Output: probability.    #@@JMB revisar todo lo relacionado con family-link (opciones, inverse link in pred, ...)
+\item binomial(cloglog): Use for presence–absence (1/0) data when 1s are very rare (lots of 0s). Output: probability.
+\item poisson(log): Use for non-overdispersed counts (e.g. abundance counts 0,1,2…). Output: expected count
+\item nbinomial(log): Use for overdispersed counts (variance > mean) (e.g. xx). Output: expected count
+\item gaussian(identity): Use for continuous responses normal distribution (e.g. xx). Output: predicted value on original scale.
+\item gaussian(log): Use for strictly positive, skewed continuous data (e.g. xx). Output: predicted value on original scale.
+\item beta(logit): Use for proportions in (0,1) (e.g. rescaled canopy cover). Output: predicted proportion
+\item tweedie(log): Use for semicontinuous data with many zeros and a continuous positive tail (e.g. xx). Output: expected value
+\item cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
+}
 }
