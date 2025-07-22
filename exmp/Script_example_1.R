@@ -1,4 +1,4 @@
-# 12/05/202
+# 12/05/2025
 
 #dir
  setwd("C:/Users/Jennifer Morales/Documents/UAM-INLABRU/")
@@ -110,7 +110,6 @@
    proj.new.env = FALSE,  # extiende la mesh a new.env si necesario cuando raster_mask
    plot = TRUE)           # Plotea la malla
  
- devtools::load_all("C:/Users/Jennifer Morales/Documents/UAM-INLABRU/repo/sabinaINLA") # path al paquete clonado en pc
 
 ## INLA PURE HIERARCHICAL
  myPred.pure <- NSBM.pure(
@@ -119,8 +118,10 @@
    spde.mesh = myMesh,              # Add efecto esapcial SPDE wirh mesh of create_mesh()
    spde.pcprior.range = c(5, 0.95),   # Prior para el rango espacial: c(valor, prob. de ser menor)
    spde.pcprior.sigma = c(1, 0.01),   # Prior para la desviación estándar: c(valor, prob. de ser mayor)
+   latent.pcprior.range = c(5, 0.95), 
+   latent.pcprior.sigma = c(1, 0.01),
    nested.intercept = TRUE,    # TRUE: IRegional se modela como desviación de IGlobal
-   covariate.pcprior.smoothness = NULL,  #NULL, list(u=0.5, alpha=0.01) or "auto"
+   covariate.pcprior.smoothness = NULL,  #NULL, list(u=0.5, alpha=0.01) or "auto". Not running!!!
    proj.new.env = FALSE,       # Project new scenarios
    cv.folds = 1,               # k-folds para cross-validation
    n.threads =1,               # hilos de inla/inlabru
