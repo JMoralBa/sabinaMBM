@@ -8,8 +8,10 @@
 #' @param nsbm_obj An object of class `nsdm.vinput`, result from `sabinaNSDM::NSDM.SelectCovariates()`.
 #' @param family  A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity). 
 #' @param spde.mesh An INLA mesh object created externally with `create_mesh()`. includes spatial latent field (SPDE) in the model (default: NULL). 
-#' @param spde.pcprior.range Numeric vector length 2. Prior on spatial range (e.g., `c(5, 0.01)`).
-#' @param spde.pcprior.sigma Numeric vector length 2. Prior on marginal standard deviation (e.g., `c(1, 0.01)`).
+#' @param spde.pcprior.range Numeric vector length 2. Pc-prior on spatial range (e.g., `c(5, 0.01)`).
+#' @param spde.pcprior.sigma Numeric vector length 2. Pc-prior on marginal standard deviation (e.g., `c(1, 0.01)`).
+#' @param latent.pcprior.range Numeric vector of length 2. PC-prior on the spatial range of the latent SPDE for the global covariate (e.g., `c(0.05, 0.05)` in degrees). If `NULL` (default), no latent SPDE is created; if only this is supplied, `latent.pcprior.sigma` defaults to `c(1, 0.01)`.
+#' @param latent.pcprior.sigma Numeric vector of length 2. PC-prior on the marginal standard deviation of the latent SPDE for the global covariate (e.g., `c(1, 0.01)`). If `NULL` (default), no latent SPDE is created; if supplied without `latent.pcprior.range`, the range prior defaults to `5 × resolution` of the global raster.
 #' @param nested.intercept Logical; if TRUE = model regional intercept as deviation from global.
 #' @param covariate.pcprior.smoothness PC-prior for RW2 smoothing of covariates:
 #'   - `NULL` (default): no smoothing, all effects constant
@@ -48,6 +50,8 @@ NSBM.pure <- function(nsbm_obj,
                       spde.mesh = NULL,           # NULL or mesh objetct para calcular efecto spatial
                       spde.pcprior.range = NULL,
                       spde.pcprior.sigma = NULL,
+                      latent.pcprior.range = NULL,   # activate latent SPDE if not NULL
+                      latent.pcprior.sigma = NULL,   # activate latent SPDE if not NULL (plug-in if both NULL)
                       covariate.pcprior.smoothness = NULL,  #NULL, list(u=0.5, alpha=0.01) o "auto". #@@@JMB !!! está en las mismas unidades en las que está construida la mesh. Pensar.....
                       proj.new.env = TRUE,
                       cv.folds = 1,
@@ -134,7 +138,7 @@ NSBM.pure <- function(nsbm_obj,
   pp_reg <- sf::st_as_sf(pp_reg, coords = c("x","y"), crs = crs) %>% 
             sf::st_transform(crs)
 
-  pp_glo$region <- 1L
+  pp_glo$region <- 0L
   pp_reg$region <- 1L
 
   # Spatial domain definition
@@ -157,6 +161,31 @@ NSBM.pure <- function(nsbm_obj,
       prior.range = spde.pcprior.range,
       prior.sigma = spde.pcprior.sigma
     )
+  }
+
+  # latent SPDE for global covariate
+  latent_global <- !is.null(latent.pcprior.range) || !is.null(latent.pcprior.sigma)
+  if(latent_global) {
+    # calc defaults based on global covariate resolution
+    rast_gl <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)[[1]]
+    res_xy <- terra::res(rast_gl)
+    mean_res <- mean(res_xy)
+    # default range = 5 × resolution
+    if(is.null(latent.pcprior.range)) {
+      latent.pcprior.range <- c(mean_res * 5, 0.05)
+      message(sprintf("latent.pcprior.range by default: c(%.5f, 0.05)", mean_res*5))
+    }
+    # default sigma
+    if (is.null(latent.pcprior.sigma)) {
+      latent.pcprior.sigma <- c(1, 0.01)
+      message("latent.pcprior.sigma by default: c(1, 0.01)")
+    }
+    spde_cov <- INLA::inla.spde2.pcmatern(
+      mesh = spde.mesh,
+      prior.range = latent.pcprior.range,
+      prior.sigma = latent.pcprior.sigma)
+  } else {
+    spde_cov <- NULL
   }
 
   # nested intercept
@@ -226,7 +255,9 @@ NSBM.pure <- function(nsbm_obj,
   cmp_cov <- fcov(obj = nsbm_obj, 
                   spobjglo = "sp_covglo", 
                   spobjreg = "sp_covreg",
-                  covariate.pcprior.smoothness = covariate.pcprior.smoothness)
+                  covariate.pcprior.smoothness = covariate.pcprior.smoothness,
+                  use_latent = latent_global,
+                  spde_cov = spde_cov)
  
   # Formula
   cmp_formula <- if(!is.null(spde.mesh)) {
@@ -239,6 +270,7 @@ NSBM.pure <- function(nsbm_obj,
 
   f_spatial <- if(!is.null(spde.mesh)) " + spatial" else ""
   I_nested <- if(nested.intercept==TRUE) " + IGlobal" else ""
+  extra_latent <- if(latent_global) " + beta_cov * covLat" else ""
 
   if(fam == "cp") {
     # for intensity, Cox process (cp)
@@ -247,26 +279,29 @@ NSBM.pure <- function(nsbm_obj,
     # Likelihoods
     lik_glo <- inlabru::like(
       family = "cp",
-      formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal)),
+      formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, extra_latent, #" + ", cmp_cov$like$fglobal)),
+        if(nzchar(cmp_cov$like$fglobal)) paste0(" + ", cmp_cov$like$fglobal) else "")),
       data = pres_glo,
       samplers = bdy_glo,
       domain = list(geometry = spde.mesh)
     )
     lik_reg <- inlabru::like(
       family = "cp",
-      formula = as.formula(paste0("geometry ~ IRegional", I_nested, f_spatial, " + ", cmp_cov$like$fregional)),
+      formula = as.formula(paste0("geometry ~ IRegional", I_nested, f_spatial, extra_latent, #" + ", cmp_cov$like$fregional)),
+        if(nzchar(cmp_cov$like$fregional)) paste0(" + ", cmp_cov$like$fregional) else "")),
       data = pres_reg,
       samplers = bdy_reg,
       domain = list(geometry = spde.mesh)
     )
-    eta <- paste0("IRegional", I_nested, f_spatial, " + ", cmp_cov$like$fregional)
+    eta <- paste0("IRegional", I_nested, f_spatial, extra_latent, " + ", cmp_cov$like$fregional)
     pred_formula <- as.formula(paste0("~ exp(",eta,")"))
   } else {
     # for any type of family-object (e.g, binomial(), etc.)
     # Likelihoods
     lik_glo <- inlabru::like(
       family = fam,
-      formula = as.formula(paste0("resp ~ IGlobal", f_spatial, " + ", cmp_cov$like$fglobal)),
+      formula = as.formula(paste0("resp ~ IGlobal", f_spatial, extra_latent, #" + ", cmp_cov$like$fglobal)),
+        if(nzchar(cmp_cov$like$fglobal)) paste0(" + ", cmp_cov$like$fglobal) else "")),
       data = pp_glo,
       samplers = bdy_glo,
       domain = list(geometry = spde.mesh),
@@ -274,13 +309,14 @@ NSBM.pure <- function(nsbm_obj,
     )
     lik_reg <- inlabru::like(
       family = fam,
-      formula = as.formula(paste0("resp ~ IRegional", I_nested, f_spatial, " + ", cmp_cov$like$fregional)), #@@@JMB si I_nested entra, entra el componente spatial de modelo global?
+      formula = as.formula(paste0("resp ~ IRegional", I_nested, f_spatial, extra_latent, #" + ", cmp_cov$like$fregional)), #@@@JMB si I_nested entra, entra el componente spatial de modelo global?
+        if(nzchar(cmp_cov$like$fregional)) paste0(" + ", cmp_cov$like$fregional) else "")),
       data = pp_reg,
       samplers = bdy_reg,
       domain = list(geometry = spde.mesh),
       control.family = list(link = lnk)
     )
-    eta <- paste0("IRegional", I_nested, f_spatial, " + ", cmp_cov$like$fregional)
+    eta <- paste0("IRegional", I_nested, f_spatial, extra_latent, " + ", cmp_cov$like$fregional)
     pred_formula <- switch(lnk,
       "logit" = as.formula(paste0("~ 1 / (1 + exp(-(", eta, ")))")),
       "cloglog" = as.formula(paste0("~ 1 - exp(-exp(", eta, "))")), 
@@ -394,49 +430,40 @@ NSBM.pure <- function(nsbm_obj,
     projections_path <- file.path("Results", "NSBM_pure", "Projections")
     fs::dir_create(values_path, recurse = TRUE)
     fs::dir_create(projections_path, recurse = TRUE)
-
     # save fixed effects
     if(!is.null(fit$summary.fixed)) {
       write.csv(fit$summary.fixed, file = file.path(values_path, paste0(species, "_fixed_effects.csv")), row.names = TRUE)
     }
-
     # save spatial random effects
     if(!is.null(fit$summary.random)) {
       for(ran in names(fit$summary.random)) {
         write.csv(fit$summary.random[[ran]], file = file.path(values_path, paste0(species, "_random_", ran, ".csv")), row.names = TRUE)
       }
     }
-
     # save hypermarams
     if(!is.null(fit$summary.hyperpar)) {
       write.csv(fit$summary.hyperpar, file = file.path(values_path, paste0(species, "_hyperparameters.csv")), row.names = TRUE)
     }
-
     # save evaluation metrics
     eval_metrics <- data.frame(
       Metric = c("WAIC", "DIC", "MLik", "LCPO (sum log-CPO)"),
       Value = c(fit$waic$waic, fit$dic$dic, fit$mlik[1], lcpo_val)
     )
     write.csv(eval_metrics, file = file.path(values_path, paste0(species, "_evaluation.csv")), row.names = FALSE)
-
-    # Save CPO values (one per observation)   #@@@JMB useful for leave-one-out diagnostics or model comparison??
+    # save CPO values (one per observation)   #@@@JMB useful for leave-one-out diagnostics or model comparison??
     write.csv(data.frame(CPO = fit$cpo$cpo), file = file.path(values_path, paste0(species, "_pointwise_CPO.csv")), row.names = FALSE)
-
     # save full model object (fit)
     saveRDS(fit, file = file.path(values_path, paste0(species, "_model_fit.rds")))
-
     # save pred current
     if(!is.null(pred)) {
       file_path <- file.path(projections_path, paste0(species, "_Current.tif"))
       terra::writeRaster(terra::unwrap(pred), file_path, overwrite = TRUE)   
     }
-
     # save pred_sf
     if(!is.null(pred_sp)) {
       file_path <- file.path(projections_path, paste0(species, "_Current_Spatial.tif"))
       terra::writeRaster(terra::unwrap(pred_sp), file_path, overwrite = TRUE)
     }
-
     # save new scenarios
     if(length(proj_list) > 0 && !is.null(nsbm_obj$Scenarios)) {
       for(i in seq_along(proj_list)) {
@@ -475,6 +502,8 @@ NSBM.pure <- function(nsbm_obj,
       spde.mesh = if(!is.null(spde.mesh)) TRUE else FALSE,
       spde.pcprior.range = if(!is.null(spde.mesh)) spde.pcprior.range else NULL,
       spde.pcprior.sigma = if(!is.null(spde.mesh)) spde.pcprior.sigma else NULL,
+      latent.pcprior.range  = latent.pcprior.range,
+      latent.pcprior.sigma  = latent.pcprior.sigma,
       nested.intercept = nested.intercept,
       covariate.pcprior.smoothness = covariate.pcprior.smoothness,
       proj.new.env = proj.new.env,
@@ -504,18 +533,71 @@ NSBM.pure <- function(nsbm_obj,
 fcov <- function(obj, 
                  spobjglo, 
                  spobjreg,
-                 covariate.pcprior.smoothness = covariate.pcprior.smoothness) {
+                 covariate.pcprior.smoothness = NULL,
+                 use_latent = FALSE,
+                 spde_cov = NULL) {
+  # covariate.pcprior.smoothness llega siempre como NULL o list(u,alpha) si lo activo
+  # "auto" ya se resuelve en NSBM.pure() y me da list(u,alpha)
+
   # vars
   vg <- obj$Selected.Variables.Global
   vr <- obj$Selected.Variables.Regional
 
   cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
 
+  # global covariate effect
+  # A) With latent SPDE (use_latent=TRUE & spde_cov ≠ NULL):
+  #   A1) covariate.pcprior.smoothness=NULL -> latent SPDE + linear coefficient
+  #   A2) covariate.pcprior.smoothness=list(u,sigma) -> latent SPDE + RW2 spline on covLat
+  # B) Without latent SPDE:
+  #   B1) covariate.pcprior.smoothness=NULL -> constant effect (model='const')
+  #   B2) covariate.pcprior.smoothness=list(u,sigma) -> RW2 spline on raw variable (XGL)
+
+  if(use_latent && !is.null(spde_cov)) {  #@@@JMB new latent
+    # A) with SPDE latent field
+    covblk <- paste(rep("covLat(main = geometry, model = spde_cov)", length(vg)),
+      collapse = " + ")
+    if(is.null(covariate.pcprior.smoothness)) {
+      # A1) linear latent only
+      cmpglobal <- paste(covblk, "beta_cov(1)", sep = " + ")
+    } else {
+      # A2) latent + RW2 spline
+      u <- covariate.pcprior.smoothness$u
+      alpha <- covariate.pcprior.smoothness$alpha
+      rw2blk <- paste0(
+        "s(covLat, model='rw2', scale.model=TRUE,",
+        " hyper=list(prec=list(prior='pc.prec',param=c(", u, ",", alpha, "))))"
+      )
+      cmpglobal <- paste(covblk, rw2blk, sep = " + ")
+    }
+  } else {
+    # B) without latent SPDE: constant or RW2 on XGL
+    if(is.null(covariate.pcprior.smoothness)) {
+      # B1) constant
+      cmpglobal <- paste(sapply(vg, function(X) {
+        paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'const')")
+      }), collapse = " + ")
+    } else {
+      # B2) RW2 on XGL
+      u <- covariate.pcprior.smoothness$u
+      alpha <- covariate.pcprior.smoothness$alpha
+      cmpglobal <- paste(sapply(vg, function(X) {
+        paste0(X, "GL(main = ", spobjglo,
+          ", main_layer = '", X, "',",
+          " model = 'rw2', scale.model = TRUE,",
+          " hyper=list(prec=list(prior='pc.prec',param=c(",
+          u, ",", alpha, "))))"
+        )
+      }), collapse = " + ")
+    }
+  }
+
+  # Regional effects: const or RW2 on XRE #@@@JMB new (rm cmpglo)
   if(is.null(covariate.pcprior.smoothness)) {
-    # "const" (default)
-    cmpglobal <- paste(sapply(vg, function(X) {
-      paste0(X, "GL(main = ", spobjglo, ", main_layer = \"", X, "\", model = \"const\")")
-    }), collapse = " + ")
+#    # "const" (default)
+#    cmpglobal <- paste(sapply(vg, function(X) {
+#      paste0(X, "GL(main = ", spobjglo, ", main_layer = \"", X, "\", model = \"const\")")
+#    }), collapse = " + ")
 
     cmpregional <- paste(sapply(vr, function(X) {
       paste0(X, "RE(main = ", spobjreg, ", main_layer = \"", X, "\", model = \"const\")")
@@ -525,13 +607,13 @@ fcov <- function(obj,
     u <- covariate.pcprior.smoothness$u     #@@@JMB cambiar de list a c(u, alpha)??
     alpha <- covariate.pcprior.smoothness$alpha
 
-    cmpglobal <- paste(sapply(vg, function(X) {
-      paste0(X, "GL(main = ", spobjglo,
-        ", main_layer = '", X, "',",
-        " model = 'rw2', scale.model = TRUE,",
-        " hyper = list(prec = list(prior = 'pc.prec', param = c(", u, ", ", alpha, "))))"
-      )
-    }), collapse = " + ")
+#    cmpglobal <- paste(sapply(vg, function(X) {
+#      paste0(X, "GL(main = ", spobjglo,
+#        ", main_layer = '", X, "',",
+#        " model = 'rw2', scale.model = TRUE,",
+#        " hyper = list(prec = list(prior = 'pc.prec', param = c(", u, ", ", alpha, "))))"
+#      )
+#    }), collapse = " + ")
 
     cmpregional <- paste(sapply(vr, function(X) {
       paste0(
@@ -545,7 +627,12 @@ fcov <- function(obj,
   }
 
   # Formula likelihood
-  fglobal <- paste(sprintf("%s * %sGL", vg, vg), collapse = " + ")
+  # remove global GL if using covLat
+  if(use_latent && !is.null(spde_cov)) {
+    fglobal <- ""
+  } else {
+    fglobal <- paste(sprintf("%s * %sGL", vg, vg), collapse = " + ")
+  }
   fregional <- paste(sprintf("%s * %sRE", vr, vr), collapse = " + ")
 
   list(

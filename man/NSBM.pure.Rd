@@ -11,6 +11,8 @@ NSBM.pure(
   spde.mesh = NULL,
   spde.pcprior.range = NULL,
   spde.pcprior.sigma = NULL,
+  latent.pcprior.range = NULL,
+  latent.pcprior.sigma = NULL,
   covariate.pcprior.smoothness = NULL,
   proj.new.env = TRUE,
   cv.folds = 1,
@@ -28,9 +30,13 @@ NSBM.pure(
 
 \item{spde.mesh}{An INLA mesh object created externally with \code{create_mesh()}. includes spatial latent field (SPDE) in the model (default: NULL).}
 
-\item{spde.pcprior.range}{Numeric vector length 2. Prior on spatial range (e.g., \code{c(5, 0.01)}).}
+\item{spde.pcprior.range}{Numeric vector length 2. Pc-prior on spatial range (e.g., \code{c(5, 0.01)}).}
 
-\item{spde.pcprior.sigma}{Numeric vector length 2. Prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
+\item{spde.pcprior.sigma}{Numeric vector length 2. Pc-prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
+
+\item{latent.pcprior.range}{Numeric vector of length 2. PC-prior on the spatial range of the latent SPDE for the global covariate (e.g., \code{c(0.05, 0.05)} in degrees). If \code{NULL} (default), no latent SPDE is created; if only this is supplied, \code{latent.pcprior.sigma} defaults to \code{c(1, 0.01)}.}
+
+\item{latent.pcprior.sigma}{Numeric vector of length 2. PC-prior on the marginal standard deviation of the latent SPDE for the global covariate (e.g., \code{c(1, 0.01)}). If \code{NULL} (default), no latent SPDE is created; if supplied without \code{latent.pcprior.range}, the range prior defaults to \verb{5 × resolution} of the global raster.}
 
 \item{covariate.pcprior.smoothness}{PC-prior for RW2 smoothing of covariates:
 \itemize{
