@@ -58,7 +58,7 @@ generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val, model
     ),
     Value = c(
       gsub("\\.", " ", species),
-      if(!is.null(spde.mesh)) {
+      if(isTRUE(spatial)) {
         paste0("NSBM.", model," (with SPDE)")
       } else {
         paste0("NSBM.", model," (no SPDE)")
