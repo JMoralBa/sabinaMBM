@@ -219,6 +219,9 @@ NSBM.pure <- function(nsbm_obj,
   # latent SPDE for global covariate
   latent_global <- !is.null(latent.pcprior.range) || !is.null(latent.pcprior.sigma)
   if(latent_global) {
+    if (is.null(spde.mesh)) {
+      stop("Latent global SPDE requires a valid 'spde.mesh'.")
+    }
     # calc defaults based on global covariate resolution
     rast_gl <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)[[1]]
     res_xy <- terra::res(rast_gl)
@@ -272,6 +275,7 @@ NSBM.pure <- function(nsbm_obj,
 
   cmp <- as.formula(cmp_formula)
 
+  dom <- if(!is.null(spde.mesh)) list(geometry = spde.mesh) else NULL
   f_spatial <- if(!is.null(spde.mesh)) " + spatial" else ""
   I_nested <- if(nested.intercept==TRUE) " + IGlobal" else ""
   extra_latent <- if(latent_global) " + beta_GL * GLspde" else ""
@@ -286,14 +290,14 @@ NSBM.pure <- function(nsbm_obj,
       formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, extra_latent, .opt_plus(cmp_cov$like$fglobal))),
       data = pres_glo,
       samplers = bdy_glo,
-      domain = list(geometry = spde.mesh)
+      domain = dom
     )
     lik_reg <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ IRegional", I_nested, f_spatial, extra_latent, .opt_plus(cmp_cov$like$fregional))),
       data = pres_reg,
       samplers = bdy_reg,
-      domain = list(geometry = spde.mesh)
+      domain = dom
     )
     eta <- paste0("IRegional", I_nested, f_spatial, extra_latent, .opt_plus(cmp_cov$like$fregional))
     pred_formula <- as.formula(paste0("~ exp(",eta,")"))
@@ -305,7 +309,7 @@ NSBM.pure <- function(nsbm_obj,
       formula = as.formula(paste0("resp ~ IGlobal", f_spatial, extra_latent, .opt_plus(cmp_cov$like$fglobal))),
       data = pp_glo,
       samplers = bdy_glo,
-      domain = list(geometry = spde.mesh),
+      domain = dom,
       control.family = list(link = lnk)
     )
     lik_reg <- inlabru::like(
@@ -313,7 +317,7 @@ NSBM.pure <- function(nsbm_obj,
       formula = as.formula(paste0("resp ~ IRegional", I_nested, f_spatial, extra_latent, .opt_plus(cmp_cov$like$fregional))), #@@@JMB si I_nested entra, entra el componente spatial de modelo global?
       data = pp_reg,
       samplers = bdy_reg,
-      domain = list(geometry = spde.mesh),
+      domain = dom,
       control.family = list(link = lnk)
     )
     eta <- paste0("IRegional", I_nested, f_spatial, extra_latent, .opt_plus(cmp_cov$like$fregional))
@@ -366,7 +370,7 @@ NSBM.pure <- function(nsbm_obj,
       coords_t <- sf::st_coordinates(test_r)
       both <- c(sp_covglo, sp_covreg)
       cov_all <- terra::extract(both, coords_t)
-      keep <- stats::complete.cases(cov_g, cov_r)
+      keep <- stats::complete.cases(cov_all)
 
       # pred and AUC
       test_r2 <- test_r[keep, ]
@@ -425,14 +429,14 @@ NSBM.pure <- function(nsbm_obj,
       scen_df <- sf::st_as_sf(terra::as.points(scen_rast, values = FALSE))
       sf::st_crs(scen_df) <- crs
       scen_df <- sf::st_transform(scen_df, crs)
+      scen_df$region <- 1L
       proj_pred <- predict(fit, scen_df, pred_formula)
       proj_list[[paste0("proj_", sc)]] <- pred_as_tif(proj_pred, template = scen_rast)  # from sf to tif
     }
   }
 
-  species <- nsbm_obj$Species.Name
-
   # save outputs
+  species <- nsbm_obj$Species.Name
   if(save.output) {
     # Create directories
     values_path <- file.path("Results", "NSBM_pure", "Values")
@@ -502,7 +506,7 @@ NSBM.pure <- function(nsbm_obj,
     summary_df <- rbind(summary_df, cv_rows)
   }
 
-  #
+  # return
   sabina <- list(
     Species.Name = species,
     args = list(
