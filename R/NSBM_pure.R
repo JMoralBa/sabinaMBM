@@ -431,7 +431,7 @@ NSBM.pure <- function(nsbm_obj,
       scen_df <- sf::st_transform(scen_df, crs)
       scen_df$region <- 1L
       proj_pred <- predict(fit, scen_df, pred_formula)
-      proj_list[[paste0("proj_", sc)]] <- pred_as_tif(proj_pred, template = scen_rast)  # from sf to tif
+      proj_list[[sc]] <- pred_as_tif(proj_pred, template = scen_rast)  # from sf to tif
     }
   }
 
