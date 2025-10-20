@@ -38,7 +38,6 @@ plot.nsbm.inlabru <- function(x,
 
   stopifnot(inherits(x, "nsbm.inlabru"))
 
-  # --- select raster ---
   scope_label <- NULL
   r <- NULL
 
@@ -98,8 +97,7 @@ plot.nsbm.inlabru <- function(x,
     scope_label <- pick$name
   }
 
-  # --- coerce & validate layer ---
-  rr <- if (inherits(r, "PackedSpatRaster")) terra::unwrap(r) else r
+  rr <- if(inherits(r, "PackedSpatRaster")) terra::unwrap(r) else r
   stopifnot(inherits(rr, "SpatRaster"))
 
   if (!layer %in% names(rr)) {
@@ -108,7 +106,7 @@ plot.nsbm.inlabru <- function(x,
   }
   r_show <- rr[[layer]]
 
-  # --- legend title (family × layer × scope) ---
+  # legend title
   fam <- tolower(x$args$family)
   ln  <- tolower(layer)
 
@@ -164,14 +162,13 @@ plot.nsbm.inlabru <- function(x,
     legend_prob(ln)
   }
 
-  # wrap legend title to two lines if long + smaller font
   wrap_legend_title <- function(s, width = 22) {
     s <- as.character(s)
     paste(strwrap(s, width = width), collapse = "\n")
   }
   lt <- wrap_legend_title(if (is.null(legend_title)) auto_legend else legend_title)
 
-  # --- title ---
+  # plot title 
   species   <- x$Species.Name
   type_lab  <- sub(".*NSBM\\.|\\s*\\(.*\\)", "", x$Summary$Value[grep("Model type", x$Summary$Field)][1])
   plot_title <- if (is.null(title)) {
@@ -180,7 +177,7 @@ plot.nsbm.inlabru <- function(x,
     title
   }
 
-  # --- plot ---
+  # plot
   ggplot2::ggplot() +
     tidyterra::geom_spatraster(data = r_show) +
     ggplot2::scale_fill_distiller(palette = palette, name = lt, na.value = "transparent") +
