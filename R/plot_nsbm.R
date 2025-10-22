@@ -40,16 +40,16 @@ plot.nsbm.inlabru <- function(x,
 
   if (identical(which, "pred")) {
     # current
-    if (!is.null(x$current.projections$pred)) {
+    if(!is.null(x$current.projections$pred)) {
       r <- x$current.projections$pred
-    } else if (!is.null(x$current.projections$pred.multiply)) {
+    } else if(!is.null(x$current.projections$pred.multiply)) {
       r <- x$current.projections$pred.multiply
     } else {
       r <- x$current.projections$pred.covariate
     }
     scope_label <- "Current"
 
-  } else if (identical(which, "pred_sp")) {
+  } else if(identical(which, "pred_sp")) {
     # spatial field
     r <- x$current.projections$pred_sp
     scope_label <- "Spatial field"
@@ -57,34 +57,34 @@ plot.nsbm.inlabru <- function(x,
   } else {
     # new.projections
     np <- x$new.projections
-    if (is.null(np) || !length(np)) {
+    if(is.null(np) || !length(np)) {
       stop("No 'new.projections' in the object.")
     }
 
     get_np_by <- function(id) {
       nms <- names(np)
-      if (is.numeric(id)) {
+      if(is.numeric(id)) {
         id <- as.integer(id)
-        if (id < 1 || id > length(np)) {
+        if(id < 1 || id > length(np)) {
           stop("Index out of range in new.projections.")
         }
         list(obj = np[[id]], name = nms[id])
       } else {
-        if (!(id %in% nms)) {
+        if(!(id %in% nms)) {
           stop(sprintf("Scenario '%s' not found in new.projections.", id))
         }
         list(obj = np[[id]], name = id)
       }
     }
 
-    # first, [[index]] / [[name]], or direct name
-    if (identical(which, "new.projections")) {
+    # first list obj, [[index]] / [[name]], or direct name
+    if(identical(which, "new.projections")) {
       pick <- get_np_by(1)
-    } else if (grepl("^new\\.projections\\[\\[.*\\]\\]$", which)) {
+    } else if(grepl("^new\\.projections\\[\\[.*\\]\\]$", which)) {
       inside <- sub("^new\\.projections\\[\\[(.*)\\]\\]$", "\\1", which)
-      if (grepl("^[0-9]+$", inside)) inside <- as.integer(inside)
+      if(grepl("^[0-9]+$", inside)) inside <- as.integer(inside)
       pick <- get_np_by(inside)
-    } else if (which %in% names(np)) {
+    } else if(which %in% names(np)) {
       pick <- get_np_by(which)
     } else {
       stop("`which` must be 'pred', 'pred_sp', 'new.projections', 'new.projections[[...]]', or an exact scenario name in new.projections.")
@@ -97,7 +97,7 @@ plot.nsbm.inlabru <- function(x,
   rr <- if(inherits(r, "PackedSpatRaster")) terra::unwrap(r) else r
   stopifnot(inherits(rr, "SpatRaster"))
 
-  if (!layer %in% names(rr)) {
+  if(!layer %in% names(rr)) {
     stop(paste0("Layer '", layer, "' does not exist. Available layers: ",
                 paste(names(rr), collapse = ", ")))
   }
@@ -140,11 +140,11 @@ plot.nsbm.inlabru <- function(x,
     "mean.mc_std_err"="MC SE of mean (λ)",
     "Intensity (λ)")
 
-  auto_legend <- if (grepl("binomial", fam)) {
-    if (identical(scope_label, "Spatial field")) legend_eta(ln) else legend_prob(ln)
-  } else if (grepl("poisson", fam)) {
-    if (identical(scope_label, "Spatial field")) legend_eta(ln) else legend_int(ln)
-  } else if (grepl("gaussian", fam)) {
+  auto_legend <- if(grepl("binomial", fam)) {
+    if(identical(scope_label, "Spatial field")) legend_eta(ln) else legend_prob(ln)
+  } else if(grepl("poisson", fam)) {
+    if(identical(scope_label, "Spatial field")) legend_eta(ln) else legend_int(ln)
+  } else if(grepl("gaussian", fam)) {
     switch(ln,
       "mean"="Expected value",
       "median"="Median value",
@@ -163,12 +163,12 @@ plot.nsbm.inlabru <- function(x,
     s <- as.character(s)
     paste(strwrap(s, width = width), collapse = "\n")
   }
-  lt <- wrap_legend_title(if (is.null(legend_title)) auto_legend else legend_title)
+  lt <- wrap_legend_title(if(is.null(legend_title)) auto_legend else legend_title)
 
   # plot title 
-  species   <- x$Species.Name
-  type_lab  <- sub(".*NSBM\\.|\\s*\\(.*\\)", "", x$Summary$Value[grep("Model type", x$Summary$Field)][1])
-  plot_title <- if (is.null(title)) {
+  species <- x$Species.Name
+  type_lab <- sub(".*NSBM\\.|\\s*\\(.*\\)", "", x$Summary$Value[grep("Model type", x$Summary$Field)][1])
+  plot_title <- if(is.null(title)) {
     paste(species, "|", type_lab, "|", scope_label, "|", layer)
   } else {
     title
