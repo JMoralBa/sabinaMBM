@@ -2,10 +2,7 @@
 #'
 #' @title Plot for nsbm.inlabru...
 #'
-#' @description This function plots a single layer from a fitted NSBM model object
-#' ("nsbm.inlabru"). It can display the current prediction ("pred"),
-#' the spatial field ("pred_sp"), or any future/environmental scenario
-#' stored in "new.projections".
+#' @description This function plots a single layer from a fitted NSBM model object ("nsbm.inlabru"). It can display the current prediction ("pred"), the spatial field ("pred_sp"), or any future/environmental scenario stored in "new.projections".
 #'
 #' @param x An object of class "nsbm.inlabru".
 #' @param which Component to plot. One of: "pred", "pred_sp", "new.projections", "new.projections[[1]]", "new.projections[[NAME]]", or directly the scenario stored in x$new.projections.
