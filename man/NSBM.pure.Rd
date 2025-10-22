@@ -13,7 +13,7 @@ NSBM.pure(
   spde.pcprior.sigma = NULL,
   latent.pcprior.range = NULL,
   latent.pcprior.sigma = NULL,
-  covariate.pcprior.smoothness = NULL,
+  covariate.effects = NULL,
   proj.new.env = TRUE,
   cv.folds = 1,
   n.threads = 1,
@@ -38,12 +38,7 @@ NSBM.pure(
 
 \item{latent.pcprior.sigma}{Numeric vector of length 2. PC-prior on the marginal standard deviation of the latent SPDE for the global covariate (e.g., \code{c(1, 0.01)}). If \code{NULL} (default), no latent SPDE is created; if supplied without \code{latent.pcprior.range}, the range prior defaults to \verb{5 × resolution} of the global raster.}
 
-\item{covariate.pcprior.smoothness}{PC-prior for RW2 smoothing of covariates:
-\itemize{
-\item \code{NULL} (default): no smoothing, all effects constant
-\item \code{list(u, alpha)}: choose your smoothing (e.g., list(u=0.5, alpha=0.01)
-\item \code{"auto"}: analyse a few (u, alpha) combinations and take the one with best fit (lowest WAIC)
-}}
+\item{covariate.effects}{Optional named list to control the global/regional covariate effects (see details). If \code{NULL} (default), no smoothing, all covariate effects remain constant (linear).}
 
 \item{proj.new.env}{Logical. Whether to compute predictions under new scenarios (default: TRUE).}
 
@@ -70,6 +65,7 @@ Fits a nested species distribution model (NSDM) using hierarchical Bayesian mode
 with spatial structure via INLA and inlabru...
 }
 \details{
+family/link:
 \itemize{
 \item binomial(logit): Use for presence–absence (1/0) data. Output: probability.    #@@JMB revisar todo lo relacionado con family-link (opciones, inverse link in pred, ...)
 \item binomial(cloglog): Use for presence–absence (1/0) data when 1s are very rare (lots of 0s). Output: probability.
@@ -80,5 +76,39 @@ with spatial structure via INLA and inlabru...
 \item beta(logit): Use for proportions in (0,1) (e.g. rescaled canopy cover). Output: predicted proportion
 \item tweedie(log): Use for semicontinuous data with many zeros and a continuous positive tail (e.g. xx). Output: expected value
 \item cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
+}
+
+Spatial effects:
+\itemize{
+\item Residual spatial field \code{spatial(geometry, model = matern)}: captures local spatial autocorrelation in the response not explained by covariates. Requires \code{spde.mesh}.
+\item Global latent field (optional) : if \code{latent.pcprior.range} and/or \code{latent.pcprior.sigma} are provided, a single SPDE field \code{GLspde} represents large-scale global structure and enters the linear predictor via \code{beta_GL * GLspde}.
+}
+
+covariate.effects: control per-covariate effects at global/regional scale.
+\itemize{
+\item Option 1 \code{NULL} (default): no smoothing, All covariates enter linearly (\code{"const"}) in both scales.
+\item Option 2 named \code{list}: Provide a list with entries \code{global}, \code{regional}, and/or \code{default}.
+Structure:
+covariate.effects = list(
+global = list(var1 = "const" | "drop" | list(model="rw2", u=..., alpha=...),
+var2 = "const", ...),
+regional = list(varA = "const" | "drop" | list(model="rw2", u=..., alpha=...),
+varB = "const", ...),
+default = "const" | "drop" | list(model="rw2", u=..., alpha=...)
+)
+Allowed values per covariate:
+- \code{"const"}: linear effect (we use the term "const" for consistency with inlabru).
+- \code{"drop"}: exclude that covariate.
+- \code{list(model="rw2", u=..., alpha=...)}: rw2 smoothing with a PC-prior on precision. Use the same units as the rasters for \code{u} and \code{alpha}.
+If a covariate is not listed under \code{global}/\code{regional}, it inherits from \code{default} (recommended \code{"const"}).
+Example:
+covariate.effects = list(
+global = list(bio4 = "const",
+bio1 = list(model="rw2", u=..., alpha=...),
+bio12 = "drop" ),
+regional = list(bio12 = "const",
+bio1 = list(model="rw2", u=..., alpha=...),
+bio4 = "drop"),
+default = "const")    # default rule if a covariate is not listed
 }
 }

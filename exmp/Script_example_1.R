@@ -6,7 +6,8 @@
 # R version 4.3.2 (2023-10-31 ucrt)
 
 # Required packages
- library(sabinaNSDM)
+ #library(sabinaNSDM)
+ remotes::install_github("geoSABINA/sabinaNSDM", dependencies = TRUE)
  library(glmnet)
  library(stringi)
  library(sf)
@@ -112,17 +113,21 @@
  
 
 ## INLA PURE HIERARCHICAL
+ cve <- list(global= list(bio12="const", bio4=list(model="rw2", u=0.5, alpha=0.01)),
+             regional = list(bio1="const", bio12="drop"), 
+             default="const")
+
  myPred.pure <- NSBM.pure(
    nsbm_obj = mySelvars,       # Objeto nsdm.vinput de sabinaNSDM
    family = binomial(link="logit"),
-   spde.mesh = myMesh,              # Add efecto esapcial SPDE wirh mesh of create_mesh()
+   spde.mesh = myMesh,              # Add spatial SPDE with the mesh of create_mesh()
    spde.pcprior.range = c(5, 0.95),   # Prior para el rango espacial: c(valor, prob. de ser menor)
    spde.pcprior.sigma = c(1, 0.01),   # Prior para la desviación estándar: c(valor, prob. de ser mayor)
-   latent.pcprior.range = c(5, 0.95), 
-   latent.pcprior.sigma = c(1, 0.01),
-   nested.intercept = TRUE,    # TRUE: IRegional se modela como desviación de IGlobal
-   covariate.pcprior.smoothness = NULL,  #NULL, list(u=0.5, alpha=0.01) or "auto". Not running!!!
-   proj.new.env = FALSE,       # Project new scenarios
+   latent.pcprior.range = NULL, #c(5, 0.95), 
+   latent.pcprior.sigma = NULL, #c(1, 0.01),
+   nested.intercept = TRUE,   # TRUE: IRegional se modela como desviación de IGlobal
+   covariate.effects = NULL,  #NULL, cve   
+   proj.new.env = TRUE,       # Project new scenarios
    cv.folds = 1,               # k-folds para cross-validation
    n.threads =1,               # hilos de inla/inlabru
    seed = NULL,
@@ -137,95 +142,18 @@
  #names((myPred.pure))
 
  # plot
- pred <- terra::unwrap(myPred.pure$current.projections$pred)
- #pred_sp <- terra::unwrap(myPred.pure$current.projections$pred_sp)
- #new.proj <- terra::unwrap(myPred.pure$new.projections[[1]])
-
- #names(pred)
- #terra::plot(pred[[1]])
-
- x11()
- map.prob <- ggplot() +
-   geom_raster(data = pred, aes(x = x, y = y, fill = mean)) +
-   scale_fill_distiller(palette = "Spectral", name = "Suitability", na.value = "transparent") +
-   labs(x = "Longitude", y = "Latitude", title = "Pure hierarchical") +
-   theme_minimal()
+ #?plot
+ # current
+ p <- plot(myPred.pure)
  points_pres <- sf::st_as_sf(mySelvars$SpeciesData.XY.Regional, coords = c("x", "y"))
- sf::st_crs(points_pres) <- sf::st_crs(pred)
- map.prob <- map.prob +
-   geom_sf(data = points_pres, color = "black", size = 1.5, alpha = 0.4)
- map.prob
+ sf::st_crs(points_pres) <- sf::st_crs(terra::crs(terra::unwrap(myPred.pure$current.projections$pred), proj = TRUE))
+ p + ggplot2::geom_sf(data = points_pres, color = "black", size = 1.5, alpha = 0.4)
 
+ # Spatial field
+ plot(myPred.pure, which = "pred_sp", layer = "mean")
+ 
+ # new scenario (by index or name)
+ plot(myPred.pure, which = "new.projections[[1]]")
+ plot(myPred.pure, which = "scenario1", layer = "mean")
 
-## INLA MULTIPLY
- myPred.multiply <- NSBM.multiply(
-   nsbm_obj = mySelvars,
-   output = "probability",
-   family = "binomial",
-   link = "logit",
-   spde.mesh = myMesh,
-   spde.pcprior.range = c(5, 0.01),
-   spde.pcprior.sigma = c(1, 0.01),
-   method = "geometric",
-   rescale = TRUE,
-   proj.new.env = TRUE,
-   cv.folds = 1, 
-   n.threads = 1,
-   seed = NULL,
-   save.output = FALSE,
-   save.independent = FALSE)
-
- str(myPred.multiply)
- summary(myPred.multiply)
- #?NSBM.multiply
-
- pred <- terra::unwrap(myPred.multiply$current.projections$pred.multiply)
-
- x11()
- map.multiply <- ggplot() +
-   geom_raster(data = pred, aes(x = x, y = y, fill = Fagus.sylvativa.Current)) +
-   scale_fill_distiller(palette = "Spectral", name = "Suitability", na.value = "transparent") +
-   labs(x = "Longitude", y = "Latitude", title = "Multiply") +
-   theme_minimal()
- # Añadir puntos de presencia
- points_pres <- sf::st_as_sf(mySelvars$SpeciesData.XY.Regional, coords = c("x", "y"))
- sf::st_crs(points_pres) <- sf::st_crs(pred)
- map.multiply <- map.multiply +
-   geom_sf(data = points_pres, color = "black", size = 1.5, alpha = 0.4)
- map.multiply
-
-
-## INLA COVARIATE
- myPred.covariate <- NSBM.covariate(
-   nsbm_obj = mySelvars,
-   family = binomial(link="logit"),
-   spde.mesh = myMesh,
-   spde.pcprior.range = c(5, 0.01),
-   spde.pcprior.sigma = c(1, 0.01),
-   rm.corr = TRUE,
-   corcut = 0.7,         # correlation threshold
-   proj.new.env = TRUE,
-   cv.folds = 1, 
-   n.threads = 1,
-   seed = NULL,
-   save.output = TRUE,
-   save.independent = FALSE)
-
- str(myPred.covariate)
- summary(myPred.covariate)
- #?NSBM.covariate
-
- pred <- terra::unwrap(myPred.covariate$current.projections$pred.covariate)
-
- x11()
- map.covariate <- ggplot() +
-   geom_raster(data = pred, aes(x = x, y = y, fill = mean)) +
-   scale_fill_distiller(palette = "Spectral", name = "Suitability", na.value = "transparent") +
-   labs(x = "Longitude", y = "Latitude", title = "Covariate") +
-   theme_minimal()
- points_pres <- sf::st_as_sf(mySelvars$SpeciesData.XY.Regional, coords = c("x", "y"))
- sf::st_crs(points_pres) <- sf::st_crs(pred)
- map.covariate <- map.covariate +
-   geom_sf(data = points_pres, color = "black", size = 1.5, alpha = 0.4)
- map.covariate
 
