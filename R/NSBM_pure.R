@@ -87,6 +87,7 @@ NSBM.pure <- function(nsbm_obj,
                       seed = NULL,
                       save.output = FALSE) {
 
+
   # checks
   if(!inherits(nsbm_obj, "nsdm.vinput")) {
     stop("The 'nsbm_obj' must be of class 'nsdm.vinput', Please see sabinaNSDM::NSDM.SelectCovariates().")
@@ -122,6 +123,9 @@ NSBM.pure <- function(nsbm_obj,
   if(is.null(spde.mesh)) {
     warning("`spde.mesh` is NULL, so the spatial (SPDE) component will be omitted. \n",
             "To include it, create a mesh with `create_mesh()` and pass it to `spde.mesh`.")
+  }
+  if(!is.null(spde.mesh) && !(!is.null(spde.pcprior.range) || !is.null(spde.pcprior.sigma)) && !(!is.null(latent.pcprior.range) || !is.null(latent.pcprior.sigma))) {   #@@@ revisar enrevesado
+    stop("A mesh (`spde.mesh`) was provided but no priors for the spatial or latent SPDE fields were defined.\n")
   }
   if(!is.null(seed)) {
     if(!is.numeric(seed) || length(seed) != 1) {
@@ -168,6 +172,7 @@ NSBM.pure <- function(nsbm_obj,
 
   .opt_plus <- function(s) if(!is.null(s) && nzchar(s)) paste0(" + ", s) else ""
 
+
   # Data preparation
   sp_covglo <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
   sp_covreg <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
@@ -195,6 +200,7 @@ NSBM.pure <- function(nsbm_obj,
   pp_glo$region <- 0L
   pp_reg$region <- 1L
 
+
   # Spatial domain definition
   pts_reg <- sf::st_as_sf(terra::as.points(sp_covreg, values = FALSE))
   sf::st_crs(pts_reg) <- crs
@@ -207,8 +213,10 @@ NSBM.pure <- function(nsbm_obj,
   sf::st_crs(bdy_glo) <- crs
   sf::st_crs(bdy_reg) <- crs
 
+
   # SPDE
-  if(!is.null(spde.mesh)) {
+  spatial_local <- !is.null(spde.mesh) && (!is.null(spde.pcprior.range) || !is.null(spde.pcprior.sigma))
+  if(spatial_local)  {
     matern <- INLA::inla.spde2.pcmatern(
       mesh = spde.mesh,
       prior.range = spde.pcprior.range,
@@ -216,21 +224,23 @@ NSBM.pure <- function(nsbm_obj,
     )
   }
 
-  # latent SPDE for global covariate
-  latent_global <- !is.null(latent.pcprior.range) || !is.null(latent.pcprior.sigma)
+
+  # Latent global 
+  latent_global <- !is.null(spde.mesh) && (!is.null(latent.pcprior.range) || !is.null(latent.pcprior.sigma))
   if(latent_global) {
-    if (is.null(spde.mesh)) {
+    if(is.null(spde.mesh)) {
       stop("Latent global SPDE requires a valid 'spde.mesh'.")
     }
     # calc defaults based on global covariate resolution
     rast_gl <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)[[1]]
     res_xy <- terra::res(rast_gl)
     mean_res <- mean(res_xy)
-    # default range = 5 × resolution
+    # default range = 5 × resolution        #@@@JMB igual quitamos estos default.....
     if(is.null(latent.pcprior.range)) {
       latent.pcprior.range <- c(mean_res * 5, 0.05)
-      message(sprintf("latent.pcprior.range by default: c(%.5f, 0.05)", mean_res*5))
-    }
+      message(paste0("latent.pcprior.range by default: ", paste(latent.pcprior.range, collapse = ', '),
+        " (derived from 5× mean raster resolution)"))
+    } 
     # default sigma
     if(is.null(latent.pcprior.sigma)) {
       latent.pcprior.sigma <- c(1, 0.01)
@@ -244,7 +254,8 @@ NSBM.pure <- function(nsbm_obj,
     spde_cov <- NULL
   }
 
-  # nested intercept
+
+  # Nested intercept
   if(nested.intercept) {
     # IRegional anidado como desviación de IGlobal
     intercept_terms <- c("IGlobal(1)", "IRegional(1, model='iid', group=region)")
@@ -253,6 +264,7 @@ NSBM.pure <- function(nsbm_obj,
     intercept_terms <- c("IGlobal(1)", "IRegional(1)")
   }
   base_intercepts <- paste(intercept_terms, collapse = " + ")
+
 
   # Model components
   cmp_cov <- fcov(obj = nsbm_obj, 
@@ -266,8 +278,9 @@ NSBM.pure <- function(nsbm_obj,
                   pp_glo_sf = pp_glo,
                   pp_reg_sf = pp_reg)
  
+
   # Formula
-  cmp_formula <- if(!is.null(spde.mesh)) {
+  cmp_formula <- if(spatial_local) {
     paste0("~ ", base_intercepts, " + spatial(geometry, model = matern) + ", cmp_cov$cmp)
   } else {
     paste0("~ ", base_intercepts, " + ", cmp_cov$cmp)
@@ -275,10 +288,10 @@ NSBM.pure <- function(nsbm_obj,
 
   cmp <- as.formula(cmp_formula)
 
-  dom <- if(!is.null(spde.mesh)) list(geometry = spde.mesh) else NULL
-  f_spatial <- if(!is.null(spde.mesh)) " + spatial" else ""
+  dom <- if(spatial_local | latent_global) list(geometry = spde.mesh) else NULL
+  f_spatial <- if(spatial_local) " + spatial" else ""
   I_nested <- if(nested.intercept==TRUE) " + IGlobal" else ""
-  extra_latent <- if(latent_global) " + beta_GL * GLspde" else ""
+  f_latent <- if(latent_global) " + beta_GL * GLspde" else ""
 
   if(fam == "cp") {
     # for intensity, Cox process (cp)
@@ -287,26 +300,26 @@ NSBM.pure <- function(nsbm_obj,
     # Likelihoods
     lik_glo <- inlabru::like(
       family = "cp",
-      formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, extra_latent, .opt_plus(cmp_cov$like$fglobal))),
+      formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, f_latent, .opt_plus(cmp_cov$like$fglobal))),
       data = pres_glo,
       samplers = bdy_glo,
       domain = dom
     )
     lik_reg <- inlabru::like(
       family = "cp",
-      formula = as.formula(paste0("geometry ~ IRegional", I_nested, f_spatial, extra_latent, .opt_plus(cmp_cov$like$fregional))),
+      formula = as.formula(paste0("geometry ~ IRegional", I_nested, f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))),
       data = pres_reg,
       samplers = bdy_reg,
       domain = dom
     )
-    eta <- paste0("IRegional", I_nested, f_spatial, extra_latent, .opt_plus(cmp_cov$like$fregional))
+    eta <- paste0("IRegional", I_nested, f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
     pred_formula <- as.formula(paste0("~ exp(",eta,")"))
   } else {
     # for any type of family-object (e.g, binomial(), etc.)
     # Likelihoods
     lik_glo <- inlabru::like(
       family = fam,
-      formula = as.formula(paste0("resp ~ IGlobal", f_spatial, extra_latent, .opt_plus(cmp_cov$like$fglobal))),
+      formula = as.formula(paste0("resp ~ IGlobal", f_spatial, f_latent, .opt_plus(cmp_cov$like$fglobal))),
       data = pp_glo,
       samplers = bdy_glo,
       domain = dom,
@@ -314,19 +327,20 @@ NSBM.pure <- function(nsbm_obj,
     )
     lik_reg <- inlabru::like(
       family = fam,
-      formula = as.formula(paste0("resp ~ IRegional", I_nested, f_spatial, extra_latent, .opt_plus(cmp_cov$like$fregional))), #@@@JMB si I_nested entra, entra el componente spatial de modelo global?
+      formula = as.formula(paste0("resp ~ IRegional", I_nested, f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))), #@@@JMB si I_nested entra, entra el componente spatial de modelo global?
       data = pp_reg,
       samplers = bdy_reg,
       domain = dom,
       control.family = list(link = lnk)
     )
-    eta <- paste0("IRegional", I_nested, f_spatial, extra_latent, .opt_plus(cmp_cov$like$fregional))
+    eta <- paste0("IRegional", I_nested, f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
     pred_formula <- switch(lnk,
       "logit" = as.formula(paste0("~ 1 / (1 + exp(-(", eta, ")))")),
       "cloglog" = as.formula(paste0("~ 1 - exp(-exp(", eta, "))")), 
       "log" = as.formula(paste0("~ exp(", eta, ")")),
       "identity" = as.formula(paste0("~ ", eta)))
   }
+
 
   # k-fold CV
   if(cv.folds > 1) {
@@ -392,6 +406,7 @@ NSBM.pure <- function(nsbm_obj,
     cv_res <- NULL
   }
 
+
   # Model fitting complete
   fit <- inlabru::bru(
     components = cmp,
@@ -404,6 +419,36 @@ NSBM.pure <- function(nsbm_obj,
 
   lcpo_val <- if(!is.null(fit$cpo$cpo)) round(sum(log(fit$cpo$cpo)), 2) else NA_real_
 
+
+  # latent SPDE for global covariate diagnostics/warnings
+  if(latent_global) {
+    hyp <- fit$summary.hyperpar
+    # hyperpars
+    i_lat_range <- which(grepl("Range.*GLspde", rownames(hyp), ignore.case = TRUE))
+    i_lat_sigma <- which(grepl("Stdev.*GLspde|Sigma.*GLspde", rownames(hyp), ignore.case = TRUE))
+    i_sp_range <- grep("Range.*(spatial|matern)", rownames(hyp), ignore.case = TRUE)
+    i_sp_sigma <- grep("(Stdev|Sigma).*(spatial|matern)", rownames(hyp), ignore.case = TRUE)
+
+    # posterior mean
+    lat_range <- if(length(i_lat_range)) hyp$mean[i_lat_range] else NA_real_
+    lat_sigma <- if(length(i_lat_sigma)) hyp$mean[i_lat_sigma] else NA_real_
+    sp_range <- if(length(i_sp_range)) hyp$mean[i_sp_range] else NA_real_
+    sp_sigma <- if(length(i_sp_sigma)) hyp$mean[i_sp_sigma] else NA_real_
+
+    # spatial and latent overlap?
+    if(is.finite(lat_range) && is.finite(sp_range)) {
+      ratio <- lat_range / sp_range
+      if(ratio < 1) {
+        warning(paste0(
+          "Potential overlap between latent GLspde and residual SPDE (range ratio = ", round(ratio, 2), ").\n",
+          "  Latent and residual fields may be capturing similar spatial scales. This can cause identifiability issues or double-smoothing.\n",
+          "  Consider increasing latent.pcprior.range to at least 3–5× the residual range prior, or reduce spatial.pcprior.range to ensure clear scale separation."
+        ), call. = FALSE)
+      }
+    }
+  } 
+
+
   # Predictions
   pred.df <- sf::st_as_sf(terra::as.points(sp_covreg, values = FALSE))
   sf::st_crs(pred.df) <- crs
@@ -413,12 +458,20 @@ NSBM.pure <- function(nsbm_obj,
   pred <- predict(fit, pred.df, pred_formula)
   pred <- pred_as_tif(pred, sp_covreg) # from sf to tif
 
-  if(!is.null(spde.mesh)) {
+  if(spatial_local) {
     pred_sp <- predict(fit, pred.df, ~ spatial)
     pred_sp <- pred_as_tif(pred_sp, sp_covreg)
   } else {
     pred_sp <- NULL
   }
+
+  if(latent_global) {
+    pred_lat <- predict(fit, pred.df, ~ beta_GL * GLspde)
+    pred_lat  <- pred_as_tif(pred_lat, sp_covreg)
+  } else {
+    pred_lat <- NULL
+  }
+
 
   # New scenarios
   proj_list <- list()
@@ -433,6 +486,36 @@ NSBM.pure <- function(nsbm_obj,
       proj_pred <- predict(fit, scen_df, pred_formula)
       proj_list[[sc]] <- pred_as_tif(proj_pred, template = scen_rast)  # from sf to tif
     }
+  }
+
+
+  # diagnostics (spatial + latent)
+  diag_block  <- NULL
+  if(spatial_local && latent_global) {
+    coords_reg <- sf::st_coordinates(pp_reg)
+    data_used  <- data.frame(x = coords_reg[,1], y = coords_reg[,2], resp = pp_reg$resp)
+    diag_block <- nsbm_diag(fit, 
+                            data_used, 
+                            priors = list(resid_range = spde.pcprior.range,   # c(valor, prob)
+                                          resid_sigma = spde.pcprior.sigma,
+                                          latent_range = latent.pcprior.range,
+                                          latent_sigma = latent.pcprior.sigma))
+    if(length(diag_block$warnings)) {
+      message(paste(unique(diag_block$warnings), collapse = " | "))
+    }
+  }
+
+  # diagnostics plots
+  if(spatial_local && latent_global) {
+    diag_plots <- nsbm_diag_plots(fit = fit,
+                                 sp_covreg= sp_covreg,
+                                 pp_reg = pp_reg,
+                                 pred_sp = pred_sp,
+                                 pred_lat = pred_lat,
+                                 spde.pcprior.range = spde.pcprior.range,
+                                 spde.pcprior.sigma = spde.pcprior.sigma,
+                                 latent.pcprior.range = latent.pcprior.range,
+                                 latent.pcprior.sigma = latent.pcprior.sigma)
   }
 
   # save outputs
@@ -477,6 +560,11 @@ NSBM.pure <- function(nsbm_obj,
       file_path <- file.path(projections_path, paste0(species, "_Current_Spatial.tif"))
       terra::writeRaster(terra::unwrap(pred_sp), file_path, overwrite = TRUE)
     }
+    # save latent contribution
+    if(!is.null(pred_lat)) {
+      file_path <- file.path(projections_path, paste0(species, "_Current_latent.tif"))
+      terra::writeRaster(terra::unwrap(pred_lat), file_path, overwrite = TRUE)
+    }
     # save new scenarios
     if(length(proj_list) > 0 && !is.null(nsbm_obj$Scenarios)) {
       for(i in seq_along(proj_list)) {
@@ -485,18 +573,23 @@ NSBM.pure <- function(nsbm_obj,
         terra::writeRaster(terra::unwrap(proj_list[[i]]), file_path, overwrite = TRUE)
       }
     }
+    # save diagnostic plot
+    if(spatial_local && latent_global) {
+      file_path <- file.path(values_path, paste0(species, "_diagnostics.png"))
+      ggplot2::ggsave(file_path, diag_plots, width = 8, height = 12, dpi = 300)
+    }
 
     message("Results saved in the following local folder(s):")
     message(paste(
     "  - Current projection (pred), spatial field (pred_sp), and new scenarios: ", projections_path, "\n",
-    " - Fixed/random spatial effects, hyperparameters, evaluation: ", values_path, "\n",
+    " - Fixed/random spatial effects, hyperparameters, evaluation, diagnostic: ", values_path, "\n",
     " - Full model object: ", file.path(values_path, paste0(species, "_model_fit.rds")), "\n"
     ))
   }
 
   # summary          #@@@JMB pendiente revisar/completar...
-  spatial <- if(!is.null(spde.mesh)) TRUE else FALSE
-  summary_df <- generate_summary_nsbm(fit, species, spatial, lcpo_val, model = "pure") 
+  #spatial <- if(!is.null(spde.mesh)) TRUE else FALSE
+  summary_df <- generate_summary_nsbm(fit, species, spatial = spatial_local, lcpo_val, model = "pure", latent_global = latent_global) 
   if(!is.null(cv_res)) {
     cv_rows <- data.frame(
       Field = c("CV folds:", "AUC mean ± sd:"),
@@ -504,6 +597,32 @@ NSBM.pure <- function(nsbm_obj,
       stringsAsFactors = FALSE
     )
     summary_df <- rbind(summary_df, cv_rows)
+  }
+  if(!is.null(diag_block)) {
+    diag_rows <- data.frame(
+      Field = c("CI/med Range (residual, latent)",
+                "CI/med Sigma (residual, latent)",
+                "Field correlation (r)",
+                "Residual Moran's I (large scale)",
+                "Sigma_latent/Sigma_residual"),
+      Value = c(paste0(round(diag_block$essentials$range_ci_ratios["residual"], 1), " | ",
+                       round(diag_block$essentials$range_ci_ratios["latent"], 1)),
+                paste0(round(diag_block$essentials$sigma_ci_ratios["residual"], 1), " | ",
+                       round(diag_block$essentials$sigma_ci_ratios["latent"], 1)),
+                paste0(round(diag_block$essentials$field_correlation, 2)),
+                paste0(round(diag_block$essentials$moran_large_scale, 2)),
+                paste0(round(diag_block$essentials$sigma_ratio_latent_over_residual, 2))),
+      stringsAsFactors = FALSE
+    )
+    summary_df <- rbind(summary_df, diag_rows)
+
+    if(length(diag_block$warnings)) {
+      warn_rows <- data.frame(
+        Field = rep("⚠️ Warning", length(diag_block$warnings)),
+        Value = diag_block$warnings,
+        stringsAsFactors = FALSE)
+      summary_df <- rbind(summary_df, warn_rows)
+    }
   }
 
   # return
@@ -528,7 +647,8 @@ NSBM.pure <- function(nsbm_obj,
     Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
     current.projections = list(
       pred = terra::wrap(pred),
-      pred_sp = if(!is.null(pred_sp)) terra::wrap(pred_sp) else NULL
+      pred_sp = if(!is.null(pred_sp)) terra::wrap(pred_sp) else NULL,
+      pred_latent = if(!is.null(pred_lat)) terra::wrap(pred_lat) else NULL
     ),
     new.projections = if(length(proj_list) > 0) lapply(proj_list, terra::wrap) else list(),
     Summary = summary_df
@@ -541,6 +661,7 @@ NSBM.pure <- function(nsbm_obj,
 
 
 ### Helps/Auxiliars
+# -----------------------------
 
 # formulas
 fcov <- function(obj, 
@@ -691,8 +812,12 @@ fcov <- function(obj,
       paste0(vr, "RE(main = ", spobjreg, ", main_layer = '", vr, "', model = 'const')"),
       collapse = " + ") else ""
     fregional <- if (length(vr) > 0) paste0(vr, " * ", vr, "RE", collapse = " + ") else ""
+    latent_block <- ""
+    if(isTRUE(use_latent) && !is.null(spde_cov)) {
+      latent_block <- "GLspde(main = geometry, model = spde_cov) + beta_GL(1)"
+    }
     return(list(
-      cmp = paste(Filter(nzchar, c(cmp1, cmpglobal, cmpregional)), collapse = " + "),
+      cmp = paste(Filter(nzchar, c(cmp1, latent_block, cmpglobal, cmpregional)), collapse = " + "),
       like = list(fglobal = if(nzchar(fglobal)) fglobal else "",
                   fregional = if(nzchar(fregional)) fregional else "")
     ))
@@ -804,6 +929,421 @@ fcov <- function(obj,
   ) 
 
 }
+
+
+# -----------------------------
+
+# diagnostics
+nsbm_diag <- function(fit, data_used, priors = NULL) {
+  out <- list(); warn <- character()
+
+  hyp <- fit$summary.hyperpar
+  gr <- function(p) {
+    i <- grep(p, rownames(hyp), ignore.case = TRUE, perl = TRUE)
+    if(length(i)) hyp[i[1], , drop = FALSE] else NULL
+  }
+  r_res <- gr("Range.*resid|Range.*local|Range.*(spatial|matern)(?!.*latent)")
+  r_lat <- gr("Range.*(latent|global|GLspde)")
+  s_res <- gr("(Stdev|Sigma).*(resid|local|spatial(?!.*latent))")
+  s_lat <- gr("(Stdev|Sigma).*(latent|global|GLspde)")
+
+  ci_ratio <- function(row) {
+    if(is.null(row)) return(NA_real_)
+    ciw <- row[, "0.975quant"] - row[, "0.025quant"]
+    med <- row[, "0.5quant"]
+    if(!is.finite(ciw) || !is.finite(med) || med == 0) return(NA_real_)
+    as.numeric(ciw / abs(med))
+  }
+  med_of <- function(row) if (is.null(row)) NA_real_ else as.numeric(row[, "0.5quant"])
+
+  out$hyper <- list(
+    range_residual_ci_ratio = ci_ratio(r_res),
+    range_latent_ci_ratio = ci_ratio(r_lat),
+    sigma_residual_ci_ratio = ci_ratio(s_res),
+    sigma_latent_ci_ratio = ci_ratio(s_lat),
+    range_residual_median = med_of(r_res),
+    range_latent_median = med_of(r_lat),
+    sigma_residual_median = med_of(s_res),
+    sigma_latent_median = med_of(s_lat)
+  )
+
+  # posteriors
+  ci_vec <- unlist(list(out$hyper$range_residual_ci_ratio,
+                        out$hyper$range_latent_ci_ratio,
+                        out$hyper$sigma_residual_ci_ratio,
+                        out$hyper$sigma_latent_ci_ratio))
+  ci_vec <- ci_vec[is.finite(ci_vec)]
+  if(length(ci_vec)) {
+    mx <- max(ci_vec, na.rm = TRUE)
+    if(mx > 50) {
+      warn <- c(warn, "Extremely diffuse posterior(s) for range/sigma (CI/median > 50): likely weak identifiability.")
+    } else if(mx > 25) {
+      warn <- c(warn, "Very diffuse posterior(s) (CI/median > 25): consider stronger priors or clearer scale separation.")
+    } else if(mx > 10) {
+      warn <- c(warn, "Diffuse posterior(s) (CI/median > 10): data may provide limited information on hyperparameters.")
+    }
+  }
+
+  # correlation spatial–latent
+  rn <- names(fit$summary.random)
+  cand_res <- rn[grep("resid|local|spatial(?!.*latent)", rn, ignore.case = TRUE, perl = TRUE)]
+  cand_lat <- rn[grep("latent|global|GLspde", rn, ignore.case = TRUE)]
+  get_mean <- function(nm) if (length(nm) && nm[1] %in% rn) fit$summary.random[[nm[1]]]$mean else NULL
+  fr <- get_mean(cand_res); fl <- get_mean(cand_lat)
+
+  out$field_correlation <- NA_real_
+  if(!is.null(fr) && !is.null(fl)) {
+    n <- min(length(fr), length(fl))
+    out$field_correlation <- suppressWarnings(stats::cor(fr[seq_len(n)], fl[seq_len(n)], use = "pairwise.complete.obs"))
+    if(is.finite(out$field_correlation) && out$field_correlation > 0.70) {
+      warn <- c(warn, paste0("High residual–latent correlation ", round(out$field_correlation, 3), ": potential collinearity."))
+    }
+  }
+
+  # Moran's I residual
+  out$moran_large_scale <- NA_real_
+  if(all(c("x","y","resp") %in% names(data_used))) {
+    pred_mu <- fit$summary.fitted.values$mean
+    if(length(pred_mu) >= nrow(data_used)) {
+      rs <- data_used$resp - pred_mu[seq_len(nrow(data_used))]
+      xy <- as.matrix(data_used[, c("x","y")])
+      spatial_local <- any(grepl("spatial", names(fit$summary.random), ignore.case = TRUE))
+      latent_global <- any(grepl("latent|GLspde|global", names(fit$summary.random), ignore.case = TRUE))
+
+      # determine range accordinf spde fild (spatial/latent)
+      if(spatial_local) {
+        maxdist <- out$hyper$range_residual_median
+      } else if(latent_global) {
+        maxdist <- out$hyper$range_latent_median
+      } else {
+        warn <- c(warn, "No spatial or latent field: Moran’s I not computed.")
+        out$moran_large_scale <- NA_real_
+        out$warnings <- unique(warn)
+        out$essentials <- list(
+          range_ci_ratios = c(residual = out$hyper$range_residual_ci_ratio,
+                              latent   = out$hyper$range_latent_ci_ratio),
+          sigma_ci_ratios = c(residual = out$hyper$sigma_residual_ci_ratio,
+                              latent   = out$hyper$sigma_latent_ci_ratio),
+          field_correlation = out$field_correlation,
+          moran_large_scale = NA_real_,
+          sigma_ratio_latent_over_residual = NA_real_,
+          range_ratio_latent_over_residual = NA_real_
+        )
+        return(out)
+      }
+
+      nb <- spdep::dnearneigh(xy, d1 = 0, d2 = maxdist, longlat = FALSE)
+      lw <- spdep::nb2listw(nb, style = "W", zero.policy = TRUE)
+      mi <- spdep::moran(rs, lw, n = length(rs), S0 = spdep::Szero(lw))
+      out$moran_large_scale <- as.numeric(mi$I)
+
+      if(is.finite(out$moran_large_scale) && out$moran_large_scale > 0.10) {
+        if(spatial_local && latent_global) {
+          warn <- c(warn, paste0("Residual autocorrelation (Moran’s I = ", out$moran_large_scale,"): spatial + latent fields may not capture all dependence."))
+        } else if(spatial_local && !latent_global) {
+          warn <- c(warn, paste0("Residual autocorrelation (Moran’s I = ", out$moran_large_scale,"): spatial field range may be too short."))
+        } else if(!spatial_local && latent_global) {
+          warn <- c(warn, paste0("Residual autocorrelation (Moran’s I = ", out$moran_large_scale,"): consider adding a local residual field."))
+        }
+      }
+    }
+  }
+
+  #  latent variance
+  s_lat_med <- out$hyper$sigma_latent_median
+  s_res_med <- out$hyper$sigma_residual_median
+  out$sigma_ratio_latent_over_residual <- if (is.finite(s_lat_med) && is.finite(s_res_med) && s_res_med > 0) s_lat_med / s_res_med else NA_real_
+  if(is.finite(out$sigma_ratio_latent_over_residual) && out$sigma_ratio_latent_over_residual > 1.5) {
+    warn <- c(warn, "Latent field dominates variance (>1.5* residual): may absorb local signal.")
+  }
+
+  # range separation
+  rL <- out$hyper$range_latent_median
+  rR <- out$hyper$range_residual_median
+  if(is.finite(rL) && is.finite(rR) && rR > 0) {
+    ratio <- rL / rR
+    if(ratio > 0.5 && ratio < 2) {
+      warn <- c(warn, paste0("Poor range separation: latent/residual ≈ ", ratio, " (ideally >> 1)."))
+    }
+  }
+
+  # posterior ~ prior
+  if(!is.null(priors) && is.list(priors)) {
+    # para pcprior usamos umbral u; comprobamos proximidad relativa de la mediana posterior a ese umbral
+    close_rel <- function(post_med, prior_u, tol = 0.15) {
+      if(!is.finite(post_med) || is.null(prior_u) || length(prior_u) < 1 || !is.finite(prior_u[1]) || prior_u[1] == 0) return(FALSE)
+      abs(post_med - prior_u[1]) / abs(prior_u[1]) < tol
+    }
+    if(close_rel(out$hyper$range_residual_median, priors$resid_range))  warn <- c(warn, "Residual range posterior close to PC prior threshold: data may be weakly informative.")
+    if(close_rel(out$hyper$sigma_residual_median, priors$resid_sigma))  warn <- c(warn, "Residual sigma posterior close to PC prior threshold: data may be weakly informative.")
+    if(close_rel(out$hyper$range_latent_median,  priors$latent_range)) warn <- c(warn, "Latent range posterior close to PC prior threshold: data may be weakly informative.")
+    if(close_rel(out$hyper$sigma_latent_median,  priors$latent_sigma)) warn <- c(warn, "Latent sigma posterior close to PC prior threshold: data may be weakly informative.")
+  }
+
+  out$warnings <- unique(warn)
+  out$essentials <- list(
+    range_ci_ratios = c(residual = out$hyper$range_residual_ci_ratio,
+                        latent = out$hyper$range_latent_ci_ratio),
+    sigma_ci_ratios = c(residual = out$hyper$sigma_residual_ci_ratio,
+                        latent = out$hyper$sigma_latent_ci_ratio),
+    field_correlation = out$field_correlation,
+    moran_large_scale = out$moran_large_scale,
+    sigma_ratio_latent_over_residual = out$sigma_ratio_latent_over_residual,
+    range_ratio_latent_over_residual =
+      if(is.finite(out$hyper$range_latent_median) && is.finite(out$hyper$range_residual_median) && out$hyper$range_residual_median > 0)
+        out$hyper$range_latent_median / out$hyper$range_residual_median else NA_real_
+  )
+  out
+}
+
+# -----------------------------
+
+
+# diagnostic plot (spatial + latent)
+nsbm_diag_plots <- function(fit,
+                            sp_covreg,
+                            pp_reg,
+                            pred_sp = NULL,
+                            pred_lat = NULL,
+                            spde.pcprior.range = NULL,
+                            spde.pcprior.sigma = NULL,
+                            latent.pcprior.range = NULL,
+                            latent.pcprior.sigma = NULL) {
+
+  add_smarg <- function(fit, name, label = name) {
+    margs <- fit$marginals.hyperpar
+    if(is.null(margs) || !length(margs) || is.null(margs[[name]])) return(NULL)
+    sm <- INLA::inla.smarginal(margs[[name]])
+    data.frame(x = sm$x, y = sm$y, par = label, stringsAsFactors = FALSE)
+  }
+
+  post_df <- NULL
+  hyp_margs <- fit$marginals.hyperpar
+  if(!is.null(hyp_margs) && length(hyp_margs)) {
+    nm_res_range <- grep("Range.*(spatial|matern)(?!.*latent)", names(hyp_margs), perl = TRUE, value = TRUE)
+    nm_res_sigma <- grep("(Stdev|Sigma).*(spatial|matern)(?!.*latent)", names(hyp_margs), perl = TRUE, value = TRUE)
+    nm_lat_range <- grep("Range.*(GLspde|latent|global)", names(hyp_margs), ignore.case = TRUE, value = TRUE)
+    nm_lat_sigma <- grep("(Stdev|Sigma).*(GLspde|latent|global)", names(hyp_margs), ignore.case = TRUE, value = TRUE)
+
+    if(length(nm_res_range)) post_df <- rbind(post_df, add_smarg(fit, nm_res_range[1], "Residual range"))
+    if(length(nm_res_sigma)) post_df <- rbind(post_df, add_smarg(fit, nm_res_sigma[1], "Residual sigma"))
+    if(length(nm_lat_range)) post_df <- rbind(post_df, add_smarg(fit, nm_lat_range[1], "Latent range"))
+    if(length(nm_lat_sigma)) post_df <- rbind(post_df, add_smarg(fit, nm_lat_sigma[1], "Latent sigma"))
+  }
+
+  prior_ticks <- do.call(rbind, Filter(Negate(is.null), list(
+    data.frame(x = spde.pcprior.range[1], par = "Residual range"),
+    data.frame(x = spde.pcprior.sigma[1], par = "Residual sigma"),
+    data.frame(x = latent.pcprior.range[1], par = "Latent range"),
+    data.frame(x = latent.pcprior.sigma[1], par = "Latent sigma")
+  )))
+
+  ymax_fac <- aggregate(y ~ par, post_df, function(z) max(z, na.rm = TRUE))
+  prior_ticks$y <- ymax_fac$y[match(prior_ticks$par, ymax_fac$par)] * 0.95
+  prior_ticks$label <- "PC prior u"
+
+  pA <- ggplot2::ggplot(post_df, ggplot2::aes(x = x, y = y)) +
+    ggplot2::geom_line(linewidth = 0.6, color = "#1a5276") +
+    ggplot2::facet_wrap(~par, scales = "free", ncol = 2) +
+    ggplot2::geom_vline(
+      data = prior_ticks,
+      ggplot2::aes(xintercept = x),
+      linetype = "dashed",
+      linewidth = 0.5,
+      color = "#c0392b",
+      alpha = 0.7
+    ) +
+    ggplot2::geom_text(
+      data = prior_ticks,
+      ggplot2::aes(x = x, y = y, label = "PC prior (u)"),
+      vjust = -0.8, hjust = 0.9, size = 2.8,
+      color = "#c0392b", angle = 90
+    ) +
+    ggplot2::labs(
+      title = "A) Hyperparameters: posterior marginals",
+      subtitle = "Red dashed lines = PC prior thresholds (u)",
+      y = "Density",
+      x = "Value"
+    ) +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
+      strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
+      axis.title = ggplot2::element_text(size = 9, color = "#2c3e50"),
+      axis.text = ggplot2::element_text(size = 8),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
+    )
+
+
+  # spatial residual vs latent 
+  ras_to_df <- function(r, nm) {
+    rr <- terra::unwrap(r)[["mean"]] # layer "mean"
+    df <- terra::as.data.frame(rr, xy = TRUE, na.rm = FALSE)
+    names(df) <- c("x", "y", "mean")
+    df$which <- nm
+    df
+  }
+
+  maps_df <- data.frame()
+  if (!is.null(pred_sp)) maps_df <- rbind(maps_df, ras_to_df(pred_sp, "Spatial residual field"))
+  if (!is.null(pred_lat)) maps_df <- rbind(maps_df, ras_to_df(pred_lat, "Latent global field"))
+
+  if (nrow(maps_df) > 0) {
+    zlim <- range(maps_df$mean, na.rm = TRUE)
+    pB <- ggplot2::ggplot(maps_df, ggplot2::aes(x = x, y = y, fill = mean)) +
+      ggplot2::geom_raster(na.rm = TRUE) +
+      ggplot2::scale_fill_distiller(palette = "YlGnBu", limits = zlim, na.value = "white") +
+      ggplot2::coord_equal(expand = FALSE) +
+      ggplot2::facet_wrap(~which, ncol = 2, scales = "fixed") +
+      ggplot2::labs(
+        title = "B) SPDE fields (common scale)",
+        subtitle = "Posterior mean of spatial fields (residual / latent)",
+        fill = "Mean"
+      ) +
+      ggplot2::theme_minimal(base_size = 10) +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
+        plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
+        strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
+        axis.title = ggplot2::element_blank(),
+        axis.text  = ggplot2::element_blank(),
+        axis.ticks = ggplot2::element_blank(),
+        panel.grid = ggplot2::element_blank(),
+        panel.border = ggplot2::element_blank(),
+        panel.background = ggplot2::element_blank(),
+        strip.background = ggplot2::element_blank(),
+        plot.background = ggplot2::element_blank(),
+        legend.position = "bottom",
+        legend.key.height = ggplot2::unit(0.3, "cm"),
+        legend.key.width  = ggplot2::unit(1.2, "cm"),
+        legend.title = ggplot2::element_text(size = 9, color = "#2c3e50"),
+        legend.text  = ggplot2::element_text(size = 8)
+      )
+  } else {
+    pB <- ggplot2::ggplot() +
+      ggplot2::labs(
+        title = "B) SPDE fields",
+        subtitle = "No spatial or latent fields present in the model"
+      ) +
+      ggplot2::theme_void() +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
+        plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e")
+      )
+  }
+
+
+
+  # residual correlogram
+  coords_reg <- sf::st_coordinates(pp_reg)
+  mu <- as.numeric(fit$summary.fitted.values$mean[seq_len(nrow(pp_reg))])
+  rs <- as.numeric(pp_reg$resp) - mu
+
+  n_pts <- nrow(coords_reg)
+  max_pairs <- 10000L
+  if (n_pts > 2000L) {
+    set.seed(123)
+    idx_s <- sample(seq_len(n_pts), size = min(2000L, n_pts))
+    coords_reg <- coords_reg[idx_s, , drop = FALSE]
+    rs <- rs[idx_s]
+  }
+  dmat <- as.matrix(stats::dist(coords_reg))
+  dvec <- dmat[upper.tri(dmat)]
+
+  # model range/s for reference
+  hyp <- fit$summary.hyperpar
+  get_median <- function(pattern) {
+    i <- grep(pattern, rownames(hyp), ignore.case = TRUE, perl = TRUE)
+    if (length(i) == 0) return(NA_real_)
+    val <- hyp[i[1], "0.5quant", drop = TRUE]
+    as.numeric(val)
+  }
+
+  r_res <- get_median("Range.*(spatial|matern)(?!.*latent)")
+  r_lat <- get_median("Range.*(latent|global|GLspde)")
+  spatial_local <- any(grepl("spatial", names(fit$summary.random), ignore.case = TRUE))
+  latent_global <- any(grepl("latent|GLspde|global", names(fit$summary.random), ignore.case = TRUE))
+
+  range_eff <- NA_real_
+  if (spatial_local && is.finite(r_res)) {
+    range_eff <- r_res
+  } else if (!spatial_local && latent_global && is.finite(r_lat)) {
+    range_eff <- r_lat
+  }
+
+  dmax <- if (is.finite(range_eff)) 3 * range_eff else max(dvec, na.rm = TRUE)
+  nbins <- if (n_pts < 500) 10L else if (n_pts < 5000) 15L else 20L
+  brks <- seq(0, dmax, length.out = nbins + 1)
+  mid  <- 0.5 * (brks[-1] + brks[-length(brks)])
+  rho  <- rep(NA_real_, nbins)
+
+  ut_r <- row(dmat)[upper.tri(dmat)]
+  ut_c <- col(dmat)[upper.tri(dmat)]
+
+  for (i in seq_len(nbins)) {
+    sel <- dvec >= brks[i] & dvec < brks[i + 1]
+    if (sum(sel) > 30) {
+      idx <- which(sel)
+      if (length(idx) > max_pairs) idx <- sample(idx, max_pairs)
+      r1 <- rs[ut_r[idx]]
+      r2 <- rs[ut_c[idx]]
+      rho[i] <- suppressWarnings(stats::cor(r1, r2, use = "pairwise.complete.obs"))
+    }
+  }
+
+  cor_df <- data.frame(dist_mid = mid, rho = rho)
+
+  pC <- ggplot2::ggplot(cor_df, ggplot2::aes(x = dist_mid, y = rho)) +
+    ggplot2::geom_hline(yintercept = 0, linewidth = 0.3, linetype = "dashed", color = "grey50") +
+    ggplot2::geom_point(na.rm = TRUE, size = 1.2, color = "#1a5276") +
+    ggplot2::geom_line(na.rm = TRUE, color = "#1a5276", linewidth = 0.6) +
+    ggplot2::labs(
+      title = "C) Residual correlogram (aligned with model range)",
+      subtitle = if (is.finite(range_eff))
+        paste0("Reference range ≈ ", round(range_eff, 3), " (map units)")
+      else
+        "No spatial/latent field: full extent shown",
+      x = "Distance (map units)",
+      y = "Residual correlation"
+    ) +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
+      strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
+      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
+      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
+      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc"),
+      panel.border = ggplot2::element_blank(),
+      panel.background = ggplot2::element_blank(),
+      plot.background = ggplot2::element_blank()
+    )
+
+  # Vertical line for model range
+  if (is.finite(range_eff)) {
+    pC <- pC +
+      ggplot2::geom_vline(xintercept = range_eff, linetype = "dashed", color = "#c0392b", alpha = 0.7) +
+      ggplot2::annotate(
+        "text",
+        x = range_eff, y = max(cor_df$rho, na.rm = TRUE),
+        label = "Model range", angle = 90, vjust = -0.8, hjust = 0.9,
+        color = "#c0392b", size = 3
+      )
+  }
+
+
+  # composition panel
+  composite <- patchwork::wrap_plots(pA, pB, pC, ncol = 1)
+ 
+  return(composite)
+}
+
+
+
 
 
 ###----------------###

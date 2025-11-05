@@ -1,6 +1,6 @@
 #' prepare summary
 #' @noRd
-generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val, model) {
+generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val, model, latent_global) {
 
   # Fixed effects and hyperpar
   summary_fixed <- fit$summary.fixed
@@ -59,7 +59,7 @@ generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val, model
     Value = c(
       gsub("\\.", " ", species),
       if(isTRUE(spatial)) {
-        paste0("NSBM.", model," (with SPDE)")
+        paste0("NSBM.", model," (with SPDE ", if(latent_global) "and latent GLspde", ")")
       } else {
         paste0("NSBM.", model," (no SPDE)")
       },
