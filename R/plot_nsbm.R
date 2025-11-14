@@ -169,7 +169,7 @@ plot.nsbm.inlabru <- function(x,
   species <- x$Species.Name
   type_lab <- sub(".*NSBM\\.|\\s*\\(.*\\)", "", x$Summary$Value[grep("Model type", x$Summary$Field)][1])
   plot_title <- if(is.null(title)) {
-    paste(species, "|", type_lab, "|", scope_label, "|", layer)
+    paste(species, "|", type_lab, "|", scope_label, "| Posterior ", layer)
   } else {
     title
   }
