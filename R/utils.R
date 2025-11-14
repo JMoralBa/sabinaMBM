@@ -1,73 +1,94 @@
 #' prepare summary
 #' @noRd
-generate_summary_nsbm <- function(fit, species=species, spatial, lcpo_val, model) {
+generate_summary_nsbm <- function(fit, species=species, lcpo_val) {
+  
+  spatial_local <- "spatial" %in% names(fit$summary.random)
+  latent_global <- "GLspde" %in% names(fit$summary.random)
 
   # Fixed effects and hyperpar
   summary_fixed <- fit$summary.fixed
   hyper <- fit$summary.hyperpar
 
-  # Filter valid vars
-  valid_vars <- summary_fixed[!is.na(summary_fixed$mean), ]
+  # Species and model type
+  species_name <- gsub("\\.", " ", species)
+  model_type <- paste0("NSBM",
+   if(spatial_local) " + spatial" else "",
+   if(latent_global) " + latent" else ""
+  )
 
+  # Model fit metrics
+  dic_val <- if(!is.null(fit$dic$dic) && !is.na(fit$dic$dic)) round(fit$dic$dic, 2) else "Not computed"
+  waic_val <- if(!is.null(fit$waic$waic) && !is.na(fit$waic$waic)) round(fit$waic$waic, 2) else "Not computed"
+  mlik_val <- if(!is.null(fit$mlik) && !is.na(fit$mlik[1,1])) round(fit$mlik[1, 1], 2) else "Not computed"
+  
+
+  # Hyperparameters spde
+  range_res <- if(!is.null(hyper) && "Range for spatial" %in% rownames(hyper))
+    paste0(round(hyper["Range for spatial","mean"],2), " ± ", round(hyper["Range for spatial","sd"],2)) else "—"
+  sigma_res <- if(!is.null(hyper) && "Stdev for spatial" %in% rownames(hyper))
+    paste0(round(hyper["Stdev for spatial","mean"],2), " ± ", round(hyper["Stdev for spatial","sd"],2)) else "—"
+  range_lat <- if(!is.null(hyper) && "Range for GLspde" %in% rownames(hyper))
+    paste0(round(hyper["Range for GLspde","mean"],2), " ± ", round(hyper["Range for GLspde","sd"],2)) else "—"
+  sigma_lat <- if(!is.null(hyper) && "Stdev for GLspde" %in% rownames(hyper))
+    paste0(round(hyper["Stdev for GLspde","mean"],2), " ± ", round(hyper["Stdev for GLspde","sd"],2)) else "—"
+
+
+  # Significant vars
+  valid_vars <- summary_fixed[!is.na(summary_fixed$mean), ]
   valid_vars$type <- ifelse(
     rownames(valid_vars) %in% c("IGlobal", "IRegional"), "Intercept",
     ifelse(grepl("GL$", rownames(valid_vars)), "Global",
            ifelse(grepl("RE$", rownames(valid_vars)), "Regional", "Unclassified"))
   )
-
   # Filter significant vars (CI does not cross 0 and mean is relevant)
   signif_vars <- valid_vars[
     valid_vars[,"0.025quant"] * valid_vars[,"0.975quant"] > 0 &
     abs(valid_vars[,"mean"]) > 0.05,
   ]
-
   # Order by abs mean (importance?)
   signif_vars <- signif_vars[order(-abs(signif_vars[,"mean"])), ]
-
-  # Label
   var_labels <- paste0(
     rownames(signif_vars), " ",
     ifelse(signif_vars$mean > 0, "(+)", "(–)")
   )
 
-  # Evaluation metrics
-  dic_val <- if(!is.null(fit$dic$dic) && !is.na(fit$dic$dic)) round(fit$dic$dic, 2) else "Not computed"
-  waic_val <- if(!is.null(fit$waic$waic) && !is.na(fit$waic$waic)) round(fit$waic$waic, 2) else "Not computed"
-  mlik_val <- if(!is.null(fit$mlik) && !is.na(fit$mlik[1,1])) round(fit$mlik[1, 1], 2) else "Not computed"
-  
-  # 
-  spatial_range <- if(!is.null(hyper) && "Range for spatial" %in% rownames(hyper)) {
-    paste0(round(hyper["Range for spatial", "mean"], 2), " ± ",
-           round(hyper["Range for spatial", "sd"], 2))
-  } else {
-    "Not computed"
-  }
-
   #
   summary_df <- data.frame(
     Field = c(
       "Species name:",
-      "Model type:",
-      "DIC;",
-      "WAIC:",
-      "Marginal log-likelihood:",
+      "Model type:", 
+      "",
+      "-- Model fit (Bayesian criteria) --",
+      "  DIC",
+      "  WAIC",
+      "  Marginal log-likelihood (log ML)",
       # log sum of conditional predictive ordinates: a bayesian metric for model validation (lower values indicate better fit)
-      "LCPO (sum log-CPO):",   
-      "SPDE spatial range (mean ± sd):",
-      "Significant variables (ordered):"
+      "  LCPO (sum of log-CPO values)",
+      "",
+      "--------- Model parameters --------",   
+      if(spatial_local) "  Spatial/residual local field:",
+      if(spatial_local) "      Range (posterior mean ± SD)" else NULL,
+      if(spatial_local) "      Standard deviation (σ) (posterior mean ± SD)" else NULL,
+      "",
+      if(latent_global) "  Latent global field:" else NULL,
+      if(latent_global) "      Range (posterior mean ± SD)" else NULL,
+      if(latent_global) "      Standard deviation (σ) (posterior mean ± SD)" else NULL,
+      "",
+      "  Significant covariates (ordered):"
     ),
     Value = c(
-      gsub("\\.", " ", species),
-      if(isTRUE(spatial)) {
-        paste0("NSBM.", model," (with SPDE)")
-      } else {
-        paste0("NSBM.", model," (no SPDE)")
-      },
-      dic_val,
-      waic_val,
-      mlik_val,
-      lcpo_val,
-      spatial_range,
+      species_name, model_type,
+      "", "", 
+      dic_val, waic_val, mlik_val, lcpo_val,
+      "", "",
+      if(spatial_local) "" else NULL,
+      if(spatial_local) range_res else NULL,
+      if(spatial_local) sigma_res else NULL,
+      "",
+      if(latent_global) "" else NULL,
+      if(latent_global) range_lat else NULL,
+      if(latent_global) sigma_lat else NULL,
+      "",
       if(length(var_labels) > 0) paste(var_labels, collapse = ", ") else "None"
     ),
     stringsAsFactors = FALSE
