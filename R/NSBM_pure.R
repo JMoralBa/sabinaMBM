@@ -95,7 +95,7 @@ NSBM.pure <- function(nsbm_obj,
 
   # checks
   if(!inherits(nsbm_obj, "nsdm.vinput")) {
-    stop("❌ The 'nsbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
+    stop("❌  The 'nsbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
   }
   if(inherits(family, "family")) {
     fam <- family$family
@@ -117,58 +117,63 @@ NSBM.pure <- function(nsbm_obj,
                       cp = NULL)
   if(!fam %in% names(valid_links)) {
     stop("❌ Unsupported family ", fam, ".\n",
-         "  Supported families are: ", paste(names(valid_links), collapse = ", "), "\n",
-         "  Please, see ?NSBM.pure details for more.\n")
+         "  Supported families are: ", paste(names(valid_links), collapse = ", "), "\n")
   }
   if(!is.null(lnk) && !lnk %in% valid_links[[fam]]) {
-    stop("❌ Link `", lnk, "` is not allowed for family `", fam, "`.\n",
-         "  Allowed links for '", fam, "': ", paste(valid_links[[fam]], collapse = ", "), ".\n",
-         "  Please, see ?NSBM.pure details for more.\n")
+    stop("❌ Inalid link `", lnk, "` for this family `", fam, "`.\n",
+         "  Allowed links for '", fam, "': ", paste(valid_links[[fam]], collapse = ", "), ".\n")
   }
   if(is.null(coupling.intercept)) {
-    message("ℹ️ 'coupling.intercept = NULL'; regional-only model (no global component will be used).")
+    if(length(nsbm_obj$Selected.Variables.Regional) == 0) {
+      stop("❌ 'coupling.intercept = NULL' (regional-only) but no regional covariates are present in 'nsbm_obj'.\n\n")
+    }
+    if(latent_global) {
+      stop("❌ Latent global SPDE not allowed in regional-only model (no global scale exists).\n\n")
+    }
+    message("ℹ️ 'coupling.intercept = NULL'; running a regional-only model (no global component will be used).\n\n")
   } else {
     if(!is.character(coupling.intercept) || !coupling.intercept %in% c("additive", "hierarchical")) {
-      stop("❌ 'coupling.intercept' must be NULL, 'additive', or 'hierarchical'.")
+      stop("❌  The 'coupling.intercept' must be NULL, 'additive', or 'hierarchical'.\n\n")
+    }
+    if(is.null(spde.mesh)) {
+      stop("❌  You provided SPDE priors but no 'spde.mesh'.\n",
+           "  To include them, create a mesh with `create_mesh()`.\n\n")
     }
     if(length(nsbm_obj$Selected.Variables.Global) == 0) {
-      stop("❌ 'coupling.intercept = ", coupling.intercept, "' requires a global component.\n",
-           "   However, no global covariates are present in 'nsbm_obj'.\n",
-           "   → Use 'coupling.intercept = NULL' for a regional-only model.")
+      stop("❌ 'coupling.intercept = ", coupling.intercept, "' requires a global component,\n",
+           "   but no global covariates are present in 'nsbm_obj'.\n",
+           "   Use 'coupling.intercept = NULL' for a regional-only model.\n\n")
     }
   }
-  if(is.null(spde.mesh)) {
-    warning("⚠️ No `spde.mesh` provided, so the spatial and latent SPDE components will be omitted. \n",
-            "  To include them, create a mesh with `create_mesh()` and pass it to `spde.mesh`.\n")
-  } else if(!inherits(spde.mesh, "inla.mesh")) {
-    stop("❌ `spde.mesh` must be a valid INLA mesh object (class 'inla.mesh'). Create a mesh with `create_mesh()`.")
+  if (is.null(spde.mesh) && (spatial_local || latent_global)) {
+    stop("❌ SPDE priors were provided but 'spde.mesh' is NULL. Create a mesh with `create_mesh()` and pass it to `spde.mesh`.\n\n")
   }
-  if(spatial_local) {
-    if(is.null(spde.pcprior.range) || is.null(spde.pcprior.sigma)) {
-      stop("❌ Missing priors for spatial field. Define both `spde.pcprior.range` and `spde.pcprior.sigma`.")
-    }
+  if(!is.null(spde.mesh) && !inherits(spde.mesh, "inla.mesh")) {
+    stop("❌ `spde.mesh` must be a valid INLA mesh object (class 'inla.mesh'). Use `create_mesh()` to build it.\n\n")
   }
-  if(latent_global) {
-    if(is.null(latent.pcprior.range) || is.null(latent.pcprior.sigma)) {
-      stop("❌ Missing priors for latent field. Define both `latent.pcprior.range` and `latent.pcprior.sigma`.")
-    }
+  if(spatial_local && (is.null(spde.pcprior.range) || is.null(spde.pcprior.sigma))) {
+    stop("❌ Missing priors for spatial field. Must provide both `spde.pcprior.range` and `spde.pcprior.sigma`.\n\n")
+  }
+  if(latent_global && (is.null(latent.pcprior.range) || is.null(latent.pcprior.sigma))) {
+      stop("❌ Missing priors for latent field. Mus provide both `latent.pcprior.range` and `latent.pcprior.sigma`.\n\n")
   }
   if(spatial_local && latent_global) {
     if(latent.pcprior.range[1] < spde.pcprior.range[1] * 3) {
-      warning("⚠️ `latent.pcprior.range` < 3× `spde.pcprior.range`: fields may overlap, causing double-counting of spatial variance.")
+      warning("⚠️ `latent.pcprior.range` < 3× `spde.pcprior.range`: fields may overlap, causing double-counting of spatial variance.\n\n")
     }
   }
   if(!is.null(seed)) {
     if(!is.numeric(seed) || length(seed) != 1) {
-      stop("❌ 'seed' must be a single numeric value.\n")
+      stop("❌ 'seed' must be a single numeric value.\n\n")
     }
     set.seed(seed)
   }
   available_cores <- parallel::detectCores(logical = TRUE)
   if(!is.null(n.threads) && n.threads > available_cores) {
-    stop(paste0("❌ Requested `n.threads` = ", n.threads, " exceeds available cores (", available_cores,").\n"))
+    stop(paste0("❌ Requested `n.threads` = ", n.threads, " exceeds available cores (", available_cores,").\n\n"))
   }
   INLA::inla.setOption(num.threads = n.threads)
+#
   if(!is.null(covariate.effects)) {
     if(!is.list(covariate.effects)) {
       stop("❌ `covariate.effects` must be a list or 'NULL'.\n")
@@ -220,19 +225,25 @@ NSBM.pure <- function(nsbm_obj,
       message("ℹ️ All regional covariates dropped.\n")
     }
   }
-  if(latent_global && !is.null(covariate.effects) && !is.null(covariate.effects$global)) {
-    if(any(vapply(covariate.effects$global, function(x) {
-      is.list(x) && !is.null(x$model) && x$model == "rw2"
-    }, logical(1)))) {
-      stop("❌ RW2 global effects are not allowed when the latent SPDE is active.\n",
-           "   Both mechanisms smooth global structure and become redundant.\n",
-           "   Disable RW2 for global covariates or disable the latent SPDE.\n\n")
+  if(latent_global && !is.null(covariate.effects)) {
+    vg_all <- nsbm_obj$Selected.Variables.Global
+    if(length(vg_all) > 0) {
+      has_rw2_global <- any(vapply(
+        vg_all,
+        function(v) {
+          spec <- resolve_spec(v, "global", covariate.effects)
+          identical(spec$model, "rw2")
+        },
+        logical(1)
+      ))
+      if(has_rw2_global) {
+        stop("❌ RW2 global effects are not allowed when the latent SPDE is active.\n",
+             "   Both mechanisms smooth broad-scale structure and become redundant.\n",
+             "   Disable RW2 for global covariates (in `covariate.effects`) or disable the latent SPDE\n",
+             "   (`latent.pcprior.range` / `latent.pcprior.sigma` = NULL).\n\n")
+      }
     }
   }
-
-  sabina <- list()
-
-  .opt_plus <- function(s) if(!is.null(s) && nzchar(s)) paste0(" + ", s) else ""
 
   # Data preparation
   sp_covglo <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
@@ -275,7 +286,7 @@ NSBM.pure <- function(nsbm_obj,
   sf::st_crs(bdy_reg) <- crs
 
 
-  # spatial local
+  # SPDE components
   if(spatial_local)  {
     matern <- INLA::inla.spde2.pcmatern(
       mesh = spde.mesh,
@@ -284,8 +295,6 @@ NSBM.pure <- function(nsbm_obj,
     )
   }
 
-
-  # Latent global 
   if(latent_global) {
     spde_cov <- INLA::inla.spde2.pcmatern(
       mesh = spde.mesh,
@@ -299,11 +308,9 @@ NSBM.pure <- function(nsbm_obj,
   # Nested intercept
   IID_PC_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
   if(is.null(coupling.intercept)) {
-    # regional only
     #intercept_terms <- c("IRegional(1, model='iid')")
     intercept_terms <- c(paste0("IRegional(1, model='iid', ", IID_PC_PRIOR, ")"))
   } else if(coupling.intercept == "additive") {
-    # I independent
     intercept_terms <- c(
       #"IGlobal(1, model='iid')",
       #"IRegional(1, model='iid')"
@@ -311,15 +318,11 @@ NSBM.pure <- function(nsbm_obj,
       paste0("IRegional(1, model='iid', ", IID_PC_PRIOR, ")")
     )
   } else if(coupling.intercept == 'hierarchical') {
-    # global + desv regional
     intercept_terms <- c(
       #"IGlobal(1, model='iid')",
       paste0("IGlobal(1, model='iid', ", IID_PC_PRIOR, ")"),
-      paste0(
-        "IRegional(1, copy='IGlobal', fixed=FALSE, ",
-        "hyper=list(beta=list(prior='normal', param=c(1,0.001))))"
-      )
-    )
+      paste0("IRegional(1, copy='IGlobal', fixed=FALSE, ",
+             "hyper=list(beta=list(prior='normal', param=c(1,0.001))))"))
   }
   base_intercepts <- paste(intercept_terms, collapse = " + ")
 
@@ -328,30 +331,31 @@ NSBM.pure <- function(nsbm_obj,
   cmp_cov <- fcov(obj = nsbm_obj, 
                   spobjglo = "sp_covglo", 
                   spobjreg = "sp_covreg",
-                  covariate.effects = covariate.effects,
-                  use_latent = latent_global,
-                  spde_cov = spde_cov,
                   sp_covglo = sp_covglo,
                   sp_covreg = sp_covreg,
+                  covariate.effects = covariate.effects,
                   pp_glo_sf = pp_glo,
                   pp_reg_sf = pp_reg)
 
 
-  # Formula
+  # component formula (intercept + spataial + latent + fcovs
   cmp <- c(
     base_intercepts,
-    if(spatial_local) "spatial(geometry, model = matern)" else NULL,
-    #if(latent_global) "GLspde(main = geometry, model = spde_cov) + beta_GL(1)" else NULL,
-    cmp_cov$cmp
+    if(spatial_local) "spatial(geometry, model = matern)" else NULL, # residual field local (mesh)
+    if(latent_global) "GLspde(main = geometry, model = spde_cov) + beta_GL(1)" else NULL, # global field + coef
+    cmp_cov$cmp   # bio1GL(), bio1RE(),...
   )
   cmp <- paste(cmp[!is.na(cmp) & nzchar(cmp)], collapse = " + ")
   cmp <- as.formula(paste("~", cmp))
 
-  dom <- if(spatial_local | latent_global) list(geometry = spde.mesh) else NULL
+  dom <- if (spatial_local || latent_global) list(geometry = spde.mesh) else NULL
   f_spatial <- if(spatial_local) " + spatial" else ""
   f_latent <- if(latent_global) " + beta_GL * GLspde" else ""
+
+  .opt_plus <- function(s) if(!is.null(s) && nzchar(s)) paste0(" + ", s) else ""
+ 
   rhs_glo <- if(is.null(coupling.intercept)) {
-    "1"
+    NULL  # no for regional-only
   } else {
     paste0(
       "IGlobal",
@@ -376,60 +380,63 @@ NSBM.pure <- function(nsbm_obj,
     )
   }
 
-
+  # likelihoods
   if(fam == "cp") {
     # for intensity, Cox process (cp)
     pres_glo <- pp_glo[pp_glo$resp != 0L, ]
     pres_reg <- pp_reg[pp_reg$resp != 0L, ]
-    # Likelihoods
-    lik_glo <- inlabru::like(
-      family = "cp",
-      formula = as.formula(paste0("geometry ~ ", rhs_glo)),
-      data = pres_glo,
-      samplers = bdy_glo,
-      domain = dom
-    )
+    if(!is.null(coupling.intercept)) {
+      lik_glo <- inlabru::like(
+        family = "cp",
+        formula = as.formula(paste0("geometry ~ ", rhs_glo)),
+        data = pres_glo,
+        samplers = bdy_glo,
+        domain = dom)
+    } else {
+      lik_glo <- NULL
+    }
     lik_reg <- inlabru::like(
       family = "cp",
       formula = as.formula(paste0("geometry ~ ", rhs_reg)),
       data = pres_reg,
       samplers = bdy_reg,
-      domain = dom
-    )
+      domain = dom)
   } else {
     # for any type of family-object (e.g, binomial(), etc.)
-    lik_glo <- inlabru::like(
-      family = fam,
-      formula = as.formula(paste0("resp ~ ", rhs_glo)),
-      data = pp_glo,
-      samplers = bdy_glo,
-      domain = dom,
-      control.family = list(link = lnk)
-    )
+    if(!is.null(coupling.intercept)) {
+      lik_glo <- inlabru::like(
+        family = fam,
+        formula = as.formula(paste0("resp ~ ", rhs_glo)),
+        data = pp_glo,
+        samplers = bdy_glo,
+        domain = dom,
+        control.family = list(link = lnk))
+    } else {
+      lik_glo <- NULL
+    }
     lik_reg <- inlabru::like(
       family = fam,
       formula = as.formula(paste0("resp ~ ", rhs_reg)),
       data = pp_reg,
       samplers = bdy_reg,
       domain = dom,
-      control.family = list(link = lnk)
-    )
+      control.family = list(link = lnk))
   }
 
-  eta <- c(
-    if(coupling.intercept %in% c("additive","hierarchical")) "IGlobal" else NULL,
+  eta_terms <- c(
+    if(!is.null(coupling.intercept)) "IGlobal" else NULL,
     "IRegional",
     if(spatial_local) "spatial" else NULL,
     if(latent_global) "beta_GL * GLspde" else NULL,
     cmp_cov$like$fregional
   )
-
-  eta <- paste(stats::na.omit(eta), collapse = " + ")
+  eta <- paste(stats::na.omit(eta_terms), collapse = " + ")
 
   if(fam == "cp") {
     pred_formula <- as.formula(paste0("~ exp(",eta,")"))
   } else {
-    pred_formula <- switch(lnk,
+    pred_formula <- switch(
+      lnk,
       "logit" = as.formula(paste0("~ 1 / (1 + exp(-(", eta, ")))")),
       "cloglog" = as.formula(paste0("~ 1 - exp(-exp(", eta, "))")), 
       "log" = as.formula(paste0("~ exp(", eta, ")")),
@@ -438,76 +445,115 @@ NSBM.pure <- function(nsbm_obj,
 
 
   # Model fitting complete
-  fit <- inlabru::bru(
-    components = cmp,
-    lik_glo,
-    lik_reg,
-    options = list(control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
-                   control.inla = list(int.strategy = "eb"),
-                   control.mode = list(restart = TRUE))
-  )
+  if(is.null(coupling.intercept)) {
+    fit <- inlabru::bru(
+      components = cmp,
+      lik_reg,
+      options = list(
+        control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
+        control.inla = list(int.strategy = "eb"),
+        control.mode = list(restart = TRUE)))
+  } else {
+    fit <- inlabru::bru(
+      components = cmp,
+      lik_glo,
+      lik_reg,
+      options = list(
+        control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
+        control.inla = list(int.strategy = "eb"),
+        control.mode = list(restart = TRUE)))
+  }
 
 
-  # k-fold CV
+  # k-fold CV (only fam no cp)
   if(cv.folds > 1) {
-    # stratified k folds
-    folds_g <- make_stratified_kfolds(pp_glo$resp, cv.folds)
-    folds_r <- make_stratified_kfolds(pp_reg$resp, cv.folds)
+    if (fam == "cp") {
+      warning("⚠️ Cross-validation (cv.folds > 1) is not implemented for family = 'cp'. CV results will be NULL.")
+      cv_res <- NULL
+    } else {
+      # stratified k folds
+      if(!is.null(coupling.intercept)) {
+        folds_g <- make_stratified_kfolds(pp_glo$resp, cv.folds)
+      } else {
+        folds_g <- NULL
+      }
+      folds_r <- make_stratified_kfolds(pp_reg$resp, cv.folds)
 
-    aucs <- numeric(cv.folds)
+      aucs <- numeric(cv.folds)
 
-    for(k in seq_len(cv.folds)) {
-      train_g <- pp_glo[folds_g != k, ]
-      test_g <- pp_glo[folds_g == k, ]
-      train_r <- pp_reg[folds_r != k, ]
-      test_r <- pp_reg[folds_r == k, ]
+      for(k in seq_len(cv.folds)) {
+        if(!is.null(coupling.intercept)) {
+          train_g <- pp_glo[folds_g != k, ]
+          test_g <- pp_glo[folds_g == k, ]
+        } else {
+          train_g <- NULL
+          test_g  <- NULL
+        }    
+        train_r <- pp_reg[folds_r != k, ]
+        test_r <- pp_reg[folds_r == k, ]
 
-      # fit fold k
-      fit_k <- inlabru::bru(
-        components = cmp,
-        inlabru::like(
-          family = fam,
-          formula = lik_glo$formula,
-          data = train_g,
-          samplers = lik_glo$samplers,
-          domain = lik_glo$domain,
-          control.family = list(link = lnk)
-        ),
-        inlabru::like(
-          family = fam,
+        # likelihood k
+        if(!is.null(coupling.intercept)) {
+          lik_g_k <- inlabru::like(
+            family = fam,
+            formula = lik_glo$formula,
+            data = train_g,
+            samplers = lik_glo$samplers,
+            domain = lik_glo$domain,
+            control.family = list(link = lnk)
+          )
+        } else {
+          lik_g_k <- NULL
+        }
+        lik_r_k <- inlabru::like(
+          family  = fam,
           formula = lik_reg$formula,
           data = train_r,
           samplers = lik_reg$samplers,
           domain = lik_reg$domain,
           control.family = list(link = lnk)
-        ),
-        options = list(control.compute = list(cpo = FALSE, config = TRUE),
-                       control.inla = list(int.strategy = "eb"),
-                       control.mode = list(restart = TRUE))
-      )
+        )
 
-      # rm NAs
-      coords_t <- sf::st_coordinates(test_r)
-      both <- c(sp_covglo, sp_covreg)
-      cov_all <- terra::extract(both, coords_t)
-      keep <- stats::complete.cases(cov_all)
+        # fit fold k
+        if(is.null(coupling.intercept)) {
+          fit_k <- inlabru::bru(
+            components = cmp,
+            lik_r_k,
+            options = list(control.compute = list(cpo = FALSE, config = TRUE),
+                           control.inla = list(int.strategy = "eb"),
+                           control.mode = list(restart = TRUE)))
+        } else {
+          fit_k <- inlabru::bru(
+            components = cmp,
+            lik_g_k,
+            lik_r_k,
+            options = list(control.compute = list(cpo = FALSE, config = TRUE),
+                           control.inla = list(int.strategy = "eb"),
+                           control.mode = list(restart = TRUE)))
+        }
 
-      # pred and AUC
-      test_r2 <- test_r[keep, ]
-      if(nrow(test_r2) > 0) {
-        pk <- predict(fit_k, test_r2, pred_formula)
-        aucs[k] <- as.numeric(pROC::auc(test_r2$resp, pk$mean))
-      } else {
-        aucs[k] <- NA_real_
+        # rm NAs
+        coords_t <- sf::st_coordinates(test_r)
+        both_cov <- c(sp_covglo, sp_covreg)
+        cov_all <- terra::extract(both_cov, coords_t)
+        keep <- stats::complete.cases(cov_all)
+
+        # pred and AUC
+        test_r2 <- test_r[keep, ]
+        if(nrow(test_r2) > 0) {
+          pk <- predict(fit_k, test_r2, pred_formula)
+          aucs[k] <- as.numeric(pROC::auc(test_r2$resp, pk$mean))
+        } else {
+          aucs[k] <- NA_real_
+        }
       }
+
+      cv_res <- list(
+        cv.folds = cv.folds, 
+        auc_mean = mean(aucs, na.rm=TRUE),
+        auc_sd = sd(aucs, na.rm=TRUE)
+      )
     }
-
-    cv_res <- list(
-      cv.folds = cv.folds, 
-      auc_mean = mean(aucs, na.rm=TRUE),
-      auc_sd = sd(aucs, na.rm=TRUE)
-    )
-
   } else {
     cv_res <- NULL
   }
@@ -723,12 +769,10 @@ NSBM.pure <- function(nsbm_obj,
 ### Helps/Auxiliars
 # -----------------------------
 
-# formulas
+# Components GL/RE for covariates
 fcov <- function(obj, 
                  spobjglo, 
                  spobjreg,
-                 use_latent = FALSE,
-                 spde_cov = NULL,
                  sp_covglo,
                  sp_covreg,
                  covariate.effects = NULL,
@@ -741,52 +785,7 @@ fcov <- function(obj,
 
   cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
 
-  # resolve per-covariate spec (covariate.effects)
-  .spec_cache <- new.env(parent = emptyenv())
-  resolve_spec <- function(varname, scale, ccform, default_model = "const") {
-    key <- paste(scale, varname, sep = "||")
-    hit <- .spec_cache[[key]]
-    if(!is.null(hit)) return(hit)
-    if(is.null(ccform) || !is.list(ccform)) {
-      res <- list(model = default_model, u = NA, alpha = NA)
-     .spec_cache[[key]] <- res
-      return(res)
-    }
-    path <- paste0("covariate.effects$", scale, "$", varname)
-    spec <- if(!is.null(ccform[[scale]]) && !is.null(ccform[[scale]][[varname]])) {
-      ccform[[scale]][[varname]]
-    } else if(!is.null(ccform$default)) {
-      ccform$default
-    } else default_model
-
-    if(is.character(spec)) {
-      if(identical(spec, "const")) { res <- list(model = "const", u = NA, alpha = NA); .spec_cache[[key]] <- res; return(res) }
-      if(identical(spec, "drop")) { res <- list(model = "drop", u = NA, alpha = NA); .spec_cache[[key]] <- res; return(res) }
-      if(identical(spec, "rw2")) {
-        stop(paste0("❌ `", path, "` uses model='rw2' but is missing `u` and/or `alpha`",
-             "  Use `list(model='rw2', u=..., alpha=...)`."))
-      }
-      stop(paste0("❌ `", path, "` has invalid value '", spec, "'. ",
-                  "Use 'const'|'drop' or a list with `model='rw2'`, `u`, and `alpha`."))
-    } else if(is.list(spec)) {
-      m <- spec$model
-      if(is.null(m)) stop(path, " is missing `model`.")
-      if(identical(m, "const")) { res <- list(model = "const", u = NA, alpha = NA); .spec_cache[[key]] <- res; return(res) }
-      if(identical(m, "drop")) { res <- list(model = "drop", u = NA, alpha = NA); .spec_cache[[key]] <- res; return(res) }
-      if(identical(m, "rw2")) {
-        if(is.null(spec$u) || is.null(spec$alpha)) {
-          stop(paste0("❌ `", path, "` with `model = 'rw2'` requires both `u` and `alpha`."))
-        }
-        res <- list(model = "rw2", u = spec$u, alpha = spec$alpha); .spec_cache[[key]] <- res; return(res)
-      }
-      stop(paste0("❌ `", path, "` has invalid `model = '", m, "'`. Use 'const'|'rw2'|'drop'."))
-    } else {
-      stop(paste0("❌ `", path, "` has an unsupported specification type."))
-    }
-  }
-
-
-  # rw2: thin knots to enforce min relative spacing (INLA check 1e-3) 
+  # rw2: knots to enforce min relative spacing (INLA check 1e-3) 
   thin_knots <- function(x, min_ratio = 1e-3) {
     x <- sort(unique(as.numeric(x)))
     if(length(x) <= 2) return(x)
@@ -794,7 +793,9 @@ fcov <- function(obj,
     if(!is.finite(r) || r == 0) return(unique(x))
     out <- x[1]
     for(xi in x[-1]) {
-      if((xi - out[length(out)]) / r >= min_ratio) out <- c(out, xi)
+      if((xi - out[length(out)]) / r >= min_ratio) { 
+        out <- c(out, xi)
+      }
     }
     if(length(out) < 3L) {
       out <- seq(min(x), max(x), length.out = min(max(5L, length(x)), 50L))
@@ -806,172 +807,170 @@ fcov <- function(obj,
   rw2_K <- 300L              #@@@JMB pensar si dejamos esto por defecto
   rw2_method <- "quantile" 
 
-  # build rw2 support via inla.group + thinning
   build_rw2_values <- function(rast_layer, coords, K = rw2_K, method = rw2_method) {
     vals <- suppressWarnings(as.numeric(terra::extract(rast_layer, coords)[, 1]))
     vals <- vals[is.finite(vals)] 
     rng <- range(vals)
     if(diff(rng) == 0) {
-      stop("❌  rw2: covariate has zero range; rw2 requires variability.")
-    }    
+      stop("❌  RW2 requires variability (covariate range = 0).\n",
+           "   Use 'const' instead for this covariate or check the raster values.\n\n")
+    }  
     g <- INLA::inla.group(vals, n = K, method = method)
     v <- sort(unique(as.numeric(levels(g))))
-    v <- thin_knots(v, min_ratio = 1e-3)
+    v <- thin_knots(v)
     if(length(v) < 3L) {
-      stop("❌  RW2: <3 knots after grouping/thinning.") #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
+      stop("❌  RW2 requires at least 3 distinct support values for the covariate.\n", #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
+           "   Consider lowering smoothing or checking covariate variability.\n\n")
     }
     v
   }
 
-  fmt_vec <- function(v) paste0("c(", paste(format(v, digits = 7), collapse = ","), ")")
-
   # detect if rw2 is request
-  rw2_effects <- is.list(covariate.effects) && !is.null(covariate.effects)
-  need_rw2_global <- rw2_effects && length(vg) > 0 &&
-    any(vapply(vg, function(X) resolve_spec(X, "global",  covariate.effects, "const")$model == "rw2", logical(1)))
-  need_rw2_regional <- rw2_effects && length(vr) > 0 &&
-    any(vapply(vr, function(X) resolve_spec(X, "regional", covariate.effects, "const")$model == "rw2", logical(1)))
- 
-  coords_all <- NULL
-  coords_r <- NULL
-  if(need_rw2_global) {
-    coords_all <- rbind(sf::st_coordinates(pp_glo_sf),
-                        sf::st_coordinates(pp_reg_sf))
-  }
-  if(need_rw2_regional) {
-    coords_r <- sf::st_coordinates(pp_reg_sf)
-  }
-
-  # no covariate.effects (all const)
-  if(is.null(covariate.effects)) {
-    cmpglobal <- if(length(vg) > 0) paste0(
-      paste0(vg, "GL(main = ", spobjglo, ", main_layer = '", vg, "', model = 'const')"),
-      collapse = " + ") else ""
-    fglobal <- if(length(vg) > 0) paste0(vg, " * ", vg, "GL", collapse = " + ") else ""
-    cmpregional <- if(length(vr) > 0) paste0(
-      paste0(vr, "RE(main = ", spobjreg, ", main_layer = '", vr, "', model = 'const')"),
-      collapse = " + ") else ""
-    fregional <- if(length(vr) > 0) paste0(vr, " * ", vr, "RE", collapse = " + ") else ""
-    latent_block <- ""
-    if(isTRUE(use_latent) && !is.null(spde_cov)) {
-      latent_block <- "GLspde(main = geometry, model = spde_cov) + beta_GL(1)"
+  need_rw2_global <- FALSE
+  need_rw2_regional <- FALSE
+  if(is.list(covariate.effects)) {
+    if(length(vg) > 0) {
+      need_rw2_global <- any(vapply(vg, function(x) 
+        resolve_spec(x, "global",  covariate.effects)$model == "rw2", logical(1)))
     }
-    return(list(
-      cmp = paste(Filter(nzchar, c(cmp1, latent_block, cmpglobal, cmpregional)), collapse = " + "),
-      like = list(fglobal = if(nzchar(fglobal)) fglobal else "",
-                  fregional = if(nzchar(fregional)) fregional else "")
-    ))
-  }
-
-  # global
-  cmpglobal <- ""
-  fglobal <- ""
-
-  if(length(vg) > 0) {
-    if(use_latent && !is.null(spde_cov)) {
-      # With latent SPDE (shared global spde)
-      # if any global cov requests rw2, add rw2 over global spde. Else GLspde + beta_GL
-      rw2_pairs <- list()
-      if(rw2_effects) {
-        for(X in vg) {
-          specX <- resolve_spec(X, "global", covariate.effects, "const")
-          if(identical(specX$model, "rw2")) {
-            rw2_pairs[[length(rw2_pairs) + 1]] <- c(specX$u, specX$alpha)
-          }
-        }
-      }
-      covblk <- "GLspde(main = geometry, model = spde_cov)"
-      if(length(rw2_pairs) == 0) {
-        cmpglobal <- paste(covblk, "beta_GL(1)", sep = " + ")
-        fglobal <- ""
-      } else {
-        ua <- do.call(rbind, rw2_pairs)
-        ua_uniq <- unique(ua)
-        if(nrow(ua_uniq) > 1) {
-          stop("Whit latent global SPDE, all global RW2 must sharee (u, alpha). Provide the same pair for all global covariates (e.g., via `covariate.effects$global` or `covariate.effects$default`).")
-        }
-        u_g <- ua_uniq[1, 1]
-        a_g <- ua_uniq[1, 2]
-        rw2blk <- paste0(
-          "s(GLspde, model='rw2', scale.model=TRUE, ",
-          "hyper=list(prec=list(prior='pc.prec',param=c(", u_g, ",", a_g, "))))"
-        )
-        cmpglobal <- paste(covblk, rw2blk, sep = " + ")
-        fglobal <- ""  # with latent no X * XGL terms
-      }
-    } else {
-      # Without latent (per-covariate GL components)
-      gl_terms <- character(0)
-      fgl_terms <- character(0)
-
-      for(X in vg) {
-        specX <- resolve_spec(X, "global", covariate.effects, "const")
-        if(identical(specX$model, "drop")) next
-
-        if(identical(specX$model, "const")) {
-          gl_terms <- c(gl_terms, paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'const')"))
-        } else if(identical(specX$model, "rw2")) {
-          vals <- if(!is.null(coords_all)) build_rw2_values(sp_covglo[[X]], coords_all) else numeric(0)
-          core <- paste0(
-            X, "GL(main = ", spobjglo, ", main_layer = '", X, "', ",
-            "model = 'rw2', scale.model = TRUE, ",
-            "hyper=list(prec=list(prior='pc.prec',param=c(", specX$u, ",", specX$alpha, ")))",
-            if(length(vals) >= 3L) paste0(", values = ", fmt_vec(vals)) else "",
-            ")"
-          )
-          gl_terms <- c(gl_terms, core)
-        }
-        fgl_terms <- c(fgl_terms, paste0(X, " * ", X, "GL"))
-      }
-
-      if(length(gl_terms) > 0) cmpglobal <- paste(gl_terms, collapse = " + ")
-      if(length(fgl_terms) > 0) fglobal <- paste(fgl_terms, collapse = " + ")
+    if(length(vr) > 0) {
+      need_rw2_regional <- any(vapply(vr, function(x) 
+        resolve_spec(x, "regional", covariate.effects)$model == "rw2", logical(1)))
     }
   }
 
-  # regional
-  cmpregional <- ""
-  fregional <- ""
+  coords_all <- if(need_rw2_global) {
+    rbind(sf::st_coordinates(pp_glo_sf),
+          sf::st_coordinates(pp_reg_sf))
+  } else NULL
+  coords_r <- if(need_rw2_regional) {
+    sf::st_coordinates(pp_reg_sf)
+  } else NULL
 
-  if(length(vr) > 0) {
-    re_terms <- character(0)
-    fre_terms <- character(0)
+  # components global
+  cmpglobal <- character(0)
+  fglobal <- character(0)
 
-    for(X in vr) {
-      specX <- resolve_spec(X, "regional", covariate.effects, "const")
-      if(identical(specX$model, "drop")) next
-
-      if(identical(specX$model, "const")) {
-        re_terms <- c(re_terms, paste0(X, "RE(main = ", spobjreg, ", main_layer = '", X, "', model = 'const')"))
-      } else if(identical(specX$model, "rw2")) {
-        vals <- if(!is.null(coords_r)) build_rw2_values(sp_covreg[[X]], coords_r) else numeric(0)
-        core <- paste0(
-          X, "RE(main = ", spobjreg, ", main_layer = '", X, "', ",
-          "model = 'rw2', scale.model = TRUE, ",
-          "hyper = list(prec = list(prior = 'pc.prec', param = c(", specX$u, ",", specX$alpha, "))), ",
-          "group = region",
-          if(length(vals) >= 3L) paste0(", values = ", fmt_vec(vals)) else "",
-          ")"
-        )
-        re_terms <- c(re_terms, core)
-      }
-      fre_terms <- c(fre_terms, paste0(X, " * ", X, "RE"))
-    }
-    if(length(re_terms) > 0) cmpregional <- paste(re_terms, collapse = " + ")
-    if(length(fre_terms) > 0) fregional <- paste(fre_terms, collapse = " + ")
+  fmt_vals <- function(v) {
+    paste0("c(", paste(format(v, digits = 7), collapse = ","), ")")
   }
 
-  # output fcov
+  for(X in vg) {
+    specX <- resolve_spec(X, "global", covariate.effects)
+    if(specX$model == "drop") next
+    if(specX$model == "const") {
+      cmpglobal <- c(cmpglobal,
+        paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'const')"))
+    } else if(specX$model == "rw2") {
+      vals <- build_rw2_values(sp_covglo[[X]], coords_all)
+      cmpglobal <- c(cmpglobal,
+        paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'rw2', scale.model = TRUE, ",
+               "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))), ",
+               "values = ", fmt_vals(vals),")"))
+    }
+    fglobal <- c(fglobal, paste0(X, " * ", X, "GL"))
+  }
+
+  # components regional
+  cmpregional <- character(0)
+  fregional <- character(0)
+
+  for(X in vr) {
+    specX <- resolve_spec(X, "regional", covariate.effects)
+    if(specX$model == "drop") next
+    if(specX$model == "const") {
+      cmpregional <- c(cmpregional,
+        paste0(X, "RE(main = ", spobjreg, ", main_layer = '", X, "', model = 'const')"))
+    } else if(specX$model == "rw2") {
+      vals <- build_rw2_values(sp_covreg[[X]], coords_r)
+      cmpregional <- c(cmpregional,
+        paste0(X, "RE(main = ", spobjreg,
+          ", main_layer = '", X, "', model='rw2', scale.model=TRUE, ",
+          "hyper = list(prec=list(prior='pc.prec', param=c(",
+          specX$u, ",", specX$alpha, "))), ",
+          "group = region, ",
+          "values = ", fmt_vals(vals), ")"))
+    }
+    fregional <- c(fregional, paste0(X, " * ", X, "RE"))
+  }
+
+  # out fcov
   list(
-    cmp = paste(Filter(nzchar, c(cmp1, cmpglobal, cmpregional)), collapse = " + "),
-    like = list(fglobal = if(nzchar(fglobal)) fglobal else "",
-                fregional = if(nzchar(fregional)) fregional else "")
-  ) 
-
+    #cmp = paste(c(cmpglobal, cmpregional), collapse = " + "),
+    cmp = paste(c(cmp1, cmpglobal, cmpregional), collapse = " + "),
+    like = list(fglobal = if(length(fglobal) > 0) paste(fglobal, collapse = " + ") else "",
+                fregional = if(length(fregional) > 0) paste(fregional, collapse = " + ") else "")) 
 }
 
 
 # -----------------------------
+
+
+# interprete covariate_effects
+resolve_spec <- function(varname, scale, covariate.effects, default_model = "const") {
+
+  path_label <- paste0("covariate.effects$", scale, "$", varname)
+
+  # If no covariate.effects, all const by default
+  if(is.null(covariate.effects) || !is.list(covariate.effects)) {
+    return(list(model = default_model, u = NA, alpha = NA))
+  }
+
+  # global/regional or default
+  if(!is.null(covariate.effects[[scale]]) && !is.null(covariate.effects[[scale]][[varname]])) {
+    spec <- covariate.effects[[scale]][[varname]]
+  } else if(!is.null(covariate.effects$default)) {
+    spec <- covariate.effects$default
+    path_label <- paste0("covariate.effects$default (applied to ", varname, ")")
+  } else {
+    return(list(model = "const", u = NA, alpha = NA))
+  }
+
+  # if spec is a string -> "const"/"drop"
+  if(is.character(spec)) {
+    if(spec == "const") { 
+      res <- list(model = "const", u = NA, alpha = NA)
+    }
+    if(spec == "drop") { 
+      res <- list(model = "drop", u = NA, alpha = NA)
+    } 
+    if(spec == "rw2") {
+      stop("❌  Invalid RW2 specification in `", path_label, "`.\n",
+           "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
+           "   For linear effects use 'const'; to exclude use 'drop'.\n\n")
+    } 
+    stop("❌ Invalid keyword '", spec, "' in `", path_label, "`.\n",
+         "   Valid options: 'const', 'drop', or list(model='rw2', u=..., alpha=...) (smoothed RW2 effect).\n\n")
+  }
+
+  # if spec is a list, only rw2 admited 
+  if(is.list(spec)) {
+    if(is.null(spec$model)) {
+      stop("❌  Invalid list specification in `", path_label, "`.\n",
+           "   Lists are only allowed for RW2 effects. Use: list(model='rw2', u=..., alpha=...).\n",
+           "   For linear effects use 'const'; to exclude use 'drop'.\n\n")
+    }
+    if(!identical(spec$model, "rw2")) {
+      # RW2 reequieres u alpha
+      if(is.null(spec$u) || is.null(spec$alpha)) {
+        stop("❌  Incomplete RW2 specification in `", path_label, "`.\n",
+             "   Provide both `u` and `alpha`..\n\n")
+      }
+      return(list(model = "rw2", u = spec$u, alpha = spec$alpha))
+    }
+    stop("❌  Invalid `model` in `", path_label, "`.\n",
+         "   When using a list, only model='rw2' is permitted.\n",
+         "   For linear effects use 'const'; to exclude use 'drop'.\n\n")
+  }
+
+  #unsupported type
+  stop("❌  Unsupported type in `", path_label, "`.\n",
+       "   Must be string ('const'/'drop') or list(model='rw2', u=..., alpha=...).\n\n")
+}
+
+
+# -----------------------------
+
 
 # diagnstics
 nsbm_diagnostics <- function(fit,
