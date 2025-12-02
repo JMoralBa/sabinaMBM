@@ -12,7 +12,10 @@
 #' @param spde.pcprior.sigma Numeric vector length 2. Pc-prior on marginal standard deviation (σ) (e.g., `c(1, 0.01)`).
 #' @param latent.pcprior.range Numeric vector of length 2. PC-prior on the range of the latent global field SPDE for the global covariate (e.g., `c(0.05, 0.05)` in degrees). If `NULL` (default), no latent SPDE is created.
 #' @param latent.pcprior.sigma Numeric vector of length 2. PC-prior on the marginal standard deviation (σ) of the latent global field SPDE for the global covariate (e.g., `c(1, 0.01)`). If `NULL` (default), no latent SPDE is created.
-#' @param coupling.intercept Logical; if TRUE = model regional intercept as deviation from global.
+#' @param coupling.intercept Controls how the regional intercept inherits information from the global intercept. Options:
+#'   - `"additive"` (default): Global and regional intercepts are estimated independently and enter additively in the linear predictor (no borrowing of strength). 
+#'   - `"hierarchical"`: The regional intercept borrows strength from the global intercept (hierarchical partial pooling using INLA `copy`). 
+#'   - `NULL`: Regional-only model (no global component).
 #' @param covariate.effects Optional named list to control the global/regional covariate effects (see details). If `NULL` (default), no smoothing, all covariate effects remain constant (linear).
 #' @param proj.new.env Logical. Whether to compute predictions under new scenarios (default: TRUE).
 #' @param cv.folds Number of k-folds for cross-validation (default: 1 = no CV). If >1, returns mean ± sd AUC for global and regional models.
@@ -48,6 +51,12 @@
 #' - Latent global field:` captures broad-scale structure  across regions and enters the linear predictor via `beta_GL * GLspde`.
 #' - If both spatial and latent fields are used, the latent range should be ≥ 3× the spatial range to avoid overlap (Bakka et al., 2018).
 #'
+#' coupling.intercept = "hierarchical"
+#' This option implements a true hierarchical Bayesian nested structure in which the regional intercept borrows strength from the global one. 
+#' The regional intercept is expressed as a deviation from the global one using an INLA `copy` structure (IRegional = β * IGlobal + ε_regional), with a prior β ~ Normal(1, sd = 0.5), meaning the regional level is encouraged (but does not forced) to follow the global signal.
+#' Ecologically, this formulation ensures that the global model captures broad-scale suitability (the species fundamental niche), while the regional intercept refines this large-scale signal/pattern to reflect local microclimatic conditions such and high-resolution predictors/conditions.
+#' This hierarchical structure enables principled information sharing between scales while still allowing regional deviations.
+#' 
 #' covariate.effects: control per-covariate effects at global/regional scale.
 #' - Option 1 `NULL` (default): no smoothing, All covariates enter linearly (`"const"`) in both scales.
 #' - Option 2 named `list`: Provide a list with entries `global`, `regional`, and/or `default`.
@@ -306,23 +315,26 @@ NSBM.pure <- function(nsbm_obj,
 
 
   # Nested intercept
-  IID_PC_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
+  # prior for intercepts iid. param = c(1, 0.01) -> P(σ > 1) = 0.01
+  IID_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
+  # prior for beta_copy (regional deviation). beta_regional ~ Normal(mean = 1, sd = 0.5). INLA uses precisión, so sd = 0.5 -> tau = 1/(0.5^2) = 4
+  COPY_BETA_PRIOR <- "hyper = list(beta = list(prior = 'normal', param = c(1, 4)))"
+
   if(is.null(coupling.intercept)) {
     #intercept_terms <- c("IRegional(1, model='iid')")
-    intercept_terms <- c(paste0("IRegional(1, model='iid', ", IID_PC_PRIOR, ")"))
+    intercept_terms <- c(paste0("IRegional(1, model='iid', ", IID_PRIOR, ")"))
   } else if(coupling.intercept == "additive") {
     intercept_terms <- c(
       #"IGlobal(1, model='iid')",
       #"IRegional(1, model='iid')"
-      paste0("IGlobal(1, model='iid', ", IID_PC_PRIOR, ")"),
-      paste0("IRegional(1, model='iid', ", IID_PC_PRIOR, ")")
+      paste0("IGlobal(1, model='iid', ", IID_PRIOR, ")"),
+      paste0("IRegional(1, model='iid', ", IID_PRIOR, ")")
     )
   } else if(coupling.intercept == 'hierarchical') {
     intercept_terms <- c(
       #"IGlobal(1, model='iid')",
-      paste0("IGlobal(1, model='iid', ", IID_PC_PRIOR, ")"),
-      paste0("IRegional(1, copy='IGlobal', fixed=FALSE, ",
-             "hyper=list(beta=list(prior='normal', param=c(1,0.001))))"))
+      paste0("IGlobal(1, model='iid', ", IID_PRIOR, ")"),
+      paste0("IRegional(1, copy='IGlobal', fixed=FALSE, ", COPY_BETA_PRIOR, ")"))
   }
   base_intercepts <- paste(intercept_terms, collapse = " + ")
 
@@ -357,27 +369,15 @@ NSBM.pure <- function(nsbm_obj,
   rhs_glo <- if(is.null(coupling.intercept)) {
     NULL  # no for regional-only
   } else {
-    paste0(
-      "IGlobal",
-      f_spatial,
-      f_latent,
-      .opt_plus(cmp_cov$like$fglobal)
-    )
+    paste0("IGlobal", f_spatial, f_latent, .opt_plus(cmp_cov$like$fglobal))
   }
+
   rhs_reg <- if(is.null(coupling.intercept)) {
-    paste0(
-      "IRegional",
-      f_spatial,
-      f_latent,
-      .opt_plus(cmp_cov$like$fregional)
-    )
-  } else {
-    paste0(
-      "IGlobal + IRegional",
-      f_spatial,
-      f_latent,
-      .opt_plus(cmp_cov$like$fregional)
-    )
+    paste0("IRegional", f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
+  } else if(coupling.intercept == "additive") {
+    paste0("IGlobal + IRegional", f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
+  } else { # hierarchical
+    paste0("IRegional", f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
   }
 
   # likelihoods
@@ -424,7 +424,7 @@ NSBM.pure <- function(nsbm_obj,
   }
 
   eta_terms <- c(
-    if(!is.null(coupling.intercept)) "IGlobal" else NULL,
+    if(!is.null(coupling.intercept) && coupling.intercept == "additive") "IGlobal" else NULL,
     "IRegional",
     if(spatial_local) "spatial" else NULL,
     if(latent_global) "beta_GL * GLspde" else NULL,
