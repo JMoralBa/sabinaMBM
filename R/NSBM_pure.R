@@ -12,8 +12,16 @@
 #' @param spde.pcprior.sigma Numeric vector length 2. Pc-prior on marginal standard deviation (σ) (e.g., `c(1, 0.01)`).
 #' @param latent.pcprior.range Numeric vector of length 2. PC-prior on the range of the latent global field SPDE for the global covariate (e.g., `c(0.05, 0.05)` in degrees). If `NULL` (default), no latent SPDE is created.
 #' @param latent.pcprior.sigma Numeric vector of length 2. PC-prior on the marginal standard deviation (σ) of the latent global field SPDE for the global covariate (e.g., `c(1, 0.01)`). If `NULL` (default), no latent SPDE is created.
-#' @param nested.intercept Logical; if TRUE = model regional intercept as deviation from global.
 #' @param covariate.effects Optional named list to control the global/regional covariate effects (see details). If `NULL` (default), no smoothing, all covariate effects remain constant (linear).
+#' @param coupling.intercept Controls how the regional intercept inherits information from the global intercept. Options:
+#'   - `"additive"` (default): Global and regional intercepts are estimated independently and enter additively in the linear predictor (no borrowing of strength). 
+#'   - `"hierarchical"`: The regional intercept borrows strength from the global intercept (hierarchical partial pooling using INLA `copy`). 
+#'   - `NULL`: Regional-only model (no global component).
+#' @param coupling.predictors Controls how global and regional covariate effects are related for variables present at both scales. Options:
+#'   - `NULL` (default): no coupling; global and regional effects are estimated independently.
+#'   - `"additive"`: independent additive effects (no borrowing of strength).
+#'   - `"hierarchical"`: regional effect borrows strength from the global effect using an INLA `copy` structure (partial pooling).
+#'   - Named `list(default = ..., variables = list(...))`: allows variable-specific overriding of the default rule.
 #' @param proj.new.env Logical. Whether to compute predictions under new scenarios (default: TRUE).
 #' @param cv.folds Number of k-folds for cross-validation (default: 1 = no CV). If >1, returns mean ± sd AUC for global and regional models.
 #' @param n.threads Number of threads used by INLA (default = 1).
@@ -48,9 +56,15 @@
 #' - Latent global field:` captures broad-scale structure  across regions and enters the linear predictor via `beta_GL * GLspde`.
 #' - If both spatial and latent fields are used, the latent range should be ≥ 3× the spatial range to avoid overlap (Bakka et al., 2018).
 #'
+#' coupling.intercept = "hierarchical"
+#' This option implements a true hierarchical Bayesian nested structure in which the regional intercept borrows strength from the global one. 
+#' The regional intercept is expressed as a deviation from the global one using an INLA `copy` structure (IRegional = β * IGlobal + ε_regional), with a prior β ~ Normal(1, sd = 0.5), meaning the regional level is encouraged (but does not forced) to follow the global signal.
+#' Ecologically, this formulation ensures that the global model captures broad-scale suitability (the species fundamental niche), while the regional intercept refines this large-scale signal/pattern to reflect local microclimatic conditions such and high-resolution predictors/conditions.
+#' This hierarchical structure enables principled information sharing between scales while still allowing regional deviations.
+#' 
 #' covariate.effects: control per-covariate effects at global/regional scale.
 #' - Option 1 `NULL` (default): no smoothing, All covariates enter linearly (`"const"`) in both scales.
-#' - Option 2 named `list`: Provide a list with entries `global`, `regional`, and/or `default`.
+#' - Option 2 named `list`: provide a list with entries `global`, `regional`, and/or `default`.
 #'   Structure:
 #'     covariate.effects = list(
 #'       global = list(var1 = "const" | "drop" | list(model="rw2", u=..., alpha=...),
@@ -74,16 +88,36 @@
 #'                         bio4 = "drop"),
 #'         default = "const")    # default rule if a covariate is not listed
 #'
+#' coupling.predictors: control of cross-scale covariate effects  
+#' This argument defines how each predictor behaves across global and regional scales.  
+#' It is only applied to variables that appear in both global and regional scales.
+#' - Option 1 `NULL` (default): no coupling. Global and regional effects are estimated independently unless one is dropped via `covariate.effects`.
+#' - Option 2 `"additive"`: global and regional effects enter the linear predictor as two independent components (η = β_GL * X_GL + β_RE * X_RE + …). No information is shared between scales.
+#' - Option 3 `"hierarchical": implements a Bayesian partial-pooling structure, where the regional effect is expressed as a deviation from the global one using INLA’s `copy` mechanism (X_RE = β_copy * X_GL + ε_RE) with a prior β_copy ~ Normal(1, sd = 0.5).  
+#'   The global effect captures broad-scale environmental structure, while the regional effect refines this pattern to account for local micro-environmental variation. This induces borrowing of strength between scales.
+#' - Option 4 named `list`: provide a list with entries `variables` and `default`.
+#'   Structure:
+#'     coupling.predictors = list(
+#'       default   = "additive" | "NULL" | "hierarchical",
+#'       variables = list(var1 = "...", var2 = "...", ...)
+#'     )
+#' Validity rules (automatically checked):
+#' - Hierarchical coupling.predictors requires the predictor to exist at both scales.
+#' - If `covariate.effects` drops the global effect of a variable, hierarchical coupling is not allowed (no parent effect available).
+#' - If the regional effect is dropped, hierarchical coupling is also invalid.
+#' - Global RW2 smoothing cannot be combined with hierarchical coupling for the same variable (avoids identifiability and double-smoothing issues).
+#'
 #' @export
 NSBM.pure <- function(nsbm_obj, 
                       family = binomial(link = "logit"), # family object binomial(), poisson(), etc., o "cp" para intensity (procesos puntuales)
-                      nested.intercept = TRUE,    # TRUE: IRegional se modela como desviación de IGlobal, FALSE interceptos independientes
+                      covariate.effects = NULL,
+                      coupling.intercept = "additive",    # NULL regional-only, "additive" interceptos independientes, ""hierarchical" IRegional se modela como desviación de IGlobal
+                      coupling.predictors = "additive",
                       spde.mesh = NULL,           # NULL or mesh objetct para calcular efecto spatial
                       spde.pcprior.range = NULL,
                       spde.pcprior.sigma = NULL,
                       latent.pcprior.range = NULL,   # activate latent SPDE if not NULL
                       latent.pcprior.sigma = NULL,   # activate latent SPDE if not NULL (plug-in if both NULL)
-                      covariate.effects = NULL,
                       proj.new.env = TRUE,
                       cv.folds = 1,
                       n.threads = 1, 
@@ -93,10 +127,11 @@ NSBM.pure <- function(nsbm_obj,
   spatial_local <- !is.null(spde.mesh) && (!is.null(spde.pcprior.range) || !is.null(spde.pcprior.sigma))
   latent_global <- !is.null(spde.mesh) && (!is.null(latent.pcprior.range) || !is.null(latent.pcprior.sigma))
 
-  # checks
+  ## Checks
   if(!inherits(nsbm_obj, "nsdm.vinput")) {
-    stop("❌ The 'nsbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
+    stop("❌  The 'nsbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
   }
+  #
   if(inherits(family, "family")) {
     fam <- family$family
     lnk <- family$link
@@ -117,56 +152,59 @@ NSBM.pure <- function(nsbm_obj,
                       cp = NULL)
   if(!fam %in% names(valid_links)) {
     stop("❌ Unsupported family ", fam, ".\n",
-         "  Supported families are: ", paste(names(valid_links), collapse = ", "), "\n",
-         "  Please, see ?NSBM.pure details for more.\n")
+         "  Supported families are: ", paste(names(valid_links), collapse = ", "), "\n")
   }
   if(!is.null(lnk) && !lnk %in% valid_links[[fam]]) {
-    stop("❌ Link `", lnk, "` is not allowed for family `", fam, "`.\n",
-         "  Allowed links for '", fam, "': ", paste(valid_links[[fam]], collapse = ", "), ".\n",
-         "  Please, see ?NSBM.pure details for more.\n")
+    stop("❌ Inalid link `", lnk, "` for this family `", fam, "`.\n",
+         "  Allowed links for '", fam, "': ", paste(valid_links[[fam]], collapse = ", "), ".\n")
   }
-  if(is.null(spde.mesh)) {
-    warning("⚠️ No `spde.mesh` provided, so the spatial and latent SPDE components will be omitted. \n",
-            "  To include them, create a mesh with `create_mesh()` and pass it to `spde.mesh`.\n")
-  } else if(!inherits(spde.mesh, "inla.mesh")) {
-    stop("❌ `spde.mesh` must be a valid INLA mesh object (class 'inla.mesh'). Create a mesh with `create_mesh()`.")
-  }
-  if(spatial_local) {
-    if(is.null(spde.pcprior.range) || is.null(spde.pcprior.sigma)) {
-      stop("❌ Missing priors for spatial field. Define both `spde.pcprior.range` and `spde.pcprior.sigma`.")
+  #
+  if(is.null(coupling.intercept)) {
+    if(length(nsbm_obj$Selected.Variables.Regional) == 0) {
+      stop("❌ 'coupling.intercept = NULL' (regional-only) but no regional covariates are present in 'nsbm_obj'.\n\n")
+    }
+    if(latent_global) {
+      stop("❌ Latent global SPDE not allowed in regional-only model (no global scale exists).\n\n")
+    }
+    message("ℹ️ 'coupling.intercept = NULL'; running a regional-only model (no global component will be used).\n\n")
+  } else {
+    if(!is.character(coupling.intercept) || !coupling.intercept %in% c("additive", "hierarchical")) {
+      stop("❌  The 'coupling.intercept' must be NULL, 'additive', or 'hierarchical'.\n\n")
+    }
+    if(is.null(spde.mesh)) {
+      stop("❌  You provided SPDE priors but no 'spde.mesh'.\n",
+           "  To include them, create a mesh with `create_mesh()`.\n\n")
+    }
+    if(length(nsbm_obj$Selected.Variables.Global) == 0) {
+      stop("❌ 'coupling.intercept = ", coupling.intercept, "' requires a global component,\n",
+           "   but no global covariates are present in 'nsbm_obj'.\n",
+           "   Use 'coupling.intercept = NULL' for a regional-only model.\n\n")
     }
   }
-  if(latent_global) {
-    if(is.null(latent.pcprior.range) || is.null(latent.pcprior.sigma)) {
-      stop("❌ Missing priors for latent field. Define both `latent.pcprior.range` and `latent.pcprior.sigma`.")
-    }
+  if(is.null(spde.mesh) && (spatial_local || latent_global)) {
+    stop("❌ SPDE priors were provided but 'spde.mesh' is NULL. Create a mesh with `create_mesh()` and pass it to `spde.mesh`.\n\n")
+  }
+  if(!is.null(spde.mesh) && !inherits(spde.mesh, "inla.mesh")) {
+    stop("❌ `spde.mesh` must be a valid INLA mesh object (class 'inla.mesh'). Use `create_mesh()` to build it.\n\n")
+  }
+  if(spatial_local && (is.null(spde.pcprior.range) || is.null(spde.pcprior.sigma))) {
+    stop("❌ Missing priors for spatial field. Must provide both `spde.pcprior.range` and `spde.pcprior.sigma`.\n\n")
+  }
+  if(latent_global && (is.null(latent.pcprior.range) || is.null(latent.pcprior.sigma))) {
+      stop("❌ Missing priors for latent field. Mus provide both `latent.pcprior.range` and `latent.pcprior.sigma`.\n\n")
   }
   if(spatial_local && latent_global) {
     if(latent.pcprior.range[1] < spde.pcprior.range[1] * 3) {
-      warning("⚠️ `latent.pcprior.range` < 3× `spde.pcprior.range`: fields may overlap, causing double-counting of spatial variance.")
+      warning("⚠️ `latent.pcprior.range` < 3× `spde.pcprior.range`: fields may overlap, causing double-counting of spatial variance.\n\n")
     }
   }
-  if(!is.null(seed)) {
-    if(!is.numeric(seed) || length(seed) != 1) {
-      stop("❌ 'seed' must be a single numeric value.\n")
-    }
-    set.seed(seed)
-  }
-  available_cores <- parallel::detectCores(logical = TRUE)
-  if(!is.null(n.threads) && n.threads > available_cores) {
-    stop(paste0("❌ Requested `n.threads` = ", n.threads, " exceeds available cores (", available_cores,").\n"))
-  }
-  INLA::inla.setOption(num.threads = n.threads)
+  #
   if(!is.null(covariate.effects)) {
     if(!is.list(covariate.effects)) {
       stop("❌ `covariate.effects` must be a list or 'NULL'.\n")
     }
-    allowed_top <- c("global", "regional", "default")
-    unknown_top <- setdiff(names(covariate.effects), allowed_top)
-    if(length(unknown_top) > 0) {
-      stop("❌ Invalid entries in `covariate.effects`: ",
-         paste(unknown_top, collapse = ", "),
-         ". Allowed: 'global', 'regional', 'default'.\n")
+    if(!names(covariate.effects) %in% c("global", "regional", "default")) {
+      stop("❌ Invalid entries in `covariate.effects`. Allowed: 'global', 'regional', 'default'.\n\n")
     }
     if(!is.null(covariate.effects$default)) {
       def <- covariate.effects$default
@@ -208,14 +246,123 @@ NSBM.pure <- function(nsbm_obj,
       message("ℹ️ All regional covariates dropped.\n")
     }
   }
+  if(latent_global && !is.null(covariate.effects)) {
+    vg_all <- nsbm_obj$Selected.Variables.Global
+    if(length(vg_all) > 0) {
+      has_rw2_global <- any(vapply(
+        vg_all,
+        function(v) {
+          spec <- resolve_covariate_effects(v, "global", covariate.effects)
+          identical(spec$model, "rw2")
+        },
+        logical(1)
+      ))
+      if(has_rw2_global) {
+        stop("❌ RW2 global effects are not allowed when the latent SPDE is active.\n",
+             "   Both mechanisms smooth broad-scale structure and become redundant.\n",
+             "   Disable RW2 for global covariates (in `covariate.effects`) or disable the latent SPDE\n",
+             "   (`latent.pcprior.range` / `latent.pcprior.sigma` = NULL).\n\n")
+      }
+    }
+  }
+  #
+  if(!is.null(coupling.predictors)) {
+    if(is.character(coupling.predictors)) {
+      if(!coupling.predictors %in% c("NULL", "additive", "hierarchical")) {
+        stop("❌ `coupling.predictors` must be one of: 'NULL', 'additive' or 'hierarchical',\n",
+             "    or a named list specifying defaults and variable-specific modes.\n\n")
+      }
+    }
+    else if(is.list(coupling.predictors)) {
+      if(!names(coupling.predictors) %in% c("default", "variables")) {
+        stop("❌ Invalid entries in `coupling.predictors`. Allowed components: 'default', 'variables'.\n\n")
+      }
+      if(!is.null(coupling.predictors$default)) {
+        if(!coupling.predictors$default %in% c("NULL", "additive", "hierarchical")) {
+          stop("❌ `coupling.predictors$default` must be 'NULL', 'additive' or 'hierarchical'.\n\n")
+        }
+      }
+      if(!is.null(coupling.predictors$variables)) {
+        if(!is.list(coupling.predictors$variables)) {
+          stop("❌ `coupling.predictors$variables` must be a named list.\n\n")
+        }
+        for(v in names(coupling.predictors$variables)) {
+          mode_v <- coupling.predictors$variables[[v]]
+          if(!mode_v %in% c("additive", "hierarchical", "NULL")) {
+            stop("❌ Invalid coupling mode for variable '", v, "'. Allowed modes: 'NULL', 'additive', 'hierarchical'.\n\n")
+          }
+        }
+      }
+    }
+    else {
+      stop("❌ `coupling.predictors` must be NULL, a character mode, or a list(default=..., variables=list(...)).\n\n")
+    }
+  }
+  # compatibility coupling.predictors x covariate.effects
+  if(!is.null(coupling.predictors) && !is.null(covariate.effects)) {
+    vg <- nsbm_obj$Selected.Variables.Global
+    vr <- nsbm_obj$Selected.Variables.Regional
+    all_vars <- unique(c(vg, vr))
+
+    resolve_drop <- function(var, scale) {
+      spec <- resolve_covariate_effects(var, scale, covariate.effects)
+      spec$model == "drop"
+    }
+    for(v in all_vars) {
+      mode_v <- {
+        if(is.character(coupling.predictors)) coupling.predictors
+        else if(is.list(coupling.predictors) && !is.null(coupling.predictors$variables[[v]]))
+          coupling.predictors$variables[[v]]
+        else if(is.list(coupling.predictors) && !is.null(coupling.predictors$default))
+          coupling.predictors$default
+        else "additive"
+      }
+
+      if(mode_v == "hierarchical") {
+        if(!(v %in% vg)) {
+          stop("❌ `coupling.predictors`: variable '", v, "' cannot use 'hierarchical'.\n",
+               "   Variable is missing in the global scale.\n",
+               "   Include '", v, "' in the global covariates or use 'additive' or 'NULL'.\n")
+        }
+        if(!(v %in% vr)) {
+          stop("❌ `coupling.predictors`: variable '", v, "' cannot use 'hierarchical'.\n",
+               "   Variable is missing in the regional scale.\n",
+               "   Use 'additive' or 'NULL' instead.\n")
+        }
+      }
+      if(mode_v == "hierarchical" && v %in% vg && resolve_drop(v,"global")) {
+        stop("❌ `coupling.predictors`: variable '", v, "' cannot use 'hierarchical'.\n",
+             "   The global effect is dropped (`covariate.effects`).\n",
+             "   Change coupling mode to 'additive' or 'NULL'.\n")
+      }
+      if(mode_v == "hierarchical" && v %in% vr && resolve_drop(v,"regional")) {
+        stop("❌ `coupling.predictors`: variable '", v, "' cannot use 'hierarchical'.\n",
+             "   The regional effect is dropped (`covariate.effects`).\n",
+             "   Use 'additive' or 'NULL'.\n")
+      }
+      if(mode_v == "hierarchical" && v %in% vg &&
+         resolve_covariate_effects(v,"global",covariate.effects)$model == "rw2") {
+        stop("❌ `coupling.predictors`: variable '", v, "' cannot use 'hierarchical'.\n",
+             "   Global effect uses RW2 smoothing.\n",
+             "   Change the global effect of '", v, "' to 'const'.\n")
+      }
+    }
+  }
+  #  
+  if(!is.null(seed)) {
+    if(!is.numeric(seed) || length(seed) != 1) {
+      stop("❌ 'seed' must be a single numeric value.\n\n")
+    }
+    set.seed(seed)
+  }
+  available_cores <- parallel::detectCores(logical = TRUE)
+  if(!is.null(n.threads) && n.threads > available_cores) {
+    stop(paste0("❌ Requested `n.threads` = ", n.threads, " exceeds available cores (", available_cores,").\n\n"))
+  }
+  INLA::inla.setOption(num.threads = n.threads)
 
 
-  sabina <- list()
-
-  .opt_plus <- function(s) if(!is.null(s) && nzchar(s)) paste0(" + ", s) else ""
-
-
-  # Data preparation
+  ## Data preparation
   sp_covglo <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
   sp_covreg <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
 
@@ -243,7 +390,7 @@ NSBM.pure <- function(nsbm_obj,
   pp_reg$region <- 1L
 
 
-  # SPDE domain definition
+  ## SPDE domain definition
   pts_reg <- sf::st_as_sf(terra::as.points(sp_covreg, values = FALSE))
   sf::st_crs(pts_reg) <- crs
   pts_reg <- sf::st_transform(pts_reg, crs)
@@ -256,7 +403,7 @@ NSBM.pure <- function(nsbm_obj,
   sf::st_crs(bdy_reg) <- crs
 
 
-  # spatial local
+  ## SPDE components
   if(spatial_local)  {
     matern <- INLA::inla.spde2.pcmatern(
       mesh = spde.mesh,
@@ -265,8 +412,6 @@ NSBM.pure <- function(nsbm_obj,
     )
   }
 
-
-  # Latent global 
   if(latent_global) {
     spde_cov <- INLA::inla.spde2.pcmatern(
       mesh = spde.mesh,
@@ -277,205 +422,252 @@ NSBM.pure <- function(nsbm_obj,
   }
 
 
-  # Nested intercept
-  if(nested.intercept) {
-    # IRegional anidado como desviación de IGlobal
-    intercept_terms <- c("IGlobal(1)", "IRegional(1, model='iid', group=region)")
-  } else {
-    # I independientes
-    intercept_terms <- c("IGlobal(1)", "IRegional(1)")
+  ## Nested intercept
+  # prior for intercepts iid. param = c(1, 0.01) -> P(σ > 1) = 0.01
+  IID_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
+  # prior for beta_copy (regional deviation). beta_regional ~ Normal(mean = 1, sd = 0.5). INLA uses precisión, so sd = 0.5 -> tau = 1/(0.5^2) = 4
+  COPY_BETA_PRIOR <- "hyper = list(beta = list(prior = 'normal', param = c(1, 4)))"
+
+  if(is.null(coupling.intercept)) {
+    #intercept_terms <- c("IRegional(1, model='iid')")
+    intercept_terms <- c(paste0("IRegional(1, model='iid', ", IID_PRIOR, ")"))
+  } else if(coupling.intercept == "additive") {
+    intercept_terms <- c(
+      #"IGlobal(1, model='iid')",
+      #"IRegional(1, model='iid')"
+      paste0("IGlobal(1, model='iid', ", IID_PRIOR, ")"),
+      paste0("IRegional(1, model='iid', ", IID_PRIOR, ")")
+    )
+  } else if(coupling.intercept == 'hierarchical') {
+    intercept_terms <- c(
+      #"IGlobal(1, model='iid')",
+      paste0("IGlobal(1, model='iid', ", IID_PRIOR, ")"),
+      paste0("IRegional(1, copy='IGlobal', fixed=FALSE, ", COPY_BETA_PRIOR, ")"))
   }
   base_intercepts <- paste(intercept_terms, collapse = " + ")
 
 
-  # Model components
+  ## Model components
   cmp_cov <- fcov(obj = nsbm_obj, 
                   spobjglo = "sp_covglo", 
                   spobjreg = "sp_covreg",
-                  covariate.effects = covariate.effects,
-                  use_latent = latent_global,
-                  spde_cov = spde_cov,
                   sp_covglo = sp_covglo,
                   sp_covreg = sp_covreg,
+                  covariate.effects = covariate.effects,
                   pp_glo_sf = pp_glo,
                   pp_reg_sf = pp_reg)
 
-  if(latent_global && any(sapply(covariate.effects$global, function(x) x$model == "rw2"))) {
-    warning("⚠️ Both a latent field and global rw2 smoothers are active. This may double-count spatial smoothing and dilute uncertainty. Consider disabling rw2 for global covariates.")
-  }
- 
 
-  # Formula
-  cmp_formula <- if(spatial_local) {
-    paste0("~ ", base_intercepts, " + spatial(geometry, model = matern) + ", cmp_cov$cmp)
-  } else {
-    paste0("~ ", base_intercepts, " + ", cmp_cov$cmp)
-  }
+  # component formula (intercept + spataial + latent + fcovs
+  cmp <- c(
+    base_intercepts,
+    if(spatial_local) "spatial(geometry, model = matern)" else NULL, # residual field local (mesh)
+    if(latent_global) "GLspde(main = geometry, model = spde_cov) + beta_GL(1)" else NULL, # global field + coef
+    cmp_cov$cmp   # bio1GL(), bio1RE(),...
+  )
+  cmp <- paste(cmp[!is.na(cmp) & nzchar(cmp)], collapse = " + ")
+  cmp <- as.formula(paste("~", cmp))
 
-  cmp <- as.formula(cmp_formula)
-
-  dom <- if(spatial_local | latent_global) list(geometry = spde.mesh) else NULL
+  dom <- if (spatial_local || latent_global) list(geometry = spde.mesh) else NULL
   f_spatial <- if(spatial_local) " + spatial" else ""
-  I_nested <- if(nested.intercept==TRUE) " + IGlobal" else ""
   f_latent <- if(latent_global) " + beta_GL * GLspde" else ""
 
+  .opt_plus <- function(s) if(!is.null(s) && nzchar(s)) paste0(" + ", s) else ""
+ 
+  rhs_glo <- if(is.null(coupling.intercept)) {
+    NULL  # no for regional-only
+  } else {
+    paste0("IGlobal", f_spatial, f_latent, .opt_plus(cmp_cov$like$fglobal))
+  }
+
+  rhs_reg <- if(is.null(coupling.intercept)) {
+    paste0("IRegional", f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
+  } else if(coupling.intercept == "additive") {
+    paste0("IGlobal + IRegional", f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
+  } else { # hierarchical
+    paste0("IRegional", f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
+  }
+
+  # likelihoods
   if(fam == "cp") {
     # for intensity, Cox process (cp)
     pres_glo <- pp_glo[pp_glo$resp != 0L, ]
     pres_reg <- pp_reg[pp_reg$resp != 0L, ]
-    # Likelihoods
-    lik_glo <- inlabru::like(
-      family = "cp",
-      formula = as.formula(paste0("geometry ~ IGlobal", f_spatial, f_latent, .opt_plus(cmp_cov$like$fglobal))),
-      data = pres_glo,
-      samplers = bdy_glo,
-      domain = dom
-    )
+    if(!is.null(coupling.intercept)) {
+      lik_glo <- inlabru::like(
+        family = "cp",
+        formula = as.formula(paste0("geometry ~ ", rhs_glo)),
+        data = pres_glo,
+        samplers = bdy_glo,
+        domain = dom)
+    } else {
+      lik_glo <- NULL
+    }
     lik_reg <- inlabru::like(
       family = "cp",
-      formula = as.formula(paste0("geometry ~ IRegional", I_nested, f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))),
+      formula = as.formula(paste0("geometry ~ ", rhs_reg)),
       data = pres_reg,
       samplers = bdy_reg,
-      domain = dom
-    )
-    eta <- paste0("IRegional", I_nested, f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
-    pred_formula <- as.formula(paste0("~ exp(",eta,")"))
+      domain = dom)
   } else {
     # for any type of family-object (e.g, binomial(), etc.)
-    # Likelihoods
-    lik_glo <- inlabru::like(
-      family = fam,
-      formula = as.formula(paste0("resp ~ IGlobal", f_spatial, f_latent, .opt_plus(cmp_cov$like$fglobal))),
-      data = pp_glo,
-      samplers = bdy_glo,
-      domain = dom,
-      control.family = list(link = lnk)
-    )
+    if(!is.null(coupling.intercept)) {
+      lik_glo <- inlabru::like(
+        family = fam,
+        formula = as.formula(paste0("resp ~ ", rhs_glo)),
+        data = pp_glo,
+        samplers = bdy_glo,
+        domain = dom,
+        control.family = list(link = lnk))
+    } else {
+      lik_glo <- NULL
+    }
     lik_reg <- inlabru::like(
       family = fam,
-      formula = as.formula(paste0("resp ~ IRegional", I_nested, f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))), #@@@JMB si I_nested entra, entra el componente spatial de modelo global?
+      formula = as.formula(paste0("resp ~ ", rhs_reg)),
       data = pp_reg,
       samplers = bdy_reg,
       domain = dom,
-      control.family = list(link = lnk)
-    )
-    eta <- paste0("IRegional", I_nested, f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
-    pred_formula <- switch(lnk,
+      control.family = list(link = lnk))
+  }
+
+  eta_terms <- c(
+    if(!is.null(coupling.intercept) && coupling.intercept == "additive") "IGlobal" else NULL,
+    "IRegional",
+    if(spatial_local) "spatial" else NULL,
+    if(latent_global) "beta_GL * GLspde" else NULL,
+    cmp_cov$like$fregional
+  )
+  eta <- paste(stats::na.omit(eta_terms), collapse = " + ")
+
+  if(fam == "cp") {
+    pred_formula <- as.formula(paste0("~ exp(",eta,")"))
+  } else {
+    pred_formula <- switch(
+      lnk,
       "logit" = as.formula(paste0("~ 1 / (1 + exp(-(", eta, ")))")),
       "cloglog" = as.formula(paste0("~ 1 - exp(-exp(", eta, "))")), 
       "log" = as.formula(paste0("~ exp(", eta, ")")),
       "identity" = as.formula(paste0("~ ", eta)))
+  } 
+
+
+  ## Model fitting complete
+  if(is.null(coupling.intercept)) {
+    fit <- inlabru::bru(
+      components = cmp,
+      lik_reg,
+      options = list(
+        control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
+        control.inla = list(int.strategy = "eb"),
+        control.mode = list(restart = TRUE)))
+  } else {
+    fit <- inlabru::bru(
+      components = cmp,
+      lik_glo,
+      lik_reg,
+      options = list(
+        control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
+        control.inla = list(int.strategy = "eb"),
+        control.mode = list(restart = TRUE)))
   }
 
 
-  # k-fold CV
+  ## K-fold CV (only fam no cp)
   if(cv.folds > 1) {
-    # stratified k folds
-    folds_g <- make_stratified_kfolds(pp_glo$resp, cv.folds)
-    folds_r <- make_stratified_kfolds(pp_reg$resp, cv.folds)
+    if (fam == "cp") {
+      warning("⚠️ Cross-validation (cv.folds > 1) is not implemented for family = 'cp'. CV results will be NULL.")
+      cv_res <- NULL
+    } else {
+      # stratified k folds
+      if(!is.null(coupling.intercept)) {
+        folds_g <- make_stratified_kfolds(pp_glo$resp, cv.folds)
+      } else {
+        folds_g <- NULL
+      }
+      folds_r <- make_stratified_kfolds(pp_reg$resp, cv.folds)
 
-    aucs <- numeric(cv.folds)
+      aucs <- numeric(cv.folds)
 
-    for(k in seq_len(cv.folds)) {
-      train_g <- pp_glo[folds_g != k, ]
-      test_g <- pp_glo[folds_g == k, ]
-      train_r <- pp_reg[folds_r != k, ]
-      test_r <- pp_reg[folds_r == k, ]
+      for(k in seq_len(cv.folds)) {
+        if(!is.null(coupling.intercept)) {
+          train_g <- pp_glo[folds_g != k, ]
+          test_g <- pp_glo[folds_g == k, ]
+        } else {
+          train_g <- NULL
+          test_g  <- NULL
+        }    
+        train_r <- pp_reg[folds_r != k, ]
+        test_r <- pp_reg[folds_r == k, ]
 
-      # fit fold k
-      fit_k <- inlabru::bru(
-        components = cmp,
-        inlabru::like(
-          family = fam,
-          formula = lik_glo$formula,
-          data = train_g,
-          samplers = lik_glo$samplers,
-          domain = lik_glo$domain,
-          control.family = list(link = lnk)
-        ),
-        inlabru::like(
-          family = fam,
+        # likelihood k
+        if(!is.null(coupling.intercept)) {
+          lik_g_k <- inlabru::like(
+            family = fam,
+            formula = lik_glo$formula,
+            data = train_g,
+            samplers = lik_glo$samplers,
+            domain = lik_glo$domain,
+            control.family = list(link = lnk)
+          )
+        } else {
+          lik_g_k <- NULL
+        }
+        lik_r_k <- inlabru::like(
+          family  = fam,
           formula = lik_reg$formula,
           data = train_r,
           samplers = lik_reg$samplers,
           domain = lik_reg$domain,
           control.family = list(link = lnk)
-        ),
-        options = list(control.compute = list(cpo = FALSE, config = TRUE),
-                       control.inla = list(int.strategy = "eb"),
-                       control.mode = list(restart = TRUE))
-      )
+        )
 
-      # rm NAs
-      coords_t <- sf::st_coordinates(test_r)
-      both <- c(sp_covglo, sp_covreg)
-      cov_all <- terra::extract(both, coords_t)
-      keep <- stats::complete.cases(cov_all)
+        # fit fold k
+        if(is.null(coupling.intercept)) {
+          fit_k <- inlabru::bru(
+            components = cmp,
+            lik_r_k,
+            options = list(control.compute = list(cpo = FALSE, config = TRUE),
+                           control.inla = list(int.strategy = "eb"),
+                           control.mode = list(restart = TRUE)))
+        } else {
+          fit_k <- inlabru::bru(
+            components = cmp,
+            lik_g_k,
+            lik_r_k,
+            options = list(control.compute = list(cpo = FALSE, config = TRUE),
+                           control.inla = list(int.strategy = "eb"),
+                           control.mode = list(restart = TRUE)))
+        }
 
-      # pred and AUC
-      test_r2 <- test_r[keep, ]
-      if(nrow(test_r2) > 0) {
-        pk <- predict(fit_k, test_r2, pred_formula)
-        aucs[k] <- as.numeric(pROC::auc(test_r2$resp, pk$mean))
-      } else {
-        aucs[k] <- NA_real_
+        # rm NAs
+        coords_t <- sf::st_coordinates(test_r)
+        both_cov <- c(sp_covglo, sp_covreg)
+        cov_all <- terra::extract(both_cov, coords_t)
+        keep <- stats::complete.cases(cov_all)
+
+        # pred and AUC
+        test_r2 <- test_r[keep, ]
+        if(nrow(test_r2) > 0) {
+          pk <- predict(fit_k, test_r2, pred_formula)
+          aucs[k] <- as.numeric(pROC::auc(test_r2$resp, pk$mean))
+        } else {
+          aucs[k] <- NA_real_
+        }
       }
+
+      cv_res <- list(
+        cv.folds = cv.folds, 
+        auc_mean = mean(aucs, na.rm=TRUE),
+        auc_sd = sd(aucs, na.rm=TRUE)
+      )
     }
-
-    cv_res <- list(
-      cv.folds = cv.folds, 
-      auc_mean = mean(aucs, na.rm=TRUE),
-      auc_sd = sd(aucs, na.rm=TRUE)
-    )
-
   } else {
     cv_res <- NULL
   }
 
 
-  # Model fitting complete
-  fit <- inlabru::bru(
-    components = cmp,
-    lik_glo,
-    lik_reg,
-    options = list(control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
-                   control.inla = list(int.strategy = "eb"),
-                   control.mode = list(restart = TRUE))
-  )
-
-  lcpo_val <- if(!is.null(fit$cpo$cpo)) round(sum(log(fit$cpo$cpo)), 2) else NA_real_
-
-
-  # latent SPDE for global covariate diagnostics/warnings
-  if(latent_global) {
-    hyp <- fit$summary.hyperpar
-    # hyperpars
-    i_lat_range <- which(grepl("Range.*GLspde", rownames(hyp), ignore.case = TRUE))
-    i_lat_sigma <- which(grepl("Stdev.*GLspde|Sigma.*GLspde", rownames(hyp), ignore.case = TRUE))
-    i_sp_range <- grep("Range.*(spatial|matern)", rownames(hyp), ignore.case = TRUE)
-    i_sp_sigma <- grep("(Stdev|Sigma).*(spatial|matern)", rownames(hyp), ignore.case = TRUE)
-
-    # posterior mean
-    lat_range <- if(length(i_lat_range)) hyp$mean[i_lat_range] else NA_real_
-    lat_sigma <- if(length(i_lat_sigma)) hyp$mean[i_lat_sigma] else NA_real_
-    sp_range <- if(length(i_sp_range)) hyp$mean[i_sp_range] else NA_real_
-    sp_sigma <- if(length(i_sp_sigma)) hyp$mean[i_sp_sigma] else NA_real_
-
-    # spatial and latent overlap?
-    if(is.finite(lat_range) && is.finite(sp_range)) {
-      ratio <- lat_range / sp_range
-      if(ratio < 1) {
-        warning(paste0(
-          "⚠️ Potential overlap between latent GLspde and residual SPDE (range ratio = ", round(ratio, 2), ").\n",
-          "   Latent and residual fields may be capturing similar spatial scales. This can cause identifiability issues or double-smoothing.\n",
-          "   Consider increasing latent.pcprior.range to at least 3–5× the residual range prior, or reduce spatial.pcprior.range to ensure clear scale separation."
-        ), call. = FALSE)
-      }
-    }
-  } 
-
-
-  # Predictions
+  ## Predictions
   pred.df <- sf::st_as_sf(terra::as.points(sp_covreg, values = FALSE))
   sf::st_crs(pred.df) <- crs
   pred.df <- sf::st_transform(pred.df, crs)
@@ -499,7 +691,7 @@ NSBM.pure <- function(nsbm_obj,
   }
 
 
-  # New scenarios
+  ## New scenarios
   proj_list <- list()
   if(proj.new.env && !is.null(nsbm_obj$Scenarios)) {
     for(sc in names(nsbm_obj$Scenarios)) {
@@ -515,7 +707,7 @@ NSBM.pure <- function(nsbm_obj,
   }
 
 
-  # diagnostics
+  ## Diagnostics
   coords_reg <- sf::st_coordinates(pp_reg)
   data_used  <- data.frame(x = coords_reg[,1], y = coords_reg[,2], resp = pp_reg$resp)
   diag_block <- nsbm_diagnostics(
@@ -526,13 +718,15 @@ NSBM.pure <- function(nsbm_obj,
                                 latent.pcprior.range = latent.pcprior.range,
                                 latent.pcprior.sigma = latent.pcprior.sigma),
                   pred_sp = if(spatial_local) pred_sp else NULL,
-                  pred_lat = if(latent_global) pred_lat else NULL)
+                  pred_lat = if(latent_global) pred_lat else NULL,
+                  coupling.intercept = coupling.intercept)
+
   if(length(diag_block$warnings)) {
-    message(paste(unique(diag_block$warnings), collapse = " | "))
+    message(paste(unique(diag_block$warnings), collapse = "\n\n"))
   }
 
 
-  # save outputs
+  ## Save outputs
   species <- nsbm_obj$Species.Name
   if(save.output) {
     # Create directories
@@ -557,8 +751,7 @@ NSBM.pure <- function(nsbm_obj,
     # save evaluation metrics
     eval_metrics <- data.frame(
       Metric = c("WAIC", "DIC", "MLik", "LCPO (sum log-CPO)"),
-      Value = c(fit$waic$waic, fit$dic$dic, fit$mlik[1], lcpo_val)
-    )
+      Value = c(fit$waic$waic, fit$dic$dic, fit$mlik[1], diag_block$bayes_fit$lcpo_val))
     write.csv(eval_metrics, file = file.path(values_path, paste0(species, "_evaluation.csv")), row.names = FALSE)
     # save CPO values (one per observation)   #@@@JMB useful for leave-one-out diagnostics or model comparison??
     write.csv(data.frame(CPO = fit$cpo$cpo), file = file.path(values_path, paste0(species, "_pointwise_CPO.csv")), row.names = FALSE)
@@ -587,33 +780,57 @@ NSBM.pure <- function(nsbm_obj,
         terra::writeRaster(terra::unwrap(proj_list[[i]]), file_path, overwrite = TRUE)
       }
     }
-    # save diagnostics if spdf field
-    if(spatial_local || latent_global) {
-      file_path <- file.path(values_path, paste0(species, "_diagnostics.png"))
-      ggplot2::ggsave(file_path, diag_block$composite, width = 8, height = 12, dpi = 300)
-    }
+    # save diagnostic plots
+    if(!is.null(diag_block$plots$hyperparams)) {
+      ggplot2::ggsave(
+        file.path(values_path, paste0(species, "_hyperparams.png")),
+        plot = diag_block$plots$hyperparams,
+        width = 6, height = 5, dpi = 300)
+     }
+     if(!is.null(diag_block$plots$correlogram)) {
+       ggplot2::ggsave(
+         file.path(values_path, paste0(species, "_correlogram.png")),
+         plot = diag_block$plots$correlogram,
+         width = 6, height = 5, dpi = 300)
+     }
+     if(!is.null(diag_block$plots$hist)) {
+       ggplot2::ggsave(
+         file.path(values_path, paste0(species, "_residualHistogram.png")),
+         plot = diag_block$plots$hist,
+         width = 6, height = 5, dpi = 300)
+     }
+     if(!is.null(diag_block$plots$qq)) {
+       ggplot2::ggsave(
+         filename = file.path(values_path, paste0(species, "_QQplot.png")),
+         plot = diag_block$plots$qq,
+         width = 6, height = 4, dpi = 300, bg = "white")
+     }
+     if(!is.null(diag_block$plots$spatialfields)) { 
+       ggplot2::ggsave(
+         file.path(values_path, paste0(species, "_SPDEfields.png")),
+         plot = diag_block$plots$spatialfields,
+         width = 6, height = 5, dpi = 300)
+     }
+     if(!is.null(diag_block$plots$semivariogram)) {
+       ggplot2::ggsave(
+         filename = file.path(values_path, paste0(species, "_semivariogram.png")),
+         plot = diag_block$plots$semivariogram,
+         width = 6, height = 4, dpi = 300, bg = "white")
+     }
 
-    message("Results saved in the following local folder(s):")
-    message(paste(
-    "  - Current projection (pred), spatial field (pred_sp), and new scenarios: ", projections_path, "\n",
-    " - Fixed/random spatial effects, hyperparameters, evaluation, diagnostic: ", values_path, "\n",
-    " - Full model object: ", file.path(values_path, paste0(species, "_model_fit.rds")), "\n"
-    ))
+     message("ℹ️ Results saved in the following local folder(s):")
+     message(paste(
+     "  - Projections (current pred, spatial field pred_sp, latent field pred_lat and scenarios: ", projections_path, "\n",
+     " - Model values (fixed/random effects, hyperparameters, evaluation and diagnostics: ", values_path, "\n",
+     " - Full model object (.rds): ", file.path(values_path, paste0(species, "_model_fit.rds")), "\n"
+     ))
   }
+
 
   # summary          #@@@JMB pendiente revisar/completar...
-  summary_df <- generate_summary_nsbm(fit, species, lcpo_val) 
-  if(!is.null(cv_res)) {
-    cv_rows <- data.frame(
-      Field = c("","--------- Cross Validation --------", "CV folds:", "AUC mean ± sd:"),
-      Value = c("","", cv_res$cv.folds, sprintf("%.2f ± %.2f", cv_res$auc_mean, cv_res$auc_sd)),
-      stringsAsFactors = FALSE
-    )
-    summary_df <- rbind(summary_df, cv_rows)
-  }
-  if(!is.null(diag_block)) {
-    summary_df <- rbind(summary_df, diag_block$metrics)
-  }
+  summary_df <- nsbm_generate_summary(fit, species, fam, lnk, 
+                                      diag_block, cv_res = cv_res)
+
 
   # return
   sabina <- list(
@@ -626,7 +843,7 @@ NSBM.pure <- function(nsbm_obj,
       spde.pcprior.sigma = if(!is.null(spde.mesh)) spde.pcprior.sigma else NULL,
       latent.pcprior.range = latent.pcprior.range,
       latent.pcprior.sigma = latent.pcprior.sigma,
-      nested.intercept = nested.intercept,
+      coupling.intercept = coupling.intercept,
       covariate.effects = covariate.effects,
       proj.new.env = proj.new.env,
       cv.folds = cv.folds,
@@ -653,15 +870,14 @@ NSBM.pure <- function(nsbm_obj,
 ### Helps/Auxiliars
 # -----------------------------
 
-# formulas
+# Components GL/RE for covariates
 fcov <- function(obj, 
                  spobjglo, 
                  spobjreg,
-                 use_latent = FALSE,
-                 spde_cov = NULL,
                  sp_covglo,
                  sp_covreg,
                  covariate.effects = NULL,
+                 coupling.predictors = NULL,
                  pp_glo_sf = NULL,
                  pp_reg_sf= NULL) {
 
@@ -671,52 +887,7 @@ fcov <- function(obj,
 
   cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
 
-  # resolve per-covariate spec (covariate.effects)
-  .spec_cache <- new.env(parent = emptyenv())
-  resolve_spec <- function(varname, scale, ccform, default_model = "const") {
-    key <- paste(scale, varname, sep = "||")
-    hit <- .spec_cache[[key]]
-    if(!is.null(hit)) return(hit)
-    if(is.null(ccform) || !is.list(ccform)) {
-      res <- list(model = default_model, u = NA, alpha = NA)
-     .spec_cache[[key]] <- res
-      return(res)
-    }
-    path <- paste0("covariate.effects$", scale, "$", varname)
-    spec <- if(!is.null(ccform[[scale]]) && !is.null(ccform[[scale]][[varname]])) {
-      ccform[[scale]][[varname]]
-    } else if(!is.null(ccform$default)) {
-      ccform$default
-    } else default_model
-
-    if(is.character(spec)) {
-      if(identical(spec, "const")) { res <- list(model = "const", u = NA, alpha = NA); .spec_cache[[key]] <- res; return(res) }
-      if(identical(spec, "drop")) { res <- list(model = "drop", u = NA, alpha = NA); .spec_cache[[key]] <- res; return(res) }
-      if(identical(spec, "rw2")) {
-        stop(paste0("❌ `", path, "` uses model='rw2' but is missing `u` and/or `alpha`",
-             "  Use `list(model='rw2', u=..., alpha=...)`."))
-      }
-      stop(paste0("❌ `", path, "` has invalid value '", spec, "'. ",
-                  "Use 'const'|'drop' or a list with `model='rw2'`, `u`, and `alpha`."))
-    } else if(is.list(spec)) {
-      m <- spec$model
-      if(is.null(m)) stop(path, " is missing `model`.")
-      if(identical(m, "const")) { res <- list(model = "const", u = NA, alpha = NA); .spec_cache[[key]] <- res; return(res) }
-      if(identical(m, "drop")) { res <- list(model = "drop", u = NA, alpha = NA); .spec_cache[[key]] <- res; return(res) }
-      if(identical(m, "rw2")) {
-        if(is.null(spec$u) || is.null(spec$alpha)) {
-          stop(paste0("❌ `", path, "` with `model = 'rw2'` requires both `u` and `alpha`."))
-        }
-        res <- list(model = "rw2", u = spec$u, alpha = spec$alpha); .spec_cache[[key]] <- res; return(res)
-      }
-      stop(paste0("❌ `", path, "` has invalid `model = '", m, "'`. Use 'const'|'rw2'|'drop'."))
-    } else {
-      stop(paste0("❌ `", path, "` has an unsupported specification type."))
-    }
-  }
-
-
-  # rw2: thin knots to enforce min relative spacing (INLA check 1e-3) 
+  # rw2: knots to enforce min relative spacing (INLA check 1e-3) 
   thin_knots <- function(x, min_ratio = 1e-3) {
     x <- sort(unique(as.numeric(x)))
     if(length(x) <= 2) return(x)
@@ -724,7 +895,9 @@ fcov <- function(obj,
     if(!is.finite(r) || r == 0) return(unique(x))
     out <- x[1]
     for(xi in x[-1]) {
-      if((xi - out[length(out)]) / r >= min_ratio) out <- c(out, xi)
+      if((xi - out[length(out)]) / r >= min_ratio) { 
+        out <- c(out, xi)
+      }
     }
     if(length(out) < 3L) {
       out <- seq(min(x), max(x), length.out = min(max(5L, length(x)), 50L))
@@ -736,199 +909,334 @@ fcov <- function(obj,
   rw2_K <- 300L              #@@@JMB pensar si dejamos esto por defecto
   rw2_method <- "quantile" 
 
-  # build rw2 support via inla.group + thinning
   build_rw2_values <- function(rast_layer, coords, K = rw2_K, method = rw2_method) {
     vals <- suppressWarnings(as.numeric(terra::extract(rast_layer, coords)[, 1]))
     vals <- vals[is.finite(vals)] 
     rng <- range(vals)
     if(diff(rng) == 0) {
-      stop("❌  rw2: covariate has zero range; rw2 requires variability.")
-    }    
+      stop("❌  RW2 requires variability (covariate range = 0).\n",
+           "   Use 'const' instead for this covariate or check the raster values.\n\n")
+    }  
     g <- INLA::inla.group(vals, n = K, method = method)
     v <- sort(unique(as.numeric(levels(g))))
-    v <- thin_knots(v, min_ratio = 1e-3)
+    v <- thin_knots(v)
     if(length(v) < 3L) {
-      stop("❌  RW2: <3 knots after grouping/thinning.") #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
+      stop("❌  RW2 requires ≥ 3 distinct support values.\n", #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
+           "   Consider reducing smoothing or check covariate variability.\n\n")
     }
     v
   }
 
-  fmt_vec <- function(v) paste0("c(", paste(format(v, digits = 7), collapse = ","), ")")
-
-  # detect if rw2 is request
-  rw2_effects <- is.list(covariate.effects) && !is.null(covariate.effects)
-  need_rw2_global <- rw2_effects && length(vg) > 0 &&
-    any(vapply(vg, function(X) resolve_spec(X, "global",  covariate.effects, "const")$model == "rw2", logical(1)))
-  need_rw2_regional <- rw2_effects && length(vr) > 0 &&
-    any(vapply(vr, function(X) resolve_spec(X, "regional", covariate.effects, "const")$model == "rw2", logical(1)))
- 
-  coords_all <- NULL
-  coords_r <- NULL
-  if(need_rw2_global) {
-    coords_all <- rbind(sf::st_coordinates(pp_glo_sf),
-                        sf::st_coordinates(pp_reg_sf))
-  }
-  if(need_rw2_regional) {
-    coords_r <- sf::st_coordinates(pp_reg_sf)
-  }
-
-  # no covariate.effects (all const)
-  if(is.null(covariate.effects)) {
-    cmpglobal <- if(length(vg) > 0) paste0(
-      paste0(vg, "GL(main = ", spobjglo, ", main_layer = '", vg, "', model = 'const')"),
-      collapse = " + ") else ""
-    fglobal <- if(length(vg) > 0) paste0(vg, " * ", vg, "GL", collapse = " + ") else ""
-    cmpregional <- if(length(vr) > 0) paste0(
-      paste0(vr, "RE(main = ", spobjreg, ", main_layer = '", vr, "', model = 'const')"),
-      collapse = " + ") else ""
-    fregional <- if (length(vr) > 0) paste0(vr, " * ", vr, "RE", collapse = " + ") else ""
-    latent_block <- ""
-    if(isTRUE(use_latent) && !is.null(spde_cov)) {
-      latent_block <- "GLspde(main = geometry, model = spde_cov) + beta_GL(1)"
+  # detect rw2 needs
+  need_rw2_global <- FALSE
+  need_rw2_regional <- FALSE
+  if(is.list(covariate.effects)) {
+    if(length(vg) > 0) {
+      need_rw2_global <- any(vapply(vg, function(x) 
+        resolve_covariate_effects(x, "global",  covariate.effects)$model == "rw2", logical(1)))
     }
-    return(list(
-      cmp = paste(Filter(nzchar, c(cmp1, latent_block, cmpglobal, cmpregional)), collapse = " + "),
-      like = list(fglobal = if(nzchar(fglobal)) fglobal else "",
-                  fregional = if(nzchar(fregional)) fregional else "")
-    ))
-  }
-
-  # global
-  cmpglobal <- ""
-  fglobal <- ""
-
-  if(length(vg) > 0) {
-    if(use_latent && !is.null(spde_cov)) {
-      # With latent SPDE (shared global spde)
-      # if any global cov requests rw2, add rw2 over global spde. Else GLspde + beta_GL
-      rw2_pairs <- list()
-      if(rw2_effects) {
-        for(X in vg) {
-          specX <- resolve_spec(X, "global", covariate.effects, "const")
-          if(identical(specX$model, "rw2")) {
-            rw2_pairs[[length(rw2_pairs) + 1]] <- c(specX$u, specX$alpha)
-          }
-        }
-      }
-      covblk <- "GLspde(main = geometry, model = spde_cov)"
-      if(length(rw2_pairs) == 0) {
-        cmpglobal <- paste(covblk, "beta_GL(1)", sep = " + ")
-        fglobal <- ""
-      } else {
-        ua <- do.call(rbind, rw2_pairs)
-        ua_uniq <- unique(ua)
-        if(nrow(ua_uniq) > 1) {
-          stop("Whit latent global SPDE, all global RW2 must sharee (u, alpha). Provide the same pair for all global covariates (e.g., via `covariate.effects$global` or `covariate.effects$default`).")
-        }
-        u_g <- ua_uniq[1, 1]
-        a_g <- ua_uniq[1, 2]
-        rw2blk <- paste0(
-          "s(GLspde, model='rw2', scale.model=TRUE, ",
-          "hyper=list(prec=list(prior='pc.prec',param=c(", u_g, ",", a_g, "))))"
-        )
-        cmpglobal <- paste(covblk, rw2blk, sep = " + ")
-        fglobal <- ""  # with latent no X * XGL terms
-      }
-    } else {
-      # Without latent (per-covariate GL components)
-      gl_terms <- character(0)
-      fgl_terms <- character(0)
-
-      for(X in vg) {
-        specX <- resolve_spec(X, "global", covariate.effects, "const")
-        if(identical(specX$model, "drop")) next
-
-        if(identical(specX$model, "const")) {
-          gl_terms <- c(gl_terms, paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'const')"))
-        } else if(identical(specX$model, "rw2")) {
-          vals <- if(!is.null(coords_all)) build_rw2_values(sp_covglo[[X]], coords_all) else numeric(0)
-          core <- paste0(
-            X, "GL(main = ", spobjglo, ", main_layer = '", X, "', ",
-            "model = 'rw2', scale.model = TRUE, ",
-            "hyper=list(prec=list(prior='pc.prec',param=c(", specX$u, ",", specX$alpha, ")))",
-            if(length(vals) >= 3L) paste0(", values = ", fmt_vec(vals)) else "",
-            ")"
-          )
-          gl_terms <- c(gl_terms, core)
-        }
-        fgl_terms <- c(fgl_terms, paste0(X, " * ", X, "GL"))
-      }
-
-      if(length(gl_terms) > 0) cmpglobal <- paste(gl_terms, collapse = " + ")
-      if(length(fgl_terms) > 0) fglobal <- paste(fgl_terms, collapse = " + ")
+    if(length(vr) > 0) {
+      need_rw2_regional <- any(vapply(vr, function(x) 
+        resolve_covariate_effects(x, "regional", covariate.effects)$model == "rw2", logical(1)))
     }
   }
 
-  # regional
-  cmpregional <- ""
-  fregional <- ""
+  coords_all <- if(need_rw2_global) {
+    rbind(sf::st_coordinates(pp_glo_sf),
+          sf::st_coordinates(pp_reg_sf))
+  } else NULL
+  coords_r <- if(need_rw2_regional) {
+    sf::st_coordinates(pp_reg_sf)
+  } else NULL
 
-  if(length(vr) > 0) {
-    re_terms <- character(0)
-    fre_terms <- character(0)
+  # global components 
+  cmpglobal <- character(0)
+  fglobal <- character(0)
 
-    for(X in vr) {
-      specX <- resolve_spec(X, "regional", covariate.effects, "const")
-      if(identical(specX$model, "drop")) next
-
-      if(identical(specX$model, "const")) {
-        re_terms <- c(re_terms, paste0(X, "RE(main = ", spobjreg, ", main_layer = '", X, "', model = 'const')"))
-      } else if(identical(specX$model, "rw2")) {
-        vals <- if(!is.null(coords_r)) build_rw2_values(sp_covreg[[X]], coords_r) else numeric(0)
-        core <- paste0(
-          X, "RE(main = ", spobjreg, ", main_layer = '", X, "', ",
-          "model = 'rw2', scale.model = TRUE, ",
-          "hyper = list(prec = list(prior = 'pc.prec', param = c(", specX$u, ",", specX$alpha, "))), ",
-          "group = region",
-          if(length(vals) >= 3L) paste0(", values = ", fmt_vec(vals)) else "",
-          ")"
-        )
-        re_terms <- c(re_terms, core)
-      }
-      fre_terms <- c(fre_terms, paste0(X, " * ", X, "RE"))
-    }
-    if(length(re_terms) > 0) cmpregional <- paste(re_terms, collapse = " + ")
-    if(length(fre_terms) > 0) fregional <- paste(fre_terms, collapse = " + ")
+  fmt_vals <- function(v) {
+    paste0("c(", paste(format(v, digits = 7), collapse = ","), ")")
   }
 
-  # output fcov
+  for(X in vg) {
+    cp_mode <- resolve_coupling_predictor(X, coupling.predictors)
+    if(cp_mode == "NULL") next
+    specX <- resolve_covariate_effects(X, "global", covariate.effects)
+    if(specX$model == "drop") next
+    if(specX$model == "const") {
+      cmpglobal <- c(cmpglobal,
+        paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'const')"))
+    } else if(specX$model == "rw2") {
+      vals <- build_rw2_values(sp_covglo[[X]], coords_all)
+      cmpglobal <- c(cmpglobal,
+        paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'rw2', scale.model = TRUE, ",
+               "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))), ",
+               "values = ", fmt_vals(vals),")"))
+    }
+    fglobal <- c(fglobal, paste0(X, " * ", X, "GL"))
+  }
+
+  # regional components 
+  cmpregional <- character(0)
+  fregional <- character(0)
+
+  for(X in vr) {
+    cp_mode <- resolve_coupling_predictor(X, coupling.predictors)
+    specX <- resolve_covariate_effects(X, "regional", covariate.effects)
+    if(specX$model == "drop") next
+    
+    # hierarchical coupling.predictors
+    if(cp_mode == "hierarchical") {
+      # hierarchical require same var in both scales
+      if(!(X %in% vg)) {   
+        stop("❌  `coupling.predictors`: variable '", X, "' cannot use 'hierarchical' coupling.\n",
+             "    The variable is missing in the global scale.\n",
+             "    Include '", X, "' to global covariates or use 'additive' or 'NULL'.\n\n")
+      }
+      # hierarchical cannot coexist with RW2 at global scale
+      if(resolve_covariate_effects(X, "global", covariate.effects)$model == "rw2") {
+        stop("❌  `coupling.predictors`: variable '", X, "' cannot use 'hierarchical' coupling.\n",
+             "    covariate.effects$global uses RW2 smoothing, incompatible with hierarchical copying.\n",
+             "    Use 'const' at global scale or change coupling.\n\n")
+      }
+      # hierarquical regional copies global
+      cmpregional <- c(cmpregional,
+        paste0(X, "RE(copy='", X, "GL', fixed=FALSE, ",
+               "hyper=list(beta=list(prior='normal', param=c(1,4))))"))  #@@@JMB params ok???
+      fregional <- c(fregional, paste0(X, " * ", X, "RE"))
+      next
+    }
+
+    # additive or NULL -> independent regional effect
+    if(specX$model == "const") {
+      cmpregional <- c(cmpregional,
+        paste0(X, "RE(main = ", spobjreg, ", main_layer = '", X, "', model = 'const')"))
+    } else if(specX$model == "rw2") {
+      vals <- build_rw2_values(sp_covreg[[X]], coords_r)
+      cmpregional <- c(cmpregional,
+        paste0(X, "RE(main = ", spobjreg,
+          ", main_layer = '", X, "', model='rw2', scale.model=TRUE, ",
+          "hyper = list(prec=list(prior='pc.prec', param=c(",
+          specX$u, ",", specX$alpha, "))), ",
+          "group = region, ",
+          "values = ", fmt_vals(vals), ")"))
+    }
+    fregional <- c(fregional, paste0(X, " * ", X, "RE"))
+  }
+
+  # out fcov
   list(
-    cmp = paste(Filter(nzchar, c(cmp1, cmpglobal, cmpregional)), collapse = " + "),
-    like = list(fglobal = if(nzchar(fglobal)) fglobal else "",
-                fregional = if(nzchar(fregional)) fregional else "")
-  ) 
-
+    cmp = paste(c(cmp1, cmpglobal, cmpregional), collapse = " + "),
+    like = list(fglobal = if(length(fglobal) > 0) paste(fglobal, collapse = " + ") else "",
+                fregional = if(length(fregional) > 0) paste(fregional, collapse = " + ") else "")) 
 }
 
 
 # -----------------------------
 
-# disgnstics
+
+# interprete covariate_effects
+resolve_covariate_effects <- function(varname, scale, covariate.effects, default_model = "const") {
+
+  path_label <- paste0("covariate.effects$", scale, "$", varname)
+
+  # if no covariate.effects, all const by default
+  if(is.null(covariate.effects) || !is.list(covariate.effects)) {
+    return(list(model = default_model, u = NA, alpha = NA))
+  }
+
+  # global/regional or default
+  if(!is.null(covariate.effects[[scale]]) && !is.null(covariate.effects[[scale]][[varname]])) {
+    spec <- covariate.effects[[scale]][[varname]]
+  } else if(!is.null(covariate.effects$default)) {
+    spec <- covariate.effects$default
+    path_label <- paste0("covariate.effects$default (applied to ", varname, ")")
+  } else {
+    return(list(model = "const", u = NA, alpha = NA))
+  }
+
+  # if spec is a string -> "const"/"drop"
+  if(is.character(spec)) {
+    if(spec == "const") { 
+      res <- list(model = "const", u = NA, alpha = NA)
+    }
+    if(spec == "drop") { 
+      res <- list(model = "drop", u = NA, alpha = NA)
+    } 
+    if(spec == "rw2") {
+      stop("❌  Invalid RW2 specification in `", path_label, "`.\n",
+           "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
+           "   For linear effects use 'const'; to exclude use 'drop'.\n\n")
+    } 
+    stop("❌ Invalid keyword '", spec, "' in `", path_label, "`.\n",
+         "   Valid options: 'const', 'drop', or list(model='rw2', u=..., alpha=...) (smoothed RW2 effect).\n\n")
+  }
+
+  # if spec is a list, only rw2 admited 
+  if(is.list(spec)) {
+    if(is.null(spec$model)) {
+      stop("❌  Invalid list specification in `", path_label, "`.\n",
+           "   Lists are only allowed for RW2 effects. Use: list(model='rw2', u=..., alpha=...).\n",
+           "   For linear effects use 'const'; to exclude use 'drop'.\n\n")
+    }
+    if(!identical(spec$model, "rw2")) {
+      # RW2 reequires u alpha
+      if(is.null(spec$u) || is.null(spec$alpha)) {
+        stop("❌  Incomplete RW2 specification in `", path_label, "`.\n",
+             "   Provide both `u` and `alpha`..\n\n")
+      }
+      return(list(model = "rw2", u = spec$u, alpha = spec$alpha))
+    }
+    stop("❌  Invalid `model` in `", path_label, "`.\n",
+         "   When using a list, only model='rw2' is permitted.\n",
+         "   For linear effects use 'const'; to exclude use 'drop'.\n\n")
+  }
+
+  #unsupported type
+  stop("❌  Unsupported type in `", path_label, "`.\n",
+       "   Must be string ('const'|'drop') or list(model='rw2', u=..., alpha=...).\n\n")
+}
+
+
+# -----------------------------
+
+
+# interpret coupling.predictors
+resolve_coupling_predictor <- function(var, coupling.predictors) {
+
+  # if NULL no coupling predictors, treat as "additive" (default)
+  if(is.null(coupling.predictors)) return("additive")
+
+  # if string ("additive", "NULL", "hierarchical")
+  if(is.character(coupling.predictors)) return(coupling.predictors)
+
+  # if list
+  if(is.list(coupling.predictors)) {
+    # default
+    mode_def <- coupling.predictors$default %||% "additive"
+    # overrides?
+    if(!is.null(coupling.predictors$variables) &&
+       !is.null(coupling.predictors$variables[[var]])) {
+      return(coupling.predictors$variables[[var]])
+    }
+
+    return(mode_def)
+  }
+
+  return("additive")
+}
+
+
+# -----------------------------
+
+
+# diagnostics
 nsbm_diagnostics <- function(fit,
                              data_used,
-                             sp_covreg,
                              priors = NULL,
                              pred_sp = NULL,
-                             pred_lat = NULL) {
+                             pred_lat = NULL,
+                             coupling.intercept) {
 
   spatial_local <- "spatial" %in% names(fit$summary.random)
   latent_global <- "GLspde" %in% names(fit$summary.random)
-  hyp <- fit$summary.hyperpar
 
-  val <- function(param) if (param %in% rownames(hyp)) hyp[param, "0.5quant"] else NA_real_
+  # Model fit metrics
+  dic_val <- if(!is.null(fit$dic$dic) && !is.na(fit$dic$dic)) round(fit$dic$dic, 2) else NA_real_
+  waic_val <- if(!is.null(fit$waic$waic) && !is.na(fit$waic$waic)) round(fit$waic$waic, 2) else NA_real_
+  mlik_val <- if(!is.null(fit$mlik) && !is.na(fit$mlik[1,1])) round(fit$mlik[1, 1], 2) else NA_real_
+  mlpd_val <- if(!is.null(fit$cpo) && !is.null(fit$cpo$cpo)) round(mean(log(fit$cpo$cpo), na.rm = TRUE), 3) else NA_real_
+  lcpo_val <- if(!is.null(fit$cpo$cpo)) round(sum(log(fit$cpo$cpo)), 2) else NA_real_
+
+  hyper <- fit$summary.hyperpar
+  marginals <- fit$marginals.hyperpar
+
   ci_ratio <- function(param) {
-    if (!param %in% rownames(hyp)) return(NA_real_)
-    ciw <- hyp[param, "0.975quant"] - hyp[param, "0.025quant"]
-    med <- hyp[param, "0.5quant"]
-    if (!is.finite(ciw) || !is.finite(med) || med == 0) return(NA_real_)
+    if(!param %in% rownames(hyper)) return("—")
+    ciw <- hyper[param, "0.975quant"] - hyper[param, "0.025quant"]
+    med <- hyper[param, "0.5quant"]
+    if(!is.finite(ciw) || !is.finite(med) || med == 0) return(NA_real_)
     ciw / abs(med)
   }
 
-  # extract hyperparameters
-  range_res <- if(spatial_local) val("Range for spatial") else NA_real_
-  sigma_res <- if(spatial_local) val("Stdev for spatial") else NA_real_
-  range_lat <- if(latent_global) val("Range for GLspde") else NA_real_
-  sigma_lat <- if(latent_global) val("Stdev for GLspde") else NA_real_
+  # hyperparameters spde
+  range_res_mean <- if(spatial_local) hyper["Range for spatial", "mean"] else "—"
+  sigma_res_mean <- if(spatial_local) hyper["Stdev for spatial", "mean"] else "—"
+  range_lat_mean <- if(latent_global) hyper["Range for GLspde", "mean"] else "—"
+  sigma_lat_mean <- if(latent_global) hyper["Stdev for GLspde", "mean"] else "—"
+  range_res_sd <- if(spatial_local) hyper["Range for spatial", "sd"] else "—"
+  sigma_res_sd <- if(spatial_local) hyper["Stdev for spatial", "sd"] else "—"
+  range_lat_sd <- if(latent_global) hyper["Range for GLspde", "sd"] else "—"
+  sigma_lat_sd <- if(latent_global) hyper["Stdev for GLspde", "sd"] else "—"
+
+  range_res <- if(spatial_local) paste0(round(range_res_mean, 2), " ± ", round(range_res_sd, 2)) else "—"
+  sigma_res <- if(spatial_local) paste0(round(sigma_res_mean, 2), " ± ", round(sigma_res_sd, 2)) else "—"
+  range_lat <- if(latent_global) paste0(round(range_lat_mean, 2), " ± ", round(range_lat_sd, 2)) else "—"
+  sigma_lat <- if(latent_global) paste0(round(sigma_lat_mean, 2), " ± ", round(sigma_lat_sd, 2)) else "—"
+  format_hyper <- function(param) {
+   if(!param %in% rownames(hyper)) return("—")
+      paste0(round(hyper[param, "mean"], 2), " ± ", round(hyper[param, "sd"], 2))
+  }
+  prec_IGlobal <- if("Precision for IGlobal" %in% rownames(hyper)) format_hyper("Precision for IGlobal") else "—"
+  beta_IRegional <- if("Beta for IRegional" %in% rownames(hyper)) format_hyper("Beta for IRegional") else "—"
+
+  # spatial and latent overlap?
+  if(is.finite(range_res_mean) && is.finite(range_lat_mean)) {
+    ratio <- range_lat_mean / range_res_mean
+  }
+
+  # Intercepts
+  mean_sd_str <- function(df) {
+    if(is.null(df) || nrow(df) == 0) return("—")
+    paste0(round(df$mean[1], 5), " ± ", round(df$sd[1], 5), " (", 
+           round(df$`0.025quant`[1], 5), ", ", round(df$`0.975quant`[1], 5), ")")
+  }
+  iGlobal <- mean_sd_str(fit$summary.random$IGlobal)
+  iRegional <- mean_sd_str(fit$summary.random$IRegional)
+
+  # Significant vars
+  sig_vars <- signif_vars(fit)
+
+  y_obs <- data_used$resp
+  y_pred <- fit$summary.fitted.values$mean[seq_len(nrow(data_used))]
+
+  # auc_full (if binary)
+  if(all(y_obs %in% c(0,1))) {
+    auc_full <- suppressMessages(as.numeric(pROC::auc(y_obs, y_pred)))
+  } else {
+    auc_full <- "—"
+  }
+
+  # brier
+  brier <- mean((y_pred - y_obs)^2, na.rm = TRUE)
+
+  # calibration & slopes
+  if(all(y_pred > 0 & y_pred < 1)) {
+    df_cal <- data.frame(
+      logit_p = qlogis(y_pred),
+      y = y_obs
+    )
+    cal_mod <- lm(logit_p ~ y, data = df_cal)
+    cal_intercept <- coef(cal_mod)[1]
+    cal_slope <- coef(cal_mod)[2]
+  } else {
+    cal_intercept <- "—"
+    cal_slope <- "—"
+  }
+
+  # pit
+  pit_vals <- fit$cpo$pit
+  if(!is.null(pit_vals)) {
+    ks_pit <- suppressWarnings(ks.test(pit_vals, "punif")$p.value)
+  } else {
+    ks_pit <- "—"
+  }
+
+  # cpo_failures
+  if(!is.null(fit$cpo$cpo)) {
+    cpo_failures <- sum(fit$cpo$failure, na.rm = TRUE)
+  } else {
+    cpo_failures <- "—"
+  }
 
   # CI/median ratios
   ci_ratios <- c(range_residual = ci_ratio("Range for spatial"),
@@ -959,16 +1267,16 @@ nsbm_diagnostics <- function(fit,
   )
 
   # variance and range ratios
-  # sigma latent / sigma residual > 1.5 ==> latent field dominates (Blangiardo & Cameletti 2015)
-  sigma_ratio <- if(spatial_local && latent_global && is.finite(sigma_lat) && is.finite(sigma_res) && sigma_res > 0)
-    sigma_lat / sigma_res else NA_real_
+  # sigma latent mean / sigma residual mean > 1.5 ==> latent field dominates (Blangiardo & Cameletti 2015)
+  sigma_ratio <- if(spatial_local && latent_global && is.finite(sigma_lat_mean) && is.finite(sigma_res_mean) && sigma_res_mean > 0)
+    sigma_lat_mean / sigma_res_mean else "—"
   # 0.5 < range_latent / range_residual < 2 ==> poor scale separation (Bakka et al. 2018)
-  range_ratio <- if(spatial_local && latent_global && is.finite(range_lat) && is.finite(range_res) && range_res > 0)
-    range_lat / range_res else NA_real_
+  range_ratio <- if(spatial_local && latent_global && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
+    range_lat_mean / range_res_mean else "—"
 
   # correlation spatial–latent fields
   # r > 0.7 00> high correlation
-  field_correlation <- NA_real_
+  field_correlation <- "—"
   if(spatial_local && latent_global) {
     f_sp <- fit$summary.random$spatial$mean
     f_lat <- fit$summary.random$GLspde$mean
@@ -978,110 +1286,119 @@ nsbm_diagnostics <- function(fit,
     
   # Moran’s I residual autocorrelation
   moran_I <- NA_real_
-  if(all(c("x", "y", "resp") %in% names(data_used))) {
-    pred_mu <- fit$summary.fitted.values$mean
-    if(length(pred_mu) >= nrow(data_used)) {
-      rs <- data_used$resp - pred_mu[seq_len(nrow(data_used))]
-      xy <- as.matrix(data_used[, c("x", "y")])
-      #maxdist <- if(spatial_local) range_res else if(latent_global) range_lat else NA_real_
-      maxdist <- if (spatial_local) {
-        range_res
-      } else if (latent_global) {
-        range_lat
-      } else {               #@@@JMB sin spatial ni latent usa 1/4 de la diagonal???
-        bb <- apply(xy, 2, range, na.rm = TRUE)
-        sqrt(sum((bb[2,] - bb[1,])^2)) / 4
-      }   
-      if(is.finite(maxdist) && maxdist > 0) {
-        nb <- spdep::dnearneigh(xy, 0, maxdist, longlat = FALSE)
-        lw <- spdep::nb2listw(nb, style = "W", zero.policy = TRUE)
-        mi <- spdep::moran(rs, lw, n = length(rs), S0 = spdep::Szero(lw))
-        moran_I <- as.numeric(mi$I)
+  rs <- y_obs - y_pred
+  xy <- as.matrix(data_used[, c("x", "y")])
+  maxdist <- if(spatial_local) {
+    range_res_mean
+  } else if(latent_global) {
+    range_lat_mean
+  } else {               #@@@JMB sin spatial ni latent usa 1/4 de la diagonal???
+    bb <- apply(xy, 2, range, na.rm = TRUE)
+    sqrt(sum((bb[2,] - bb[1,])^2)) / 4
+  }   
+  if(is.finite(maxdist) && maxdist > 0) {
+    nb <- spdep::dnearneigh(xy, 0, maxdist, longlat = FALSE)
+    lw <- spdep::nb2listw(nb, style = "W", zero.policy = TRUE)
+    mi <- spdep::moran(rs, lw, n = length(rs), S0 = spdep::Szero(lw))
+    moran_I <- as.numeric(mi$I)
+  }
+
+  # pred correlation, RMSE
+  pred_cor <- stats::cor(y_obs, y_pred, use = "complete.obs")
+  rmse <- sqrt(mean((y_obs - y_pred)^2, na.rm = TRUE))
+
+  # coverage 95%
+  if(all(c("0.025quant", "0.975quant") %in% colnames(fit$summary.fitted.values))) {
+    low95 <- fit$summary.fitted.values[seq_len(nrow(data_used)), "0.025quant"]
+    up95 <- fit$summary.fitted.values[seq_len(nrow(data_used)), "0.975quant"]
+    cov95 <- mean(y_obs >= low95 & y_obs <= up95, na.rm = TRUE)
+  } else {
+    cov95 <- "—"
+  }
+
+  # coverage 50%
+  if(all(c("0.25quant", "0.75quant") %in% colnames(fit$summary.fitted.values))) {
+    low50 <- fit$summary.fitted.values[seq_len(nrow(data_used)), "0.25quant"]
+    up50 <- fit$summary.fitted.values[seq_len(nrow(data_used)), "0.75quant"]
+    cov50 <- mean(y_obs >= low50 & y_obs <= up50, na.rm = TRUE)
+  } else {
+    cov50 <- "—"
+  }
+
+  # warnings
+  warns <- character()
+  # overlap latent vs residual
+  if(spatial_local && latent_global && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 3) {
+    warns <- c(warns,
+      paste("⚠️  Insufficient spatial scale separation: latent/spatial range ratio = ",round(range_ratio, 2), ").\n",
+             "   When 0.5 < ratio < 3, both fields may capture the same spatial structure, which causes identifiability issues and double-smoothing.\n",
+             "   Recomended: latent.pcprior.range ≥ 3–5× residual range, or tighten spatial.pcprior.range.\n")
+    )
+  }  
+  # weak identifiability (CI/median ratio)
+  if(is.finite(max_CIratio) && max_CIratio > 25) {
+    warns <- c(warns,
+      "⚠️ Weak hyperparameter identifiability detected (CI/median > 25).\n",
+      "   Recommended: use stronger PC priors.\n"
+    )
+  }
+  # latent field dominating variance
+  if(spatial_local && latent_global && is.finite(sigma_ratio) && sigma_ratio > 1.5) {
+    warns <- c(warns,
+      "⚠️ Variance imbalance between latent and residual/spatial SPDE. Variance ratio (sigma latent / sigma residual) = ", round(sigma_ratio, 2), ".\n",
+      "   The latent field dominates the spatial variability, making the residual SPDE redundant.\n",
+      "   Recommended: reduce latent.pcprior.sigma or increase spatial.pcprior.sigma.\n"
+    )
+  }
+  # high correlation between latent and residual
+  if(spatial_local && latent_global && is.finite(field_correlation) && field_correlation > 0.7) {
+    warns <- c(warns,
+      paste0("⚠️ High correlation between latent and residual spatial fields (r = ",
+             round(field_correlation, 2), ").\n",
+             "   Possible redundancy: both SPDE components capture the same spatial pattern.\n",
+             "   Recommended: strengthen priors to separate scales, or remove one SPDE fields.\n")
+    )
+  }
+  # residual autocorrelation
+  if(is.finite(moran_I) && moran_I > 0.10) {
+    warns <- c(warns,
+      paste0("⚠️ Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").\n",
+             "   Model missing local spatial structure.\n",
+             "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates.\n")  #@@@JMB no estoy segura
+    )
+  }
+  # posterior ≈ prior (weak data information)
+  if(any(unlist(prior_close))) {
+    warns <- c(warns,
+      "⚠️ Posterior close to PC-prior mode: weak data information relative to prior strength.\n",
+      "   Recommended: relax priors or increase data resolution.\n")    #@@@JMB rev recommendation??
+  }
+  # cpo
+  if(!is.null(fit$cpo$cpo)) {
+    cpo_failures <- sum(fit$cpo$failure, na.rm = TRUE)
+    total_obs <- length(fit$cpo$cpo)
+    if(cpo_failures > 0) {
+      perc_failures <- (cpo_failures / total_obs) * 100
+      if(perc_failures > 1) {     #@@@JMB 1% of observations????
+        warns <- c(warns,
+          paste0("⚠️ CPO failures detected (", round(perc_failures, 2), "% of observations).\n",
+          "   Model severely struggles to predict these points (CPO ≈ 0).\n",
+          "   Recommended: check for outliers or review model specification/priors.\n\n"))
       }
     }
   }
 
-  # bayesian pseudo-R2, correlation, RMSE
-  y_obs <- data_used$resp
-  y_pred <- fit$summary.fitted.values$mean[seq_len(nrow(data_used))]
-  pseudo_R2 <- 1 - (stats::var(y_obs - y_pred, na.rm = TRUE) / stats::var(y_obs, na.rm = TRUE))
-  pred_cor <- stats::cor(y_obs, y_pred, use = "complete.obs")
-  rmse <- sqrt(mean((y_obs - y_pred)^2, na.rm = TRUE))
-
-  # warnings
-  warns <- character()
-  if(is.finite(max_CIratio) && max_CIratio > 25)   #@@@JMB rev CI/median thresholds 10–25–50 Bakka et al. 2018) 
-    warns <- c(warns, "⚠️ Weak identifiability: max CI/median > 25. Strengthen priors or simplify model.")
-  if(spatial_local && latent_global && is.finite(sigma_ratio) && sigma_ratio > 1.5)
-    warns <- c(warns, "⚠️ Latent field dominates variance (σ_latent > 1.5 × σ_residual). Reduce σ_latent or increase its range.")
-  if(spatial_local && latent_global && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 2)
-    warns <- c(warns, "⚠️ Poor range separation (0.5 < latent/residual < 2). Enforce latent range ≥ 3–5× residual range.")
-  if (!is.null(field_correlation) && is.finite(field_correlation) && field_correlation > 0.7)
-    warns <- c(warns, "⚠️ High correlation between latent and residual fields (r > 0.7). Possible redundancy.")
-  if(is.finite(moran_I) && moran_I > 0.10)
-    warns <- c(warns, paste0("⚠️ Residual spatial autocorrelation (Moran’s I ≈ ", round(moran_I, 2), "). Model may miss local dependence."))
-  if(any(unlist(prior_close)))
-    warns <- c(warns, "⚠️ Posterior ≈ prior thresholds detected: weak data information for some hyperparameters.")
-
-  #
-  diag_metrics <- data.frame(
-    Field = c(
-      "",
-      "-------- Model diagnostics --------",
-      "  Parameter identifiability:",
-      "      CI/median (Range: residual | latent)",
-      "      CI/median (σ: residual | latent)",
-      "      Max CI/median ratio (overall)",
-      "",
-      "  Spatial structure:",
-      "      Field correlation (latent-residual, r)",
-      "      Range ratio (latent / residual)",
-      "      Variance ratio (σ_latent / σ_residual)",
-      "",
-      "  Residual spatial dependence:",
-      "      Residual Moran’s I",
-      "",
-      "  Predictive performance:",
-      "      Bayesian pseudo-R²",
-      "      Observed-predicted correlation (r)",
-      "      RMSE"
-    ),
-    Value = c(
-      "", "", "",
-      paste0(round(ci_ratios["range_residual"], 1), " | ",
-             round(ci_ratios["range_latent"], 1)),
-      paste0(round(ci_ratios["sigma_residual"], 1), " | ",
-             round(ci_ratios["sigma_latent"], 1)),
-      round(max_CIratio,2),
-      "",
-      "",
-      round(field_correlation,2),
-      round(range_ratio,2),
-      round(sigma_ratio,2),
-      "",
-      "",
-      round(moran_I,3),
-      "",
-      "",
-      round(pseudo_R2,3),
-      round(pred_cor,3),
-      round(rmse,3)
-    ),
-    stringsAsFactors = FALSE
-  )
-
-
   # plots
-  # pA Hyperparameters: posterior marginals + PC prior thresholds
-  post_df <- NULL
+  # pA Hyperparameters: posterior marginals + PC priors
+  post_df <- NA_real_
   if(!is.null(fit$marginals.hyperpar)) {
     for(nm in names(fit$marginals.hyperpar)) {
       sm <- INLA::inla.smarginal(fit$marginals.hyperpar[[nm]])
       post_df <- rbind(post_df, data.frame(x = sm$x, y = sm$y, par = nm))
+      post_df <- na.omit(post_df)
     }
   }
-
-  # Create prior reference ticks for red dashed lines
+  # Create prior reference ticks for vertical lines
   prior_ticks <- do.call(rbind, Filter(Negate(is.null), list(
     if(!is.null(priors$spde.pcprior.range)) data.frame(x = priors$spde.pcprior.range[1], par = "Range for spatial"),
     if(!is.null(priors$spde.pcprior.sigma)) data.frame(x = priors$spde.pcprior.sigma[1], par = "Stdev for spatial"),
@@ -1099,12 +1416,13 @@ nsbm_diagnostics <- function(fit,
     ggplot2::geom_vline(data = prior_ticks, ggplot2::aes(xintercept = x),
                         linetype = "dashed", linewidth = 0.5, color = "#c0392b", alpha = 0.7) +
     ggplot2::geom_text(data = prior_ticks,
-                       ggplot2::aes(x = x, y = y, label = "PC prior (u)"),
-                       vjust = -0.8, hjust = 0.9, size = 2.8,
+                       ggplot2::aes(x = x, y = y, 
+                       label = paste0("PC prior (u) = ", round(x, 2))),
+                       vjust = -0.4, hjust = 1, size = 2.8,
                        color = "#c0392b", angle = 90) +
     ggplot2::labs(
       title = "A) Hyperparameters: posterior marginals",
-      subtitle = "Red dashed lines = PC prior thresholds (u)",
+      subtitle = "Red dashed lines = PC prior (u)",
       y = "Density", x = "Value"
     ) +
     ggplot2::theme_minimal(base_size = 10) +
@@ -1194,9 +1512,8 @@ nsbm_diagnostics <- function(fit,
 
   # pC Residual correlogram
   cor_df <- data.frame()
+  coords <- as.matrix(data_used[, c("x", "y")])
   if(is.finite(moran_I)) {
-    coords <- as.matrix(data_used[, c("x", "y")])
-    rs <- data_used$resp - fit$summary.fitted.values$mean[seq_len(nrow(data_used))]
     dmat <- as.matrix(stats::dist(coords))
     dvec <- dmat[upper.tri(dmat)]
     nbins <- 15L
@@ -1205,9 +1522,9 @@ nsbm_diagnostics <- function(fit,
     rho <- rep(NA_real_, nbins)
     ut_r <- row(dmat)[upper.tri(dmat)]
     ut_c <- col(dmat)[upper.tri(dmat)]
-    for (i in seq_len(nbins)) {
+    for(i in seq_len(nbins)) {
       sel <- dvec >= brks[i] & dvec < brks[i + 1]
-      if (sum(sel) > 30) {
+      if(sum(sel) > 30) {
         idx <- which(sel)
         r1 <- rs[ut_r[idx]]; r2 <- rs[ut_c[idx]]
         rho[i] <- stats::cor(r1, r2, use = "pairwise.complete.obs")
@@ -1215,13 +1532,13 @@ nsbm_diagnostics <- function(fit,
     }
     cor_df <- data.frame(dist_mid = mid, rho = rho)
   }
-  range_eff <- if(is.finite(range_res)) range_res else if(is.finite(range_lat)) range_lat else NA_real_
+  range_eff <- if(is.finite(range_res_mean)) range_res_mean else if(is.finite(range_lat_mean)) range_lat_mean else NA_real_
   pC <- ggplot2::ggplot(cor_df, ggplot2::aes(x = dist_mid, y = rho)) +
     ggplot2::geom_hline(yintercept = 0, linewidth = 0.3, linetype = "dashed", color = "grey50") +
     ggplot2::geom_point(na.rm = TRUE, size = 1.2, color = "#1a5276") +
     ggplot2::geom_line(na.rm = TRUE, color = "#1a5276", linewidth = 0.6) +
     ggplot2::labs(
-      title = "C) Residual correlogram",
+      title = "C) Residual correlogram (residuals: obs − fitted mean)",
       subtitle = if(is.finite(range_eff))
         paste0("Model range ≈ ", round(range_eff, 3), " (map units)\n(distance where correlation vanishes)")
       else
@@ -1257,10 +1574,9 @@ nsbm_diagnostics <- function(fit,
 
 
   # pD Residual histogram + QQ plot
-  rs <- data_used$resp - fit$summary.fitted.values$mean[seq_len(nrow(data_used))]
   res_mean <- mean(rs, na.rm = TRUE)
   df_r <- data.frame(resid = rs)
-  center_label <- if (hierarchical) {
+  center_label <- if(hierarchical) {
     paste0("Mean residual (≈ ", round(res_mean, 3), ")")
   } else {
     "Model mean = 0"
@@ -1280,7 +1596,7 @@ nsbm_diagnostics <- function(fit,
     hjust = 1.2, size = 2.8, color = "#c0392b"
     ) +
     ggplot2::labs(
-      title = "D) Residual histogram + Q-Q plot",
+      title = "D) Residual histogram & QQ-plot (residuals: obs − fitted mean)",
       subtitle = paste0("Distribution of residuals\n(dashed line = ", center_label, ")"),
       x = "Residuals",
       y = "Frequency"
@@ -1319,21 +1635,124 @@ nsbm_diagnostics <- function(fit,
       plot.background = ggplot2::element_blank()
     )
 
-  composite <- patchwork::wrap_plots(pA, pB, (pC + pD1 + pD2), ncol = 1)+
-    patchwork::plot_layout(heights = c(1.4, 0.8, 1)
+
+  # pE semivariaogram
+  coords <- as.matrix(data_used[, c("x", "y")])
+  if(spatial_local) {
+    sp_vals <- fit$summary.random$spatial$mean
+    sp_vals <- sp_vals[seq_len(nrow(data_used))]
+  } else {
+    sp_vals <- 0
+  }
+  if(latent_global) {
+    lat_vals <- fit$summary.random$GLspde$mean
+    lat_vals <- lat_vals[seq_len(nrow(data_used))]
+  } else {
+    lat_vals <- 0
+  }
+  rs_net <- y_obs - y_pred - sp_vals - lat_vals
+  dmat <- as.matrix(stats::dist(coords))
+  dvec <- dmat[upper.tri(dmat)]
+  r1 <- rs_net[row(dmat)[upper.tri(dmat)]]
+  r2 <- rs_net[col(dmat)[upper.tri(dmat)]]
+  delta <- r1 - r2
+  nbins <- 15L
+  brks <- seq(0, max(dvec, na.rm = TRUE), length.out = nbins + 1)
+  mid  <- 0.5 * (brks[-1] + brks[-length(brks)])
+  gamma <- numeric(nbins)
+  for(i in seq_len(nbins)) {
+    sel <- dvec >= brks[i] & dvec < brks[i+1]
+    if(sum(sel) > 20) {
+      gamma[i] <- var(delta[sel], na.rm = TRUE) / 2
+    } else {
+      gamma[i] <- NA_real_
+    }
+  }
+  sv_df <- data.frame(
+    dist = mid,
+    gamma = gamma
   )
 
-  # output
+  pE <- ggplot2::ggplot(sv_df, ggplot2::aes(x = dist, y = gamma)) +
+    ggplot2::geom_point(color = "#1a5276", size = 1.5, alpha = 0.8) +
+    ggplot2::geom_line(color = "#1a5276", linewidth = 0.6, alpha = 0.8) +
+    ggplot2::labs(
+      title = "E) Empirical semivariogram (residuals: obs − fitted mean)",
+      subtitle = paste0(" "),
+      x = "Distance (map units)",
+      y = "Semivariance γ(h)"
+    ) +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
+      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
+      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
+      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
+    )
+  if(spatial_local) {
+    pE <- pE + ggplot2::geom_vline(xintercept = range_res_mean, linetype = "dashed", color = "#c0392b", linewidth = 0.5) +
+      ggplot2::geom_text(
+        data = data.frame(x = range_res_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Spatial range"),
+        aes(x = x, y = y, label = label), 
+        color = "#c0392b", angle = 90, hjust = 1, vjust = -0.5, size = 3)
+  }
+  if(latent_global) {
+    pE <- pE + ggplot2::geom_vline(xintercept = range_lat_mean, linetype = "dashed", color = "#2980b9", linewidth = 0.5) +
+      ggplot2::geom_text(
+      data = data.frame(x = range_lat_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Latent range"),
+      aes(x = x, y = y, label = label),
+      color = "#2980b9", angle = 90, hjust = 1, vjust = -0.5, size = 3)
+  }
+  
+
+  # covariates importance
+  #pF <- nsbm_vars_importance(fit)
+
+
+  # 
   out <- list(
-    metrics = diag_metrics,
-    ci_ratios = ci_ratios,
+    bayes_fit = list(dic_val = dic_val,
+                      waic_val = waic_val,
+                      mlik_val = mlik_val, 
+                      mlpd_val = mlpd_val,
+                      lcpo_val = lcpo_val),
+    hiperpars = list(range_res = range_res,
+                      sigma_res = sigma_res,
+                      range_lat = range_lat,
+                      sigma_lat = sigma_lat,
+                      prec_IGlobal = prec_IGlobal),
+    intercepts = list(iGlobal = iGlobal,
+                       iRegional = iRegional,
+                       copy_beta = beta_IRegional), #copy_effect
+    fixed_covariates = sig_vars,
+    predictive = list(auc_full = auc_full,
+                       brier = brier,
+                       rmse = rmse, 
+                       corr_obs_pred = pred_cor),
+    calibration = list(slope = cal_slope,
+                       ks_pit = ks_pit),
+    coverage = list(cov50 = cov50,
+                    cov95 = cov95),
+    diagnostics = list(moran_I = moran_I,
+                       max_CIratio = max_CIratio, # relative uncertainty
+                       range_ratio = range_ratio, # scale separation ratio
+                       sigma_ratio = sigma_ratio, # variance ratio
+                       field_correlation = field_correlation), # prior influence
     warnings = warns,
-    composite = composite
+    plots = list(hyperparams = pA,
+                 spatialfields = pB,
+                 correlogram = pC,
+                 hist = pD1,
+                 qq = pD2,
+                 #vars_importance = pF,
+                 semivariogram = pE)
   )
 
   return(out)
 }
-
 
 
 ###----------------###
