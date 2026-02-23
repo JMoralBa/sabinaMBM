@@ -18,11 +18,11 @@
 
 \item{which}{Component to plot. One of: "pred", "pred_sp", "new.projections", "new.projections[\link{1}]", "new.projections[\link{NAME}]", or directly the scenario stored in x$new.projections.}
 
-\item{layer}{Raster layer to display (default = "mean"). Available: "sd", "q0.025", "q0.5", "q0.975", "median", "sd.mc_std_err", or "mean.mc_std_err".}
+\item{layer}{Raster layer to display (default = "mean"). Available: "mean", "sd", "q0.025", "q0.5", "q0.975", "median", "sd.mc_std_err", "mean.mc_std_err".}
 
 \item{palette}{Color palette passed to ggplot2::scale_fill_distiller(). Default = "Spectral".}
 
-\item{title}{Optional plot title. If NULL, a default title is generated as "Species — type — scope — layer".}
+\item{title}{Optional plot title. If NULL, a default title is generated as "Species - type - scope - layer".}
 
 \item{legend_title}{Optional legend title. If NULL, it is automatically inferred from the model family and the layer.}
 }
@@ -30,20 +30,17 @@
 A ggplot object showing the selected NSBM output layer.
 }
 \description{
-This function plots a single layer from a fitted NSBM model object
-(\code{nsbm.inlabru}). It can display the current prediction (\code{pred}),
-the spatial field (\code{pred_sp}), or any future/environmental scenario
-stored in \code{new.projections}.
+This function plots a single layer from a fitted NSBM model object ("nsbm.inlabru"). It can display the current prediction ("pred"), the spatial field ("pred_sp"), or any future/environmental scenario stored in "new.projections".
 }
 \examples{
 # Default: current prediction (mean layer)
 plot(myPred.pure)
 
 ## Spatial field
-#plot(myPred.pure, which = "pred_sp", layer = "sd")
+# plot(myPred.pure, which = "pred_sp", layer = "sd")
 
 ## Scenario by index or name
-#plot(myPred.pure, which = "new.projections[[1]]")
-#plot(myPred.pure, which = "scenario1", layer = "q0.975")
+# plot(myPred.pure, which = "new.projections[[1]]")
+# plot(myPred.pure, which = "scenario1", layer = "q0.975")
 
 }

@@ -7,13 +7,14 @@
 NSBM.pure(
   nsbm_obj,
   family = binomial(link = "logit"),
-  nested.intercept = TRUE,
+  covariate.effects = NULL,
+  coupling.intercept = "additive",
+  coupling.predictors = "additive",
   spde.mesh = NULL,
   spde.pcprior.range = NULL,
   spde.pcprior.sigma = NULL,
   latent.pcprior.range = NULL,
   latent.pcprior.sigma = NULL,
-  covariate.effects = NULL,
   proj.new.env = TRUE,
   cv.folds = 1,
   n.threads = 1,
@@ -26,25 +27,38 @@ NSBM.pure(
 
 \item{family}{A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity).}
 
-\item{nested.intercept}{Logical; if TRUE = model regional intercept as deviation from global.}
+\item{covariate.effects}{Optional named list to control the global/regional covariate effects (see details). If \code{NULL} (default), no smoothing, all covariate effects remain constant (linear).}
 
-\item{spde.mesh}{An INLA mesh object created externally with \code{create_mesh()}. includes spatial latent field (SPDE) in the model (default: NULL).}
+\item{coupling.intercept}{Controls how the regional intercept inherits information from the global intercept. Options:
+\itemize{
+\item \code{"additive"} (default): Global and regional intercepts are estimated independently and enter additively in the linear predictor (no borrowing of strength).
+\item \code{"hierarchical"}: The regional intercept borrows strength from the global intercept (hierarchical partial pooling using INLA \code{copy}).
+\item \code{NULL}: Regional-only model (no global component).
+}}
+
+\item{coupling.predictors}{Controls how global and regional covariate effects are related for variables present at both scales. Options:
+\itemize{
+\item \code{NULL} (default): no coupling; global and regional effects are estimated independently.
+\item \code{"additive"}: independent additive effects (no borrowing of strength).
+\item \code{"hierarchical"}: regional effect borrows strength from the global effect using an INLA \code{copy} structure (partial pooling).
+\item Named \code{list(default = ..., variables = list(...))}: allows variable-specific overriding of the default rule.
+}}
+
+\item{spde.mesh}{An INLA mesh object created externally with \code{create_mesh()}. Requiered if spatial and/or latent SPDE components are used. If \code{NULL} (default), the model runs without spatial structure.}
 
 \item{spde.pcprior.range}{Numeric vector length 2. Pc-prior on spatial range (e.g., \code{c(5, 0.01)}).}
 
-\item{spde.pcprior.sigma}{Numeric vector length 2. Pc-prior on marginal standard deviation (e.g., \code{c(1, 0.01)}).}
+\item{spde.pcprior.sigma}{Numeric vector length 2. Pc-prior on marginal standard deviation (σ) (e.g., \code{c(1, 0.01)}).}
 
-\item{latent.pcprior.range}{Numeric vector of length 2. PC-prior on the spatial range of the latent SPDE for the global covariate (e.g., \code{c(0.05, 0.05)} in degrees). If \code{NULL} (default), no latent SPDE is created; if only this is supplied, \code{latent.pcprior.sigma} defaults to \code{c(1, 0.01)}.}
+\item{latent.pcprior.range}{Numeric vector of length 2. PC-prior on the range of the latent global field SPDE for the global covariate (e.g., \code{c(0.05, 0.05)} in degrees). If \code{NULL} (default), no latent SPDE is created.}
 
-\item{latent.pcprior.sigma}{Numeric vector of length 2. PC-prior on the marginal standard deviation of the latent SPDE for the global covariate (e.g., \code{c(1, 0.01)}). If \code{NULL} (default), no latent SPDE is created; if supplied without \code{latent.pcprior.range}, the range prior defaults to \verb{5 × resolution} of the global raster.}
-
-\item{covariate.effects}{Optional named list to control the global/regional covariate effects (see details). If \code{NULL} (default), no smoothing, all covariate effects remain constant (linear).}
+\item{latent.pcprior.sigma}{Numeric vector of length 2. PC-prior on the marginal standard deviation (σ) of the latent global field SPDE for the global covariate (e.g., \code{c(1, 0.01)}). If \code{NULL} (default), no latent SPDE is created.}
 
 \item{proj.new.env}{Logical. Whether to compute predictions under new scenarios (default: TRUE).}
 
 \item{cv.folds}{Number of k-folds for cross-validation (default: 1 = no CV). If >1, returns mean ± sd AUC for global and regional models.}
 
-\item{n.threads}{Number of threads for analysis}
+\item{n.threads}{Number of threads used by INLA (default = 1).}
 
 \item{seed}{Optional integer to set the random seed for reproducibility.}
 
@@ -58,7 +72,7 @@ A named list of class \code{nsbm.inlabru} with the following elements:
 \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
 \item{current.projections}{List with: prediction (\code{pred}) and spatial field (\code{pred_sp}).}
 \item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
-\item{Summary}{\code{data.frame} with key evaluation metrics and significant variables.}  #@@JMB revisar y refinar
+\item{Summary}{\code{data.frame} summarizing model fit, diagnostics, and significant variables.}  #@@JMB revisar y refinar
 }
 \description{
 Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling
@@ -78,16 +92,25 @@ family/link:
 \item cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
 }
 
-Spatial effects:
+SPDE structure and priors:
 \itemize{
-\item Residual spatial field \code{spatial(geometry, model = matern)}: captures local spatial autocorrelation in the response not explained by covariates. Requires \code{spde.mesh}.
-\item Global latent field (optional) : if \code{latent.pcprior.range} and/or \code{latent.pcprior.sigma} are provided, a single SPDE field \code{GLspde} represents large-scale global structure and enters the linear predictor via \code{beta_GL * GLspde}.
+\item The mesh (\code{spde.mesh}) defines the domain for spatial and latent fields.
+\item If neither spatial nor latent priors are defined, the model runs without SPDE components.
+\item Residual spatial field \code{spatial(geometry, model=matern)}: captures local spatial autocorrelation in the response not explained by covariates. Requires \code{spde.mesh}.
+\item Latent global field:\verb{captures broad-scale structure  across regions and enters the linear predictor via}beta_GL * GLspde`.
+\item If both spatial and latent fields are used, the latent range should be ≥ 3× the spatial range to avoid overlap (Bakka et al., 2018).
 }
+
+coupling.intercept = "hierarchical"
+This option implements a true hierarchical Bayesian nested structure in which the regional intercept borrows strength from the global one.
+The regional intercept is expressed as a deviation from the global one using an INLA \code{copy} structure (IRegional = β * IGlobal + ε_regional), with a prior β ~ Normal(1, sd = 0.5), meaning the regional level is encouraged (but does not forced) to follow the global signal.
+Ecologically, this formulation ensures that the global model captures broad-scale suitability (the species fundamental niche), while the regional intercept refines this large-scale signal/pattern to reflect local microclimatic conditions such and high-resolution predictors/conditions.
+This hierarchical structure enables principled information sharing between scales while still allowing regional deviations.
 
 covariate.effects: control per-covariate effects at global/regional scale.
 \itemize{
 \item Option 1 \code{NULL} (default): no smoothing, All covariates enter linearly (\code{"const"}) in both scales.
-\item Option 2 named \code{list}: Provide a list with entries \code{global}, \code{regional}, and/or \code{default}.
+\item Option 2 named \code{list}: provide a list with entries \code{global}, \code{regional}, and/or \code{default}.
 Structure:
 covariate.effects = list(
 global = list(var1 = "const" | "drop" | list(model="rw2", u=..., alpha=...),
@@ -110,5 +133,26 @@ regional = list(bio12 = "const",
 bio1 = list(model="rw2", u=..., alpha=...),
 bio4 = "drop"),
 default = "const")    # default rule if a covariate is not listed
+}
+
+coupling.predictors: control of cross-scale covariate effects
+This argument defines how each predictor behaves across global and regional scales.
+It is only applied to variables that appear in both global and regional scales.
+\itemize{
+\item Option 1 \code{NULL} (default): no coupling. Global and regional effects are estimated independently unless one is dropped via \code{covariate.effects}.
+\item Option 2 \code{"additive"}: global and regional effects enter the linear predictor as two independent components (η = β_GL * X_GL + β_RE * X_RE + …). No information is shared between scales.
+\item Option 3 \verb{"hierarchical": implements a Bayesian partial-pooling structure, where the regional effect is expressed as a deviation from the global one using INLA’s }copy` mechanism (X_RE = β_copy * X_GL + ε_RE) with a prior β_copy ~ Normal(1, sd = 0.5).
+The global effect captures broad-scale environmental structure, while the regional effect refines this pattern to account for local micro-environmental variation. This induces borrowing of strength between scales.
+\item Option 4 named \code{list}: provide a list with entries \code{variables} and \code{default}.
+Structure:
+coupling.predictors = list(
+default   = "additive" | "NULL" | "hierarchical",
+variables = list(var1 = "...", var2 = "...", ...)
+)
+Validity rules (automatically checked):
+\item Hierarchical coupling.predictors requires the predictor to exist at both scales.
+\item If \code{covariate.effects} drops the global effect of a variable, hierarchical coupling is not allowed (no parent effect available).
+\item If the regional effect is dropped, hierarchical coupling is also invalid.
+\item Global RW2 smoothing cannot be combined with hierarchical coupling for the same variable (avoids identifiability and double-smoothing issues).
 }
 }
