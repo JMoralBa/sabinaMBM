@@ -2,7 +2,5 @@
 
 S3method(plot,nsbm.inlabru)
 S3method(summary,nsbm.inlabru)
-export(NSBM.covariate)
-export(NSBM.multiply)
 export(NSBM.pure)
 export(create_mesh)
