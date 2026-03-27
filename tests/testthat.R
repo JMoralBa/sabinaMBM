@@ -1,0 +1,16 @@
+## tests/testthat.R  (place in tests/, not tests/testthat/)
+## Run all tests with: devtools::test()
+## Run only unit tests (fast): devtools::test(filter = "input-validation|resolve")
+## Run integration tests (slow, local only): devtools::test(filter = "integration")
+
+library(testthat)
+library(sabinaNSBM)
+library(glmnet)
+library(stringi)
+library(covsel)
+library(biomod2)
+library(ecospat)
+library(sgsR)
+library(sabinaNSDM)
+
+test_check("sabinaNSBM")

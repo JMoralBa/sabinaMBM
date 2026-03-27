@@ -2,7 +2,7 @@
 % Please edit documentation in R/plot_nsbm.R
 \name{plot.nsbm.inlabru}
 \alias{plot.nsbm.inlabru}
-\title{Plot for nsbm.inlabru...}
+\title{Plot predictions and spatial fields from a fitted NSBM model}
 \usage{
 \method{plot}{nsbm.inlabru}(
   x,
@@ -16,7 +16,17 @@
 \arguments{
 \item{x}{An object of class "nsbm.inlabru".}
 
-\item{which}{Component to plot. One of: "pred", "pred_sp", "new.projections", "new.projections[\link{1}]", "new.projections[\link{NAME}]", or directly the scenario stored in x$new.projections.}
+\item{which}{Component to plot. One of:
+\itemize{
+\item \code{"pred"}: current suitability prediction (default).
+\item \code{"pred_sp"}: residual spatial field (requires SPDE).
+\item \code{"pred_latent"}: latent global field (requires latent SPDE).
+\item \code{"hyperparams"}: posterior marginals of SPDE hyperparameters with PC-priors overlaid.
+\item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
+\item \code{"fixed"}: posterior marginals of all fixed effect coefficients, back-transformed to original covariate scale.
+\item \code{"pit"}: histogram of Probability Integral Transform values. A uniform distribution indicates good calibration.
+\item \code{"new.projections"}, \code{"new.projections[[1]]"}, or scenario name: future/alternative scenario.
+}}
 
 \item{layer}{Raster layer to display (default = "mean"). Available: "mean", "sd", "q0.025", "q0.5", "q0.975", "median", "sd.mc_std_err", "mean.mc_std_err".}
 
@@ -30,7 +40,7 @@
 A ggplot object showing the selected NSBM output layer.
 }
 \description{
-This function plots a single layer from a fitted NSBM model object ("nsbm.inlabru"). It can display the current prediction ("pred"), the spatial field ("pred_sp"), or any future/environmental scenario stored in "new.projections".
+Prints a structured summary for objects of class \code{nsbm.inlabru}, including model metadata, Bayesian fit criteria, hyperparameters, intercepts, fixed effects, predictive performance, calibration, and diagnostics. Returns the summary list invisibly.
 }
 \examples{
 # Default: current prediction (mean layer)
@@ -43,4 +53,7 @@ plot(myPred.pure)
 # plot(myPred.pure, which = "new.projections[[1]]")
 # plot(myPred.pure, which = "scenario1", layer = "q0.975")
 
+}
+\seealso{
+\code{\link{NSBM.pure}}, \code{\link{summary.nsbm.inlabru}}
 }
