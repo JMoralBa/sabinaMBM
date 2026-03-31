@@ -1,10 +1,14 @@
 Package: sabinaNSBM
-Title: Nested Spatial Bayesian Models for species distributions
+Title: Nested Spatial Bayesian Models for Species Distribution
 Version: 0.0.0.9000
 Authors@R: 
     person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),
            comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: Bayesian nested spatial models for species distribution modelling using INLA & inlabru.
+Description: Fits nested species distribution models (NSDMs) using hierarchical 
+    Bayesian modeling with spatial structure via INLA and inlabru. Allows 
+    integration of global and regional scales with multiple coupling structures 
+    for intercepts and predictors (unpooled, ordered hierarchical, 
+    scale-decomposed, and Bayesian feedback).
 License: MIT + file LICENSE
 LazyData: true
 Encoding: UTF-8
@@ -13,20 +17,30 @@ RoxygenNote: 7.3.2
 URL: https://github.com/JMoralBa/sabinaINLA
 BugReports: https://github.com/JMoralBa/sabinaINLA/issues
 Depends:
-    R (>= 4.3.0)
+    R (>= 4.1.0)
 Imports:
     sabinaNSDM,
-    inlabru,
+    INLA,
+    inlabru (>= 2.7.0),
+    fmesher,
     sf,
     terra,
     ggplot2,
-    INLA,
-    glmnet,
-    stringi,
-    data.table,
     tidyterra,
+    ggtext,
+    rnaturalearth,
+    rnaturalearthdata,
+    concaveman,
+    pROC,
+    spdep,
+    dplyr,
     fs,
-    sgsR
+    scales,
+    patchwork
+Suggests:
+    devtools,
+    testthat (>= 3.0.0)
 Remotes:
-    geoSABINA/sabinaNSDM
+    geoSABINA/sabinaNSDM,
+    r-inla-org/r-inla
 
