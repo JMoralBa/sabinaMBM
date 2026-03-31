@@ -19,8 +19,8 @@
 \item{which}{Component to plot. One of:
 \itemize{
 \item \code{"pred"}: current suitability prediction (default).
-\item \code{"pred_sp"}: residual spatial field (requires SPDE).
-\item \code{"pred_latent"}: latent global field (requires latent SPDE).
+\item \code{"pred_local"}: Sloc field (requires SPDE).
+\item \code{"pred_shared"}: Sshared field (requires SPDE).
 \item \code{"hyperparams"}: posterior marginals of SPDE hyperparameters with PC-priors overlaid.
 \item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
 \item \code{"fixed"}: posterior marginals of all fixed effect coefficients, back-transformed to original covariate scale.
@@ -46,8 +46,8 @@ Prints a structured summary for objects of class \code{nsbm.inlabru}, including 
 # Default: current prediction (mean layer)
 plot(myPred.pure)
 
-## Spatial field
-# plot(myPred.pure, which = "pred_sp", layer = "sd")
+## Sloc field
+# plot(myPred.pure, which = "pred_local", layer = "sd")
 
 ## Scenario by index or name
 # plot(myPred.pure, which = "new.projections[[1]]")

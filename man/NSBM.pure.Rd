@@ -11,11 +11,11 @@ NSBM.pure(
   coupling.intercept = "unpooled",
   coupling.predictors = "unpooled",
   spde.mesh = NULL,
-  spde.pcprior.range = NULL,
-  spde.pcprior.sigma = NULL,
-  latent.pcprior.range = NULL,
-  latent.pcprior.sigma = NULL,
-  background.weights = "none",
+  local.pcprior.range = NULL,
+  local.pcprior.sigma = NULL,
+  shared.pcprior.range = NULL,
+  shared.pcprior.sigma = NULL,
+  background.weights = NULL,
   proj.new.env = TRUE,
   cv.folds = 1,
   n.threads = 1,
@@ -48,23 +48,23 @@ NSBM.pure(
 \item \code{NULL}: No coupling; effects are estimated independently.
 }}
 
-\item{spde.mesh}{An \code{inla.mesh} object created externally with \code{create_mesh()}. Requiered if spatial and/or latent SPDE components are used. If \code{NULL} (default), the model runs without spatial structure.}
+\item{spde.mesh}{An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_loc) is used. If \code{NULL} (default), the model runs without spatial structure.#' @param local.pcprior.range Numeric vector length 2. PC-prior on the range of the local residual field S_loc (e.g., \code{c(2, 0.01)}). If \code{NULL} and \code{shared.pcprior.range} is also \code{NULL}, no spatial fields are used.}
 
-\item{spde.pcprior.range}{Numeric vector length 2. PC-prior on the spatial range (e.g., \code{c(5, 0.01)}).}
+\item{local.pcprior.range}{Numeric vector of length 2. PC-prior for the range of the local residual field S_loc (regional predictor only). If \code{NULL} (and \code{shared.pcprior.range} is also \code{NULL}), no spatial fields are used. Providing \code{shared.pcprior.range} without \code{local.pcprior.range} raises an error.}
 
-\item{spde.pcprior.sigma}{Numeric vector length 2. PC-prior on the marginal standard deviation (e.g., \code{c(1, 0.01)}).}
+\item{local.pcprior.sigma}{Numeric vector of length 2. PC-prior for the marginal standard deviation of S_loc.}
 
-\item{latent.pcprior.range}{Numeric vector length 2. PC-prior on the range of the latent global field SPDE. If \code{NULL}, no latent SPDE is created.}
+\item{shared.pcprior.range}{Numeric vector of length 2. PC-prior for the range of the shared spatial field S_shared, e.g. \code{c(10, 0.01)} means P(range < 10) = 0.01. Must be substantially larger than \code{local.pcprior.range} to ensure scale separation (Bakka et al., 2018). If \code{NULL} (and \code{local.pcprior.range} is also \code{NULL}), no spatial fields are used.}
 
-\item{latent.pcprior.sigma}{Numeric vector length 2. PC-prior on the marginal standard deviation of the latent global field.}
+\item{shared.pcprior.sigma}{Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01.}
 
 \item{background.weights}{Controls how background points are weighted in the likelihood. Options:
 \itemize{
-\item \code{"none"} (default): no weights applied. Fast but produces a biased intercept when using presence-background data (Warton & Shepherd, 2010).
-\item \code{"auto"}: weights are computed automatically as \code{w = 1} for presences and \code{w = A / n_bg} for background, where \code{A} is the domain area (via \code{terra::expanse()}) and \code{n_bg} is the number of background points. Corrects intercept bias under presence-background sampling.
+\item \code{NULL} (default): no weights applied. Fast but produces a biased intercept when using presence-background data (Warton & Shepherd, 2010).
+\item \code{"area_weighted"}: Weights are computed automatically as \code{w = 1} for presences and \code{w = A / n_bg} for background points, where \code{A} is the total domain area (km2) and \code{n_bg} is the number of background points. This rigorously approximates a Poisson point process integration and corrects intercept bias (Renner et al., 2015).
 \item Numeric vector: user-supplied weights of length equal to the number of observations (presences + background) per scale.
 }
-Note: ignored for \code{family = "cp"} (Cox process handles area integration via \code{samplers}).}
+Note: This argument is automatically ignored if \code{family = "cp"} since the Cox process intrinsically handles spatial integration via the continuous SPDE mesh.}
 
 \item{proj.new.env}{Logical. Whether to compute predictions under new environmental scenarios (default: \code{TRUE}).}
 
@@ -84,7 +84,7 @@ A named list of class \code{nsbm.inlabru} with the following elements:
 \item{args}{List of arguments used in the model fitting.}
 \item{Selected.Variables.Global}{Names of selected global-scale covariates.}
 \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
-\item{current.projections}{List with: current prediction (\code{pred}), residual spatial field (\code{pred_sp}), and latent global field (\code{pred_latent}).}
+\item{current.projections}{List with: current prediction (\code{pred}), local residual spatial field (\code{pred_local}, if S_loc was specified), and shared broad-scale spatial field (\code{pred_shared}, if S_shared was specified).}
 \item{marginals}{List with posterior marginals: \code{hyperpar} (SPDE hyperparameters), \code{random} (IGlobal, IRegional intercepts), \code{fixed} (covariate coefficients). Use with \code{plot(x, which = "hyperparams")} or \code{plot(x, which = "intercepts")}.}
 \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 \item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
@@ -109,11 +109,18 @@ family/link:
 
 SPDE structure and priors:
 \itemize{
-\item The mesh (\code{spde.mesh}) defines the domain for spatial and latent fields.
-\item If neither spatial nor latent priors are defined, the model runs without SPDE components.
-\item Residual spatial field \code{spatial(geometry, model=matern)}: captures local spatial autocorrelation in the response not explained by covariates. Requires \code{spde.mesh}.
-\item Latent global field: captures broad-scale structure across regions and enters the linear predictor via \code{beta_GL * GLspde}.
-\item If both spatial and latent fields are used, the latent range should be ≥ 3× the spatial range to avoid overlap (Bakka et al., 2018).
+\item The mesh (\code{spde.mesh}) discretizes the spatial domain for the SPDE approximation (Lindgren et al., 2011).
+\item Spatial architecture is determined by which priors are supplied:
+\itemize{
+\item Both \code{NULL}: no spatial fields; purely covariate-driven model.
+\item Only \code{local.pcprior.*}: S_loc only, in the regional predictor.
+\item Both specified: S_shared (enters both global and regional predictors with weight 1) + S_loc (regional only).
+\item Only \code{shared.pcprior.*}: not allowed (raises an error).
+}
+\item S_shared is a broad-scale Matern GRF estimated jointly from both likelihoods, capturing shared biogeographic autocorrelation not explained by covariates. It enters both \eqn{\eta_{GL}} and \eqn{\eta_{RE}} with fixed weight 1 (no scaling coefficient).
+\item S_loc is a fine-scale Matern GRF in the regional predictor only, capturing residual local autocorrelation.
+\item To avoid double-smoothing, \code{shared.pcprior.range[1]} should be at least 3x \code{local.pcprior.range[1]} (Bakka et al., 2018).
+\item Both fields use Penalised Complexity (PC) priors (Simpson et al., 2017; Fuglstad et al., 2019), which shrink toward a structureless base model unless data provide evidence of spatial structure.
 }
 
 coupling.intercept = "ordered_hierarchical"
