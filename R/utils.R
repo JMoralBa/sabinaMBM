@@ -229,14 +229,13 @@
 .fit_nsbm <- function(cmp, lik_list, coupling.intercept, 
                       coupling.predictors, needs_feedback, 
                       vr = NULL, n.threads = 1, seed = NULL, 
-                      int.strategy = "eb", max.iter = 10) {
+                      int.strategy = "eb") {
   bru_opts <- list(
     control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
     control.inla = list(int.strategy = int.strategy),
     control.mode = list(restart = TRUE),
     control.fixed = list(mean.intercept = 0, prec.intercept = 0.001),
-    num.threads = n.threads,
-    bru_max_iter = max.iter
+    num.threads = n.threads
   )
   
   if(needs_feedback) {
@@ -487,13 +486,13 @@
                              data_used,
                              n_glo = 0L,
                              priors = NULL,
-                             pred_sp = NULL,
-                             pred_lat = NULL,
+                             pred_local = NULL,
+                             pred_shared = NULL,
                              coupling.intercept,
                              scale_params = NULL) {
 
-  spatial_local <- "spatial" %in% names(fit$summary.random)
-  latent_global <- "GLspde" %in% names(fit$summary.random)
+  has_Sloc <- "Sloc" %in% names(fit$summary.random)
+  has_Sshared <- "Sshared" %in% names(fit$summary.random)
 
   # Model fit metrics
   dic_val <- if(!is.null(fit$dic$dic) && !is.na(fit$dic$dic)) round(fit$dic$dic, 2) else NA_real_
@@ -514,19 +513,19 @@
   }
 
   # hyperparameters spde
-  range_res_mean <- if(spatial_local) hyper["Range for spatial", "mean"] else "—"
-  sigma_res_mean <- if(spatial_local) hyper["Stdev for spatial", "mean"] else "—"
-  range_lat_mean <- if(latent_global) hyper["Range for GLspde", "mean"] else "—"
-  sigma_lat_mean <- if(latent_global) hyper["Stdev for GLspde", "mean"] else "—"
-  range_res_sd <- if(spatial_local) hyper["Range for spatial", "sd"] else "—"
-  sigma_res_sd <- if(spatial_local) hyper["Stdev for spatial", "sd"] else "—"
-  range_lat_sd <- if(latent_global) hyper["Range for GLspde", "sd"] else "—"
-  sigma_lat_sd <- if(latent_global) hyper["Stdev for GLspde", "sd"] else "—"
+  range_res_mean <- if(has_Sloc) hyper["Range for Sloc", "mean"] else "—"
+  sigma_res_mean <- if(has_Sloc) hyper["Stdev for Sloc", "mean"] else "—"
+  range_lat_mean <- if(has_Sshared) hyper["Range for Sshared", "mean"] else "—"
+  sigma_lat_mean <- if(has_Sshared) hyper["Stdev for Sshared", "mean"] else "—"
+  range_res_sd <- if(has_Sloc) hyper["Range for Sloc", "sd"] else "—"
+  sigma_res_sd <- if(has_Sloc) hyper["Stdev for Sloc", "sd"] else "—"
+  range_lat_sd <- if(has_Sshared) hyper["Range for Sshared", "sd"] else "—"
+  sigma_lat_sd <- if(has_Sshared) hyper["Stdev for Sshared", "sd"] else "—"
 
-  range_res <- if(spatial_local) paste0(round(range_res_mean, 2), " ± ", round(range_res_sd, 2)) else "—"
-  sigma_res <- if(spatial_local) paste0(round(sigma_res_mean, 2), " ± ", round(sigma_res_sd, 2)) else "—"
-  range_lat <- if(latent_global) paste0(round(range_lat_mean, 2), " ± ", round(range_lat_sd, 2)) else "—"
-  sigma_lat <- if(latent_global) paste0(round(sigma_lat_mean, 2), " ± ", round(sigma_lat_sd, 2)) else "—"
+  range_res <- if(has_Sloc) paste0(round(range_res_mean, 2), " ± ", round(range_res_sd, 2)) else "—"
+  sigma_res <- if(has_Sloc) paste0(round(sigma_res_mean, 2), " ± ", round(sigma_res_sd, 2)) else "—"
+  range_lat <- if(has_Sshared) paste0(round(range_lat_mean, 2), " ± ", round(range_lat_sd, 2)) else "—"
+  sigma_lat <- if(has_Sshared) paste0(round(sigma_lat_mean, 2), " ± ", round(sigma_lat_sd, 2)) else "—"
   format_hyper <- function(param) {
    if(!param %in% rownames(hyper)) return("—")
       paste0(round(hyper[param, "mean"], 2), " ± ", round(hyper[param, "sd"], 2))
@@ -544,7 +543,7 @@
     } else NULL
   } else NULL
 
-  # spatial and latent overlap?
+  # Sloc and Sshared overlap?
   if(is.finite(range_res_mean) && is.finite(range_lat_mean)) {
     ratio <- range_lat_mean / range_res_mean
   }
@@ -580,20 +579,10 @@
       tjur_r2  <- "—"
     }
 
-    # brier
+    # brier, pred correlation, RMSE
     brier <- mean((y_pred - y_obs)^2, na.rm = TRUE)
-
-    # calibration & slopes
-    if(all(y_pred > 0 & y_pred < 1)) {
-      df_cal <- data.frame(
-        logit_p = qlogis(y_pred),
-        y = y_obs
-      )
-      cal_mod <- lm(logit_p ~ y, data = df_cal)
-      cal_slope <- coef(cal_mod)[2]
-    } else {
-      cal_slope <- "—"
-    }
+    pred_cor <- stats::cor(y_obs, y_pred, use = "complete.obs")
+    rmse <- sqrt(mean((y_obs - y_pred)^2, na.rm = TRUE))
 
     # pit
     pit_vals <- fit$cpo$pit
@@ -605,38 +594,15 @@
       ks_pit <- "—"
     }
 
-    # pred correlation, RMSE
-    pred_cor <- stats::cor(y_obs, y_pred, use = "complete.obs")
-    rmse <- sqrt(mean((y_obs - y_pred)^2, na.rm = TRUE))
-
-    # coverage 95%
-    idx_reg <- seq(n_glo + 1L, n_glo + nrow(data_used))
-
-    if(all(c("0.025quant", "0.975quant") %in% colnames(fit$summary.fitted.values))) {
-      low95 <- fit$summary.fitted.values[idx_reg, "0.025quant"]
-      up95  <- fit$summary.fitted.values[idx_reg, "0.975quant"]
-      cov95 <- mean(y_obs >= low95 & y_obs <= up95, na.rm = TRUE)
-    } else {
-      cov95 <- "—"
-    }
-
-    if(all(c("0.25quant", "0.75quant") %in% colnames(fit$summary.fitted.values))) {
-      low50 <- fit$summary.fitted.values[idx_reg, "0.25quant"]
-      up50  <- fit$summary.fitted.values[idx_reg, "0.75quant"]
-      cov50 <- mean(y_obs >= low50 & y_obs <= up50, na.rm = TRUE)
-    } else {
-      cov50 <- "—"
-    }
-
     # Moran’s I residual autocorrelation
     moran_I <- NA_real_
     rs <- y_obs - y_pred
     xy <- as.matrix(data_used[, c("x", "y")])
-    maxdist <- if(spatial_local) {
+    maxdist <- if(has_Sloc) {
       range_res_mean
-    } else if(latent_global) {
+    } else if(has_Sshared) {
       range_lat_mean
-    } else {               #@@@JMB sin spatial ni latent usa 1/4 de la diagonal???
+    } else {               #@@@JMB sin Sloc ni Sshared usa 1/4 de la diagonal???
       bb <- apply(xy, 2, range, na.rm = TRUE)
       sqrt(sum((bb[2,] - bb[1,])^2)) / 4
     }   
@@ -646,13 +612,58 @@
       mi <- spdep::moran(rs, lw, n = length(rs), S0 = spdep::Szero(lw))
       moran_I <- as.numeric(mi$I)
     }
+
+    # calibration & coverage (disable for binomial, enable for continuous)
+    if (fam == "binomial") {
+      cal_slope <- "—"
+      ks_pit <- "—"
+      cov50 <- "—"
+      cov95 <- "—"
+    } else { # for continuous families (gaussian,...)
+      if(all(y_pred > 0 & y_pred < 1)) {
+        df_cal <- data.frame(
+          logit_p = qlogis(y_pred),
+          y = y_obs
+        )
+        cal_mod <- lm(logit_p ~ y, data = df_cal)
+        cal_slope <- coef(cal_mod)[2]
+      } else {
+        cal_slope <- "—"
+      }
+
+      # pit ks-test
+      if(!is.null(pit_reg) && length(pit_reg) > 3) {
+        ks_pit <- suppressWarnings(ks.test(pit_reg, "punif")$p.value)
+      } else {
+        ks_pit <- "—"
+      }
+
+      # coverage 95%
+      idx_reg <- seq(n_glo + 1L, n_glo + nrow(data_used))
+      if(all(c("0.025quant", "0.975quant") %in% colnames(fit$summary.fitted.values))) {
+        low95 <- fit$summary.fitted.values[idx_reg, "0.025quant"]
+        up95  <- fit$summary.fitted.values[idx_reg, "0.975quant"]
+        cov95 <- mean(y_obs >= low95 & y_obs <= up95, na.rm = TRUE)
+      } else {
+        cov95 <- "—"
+      }
+
+      # coverage 50%
+      if(all(c("0.25quant", "0.75quant") %in% colnames(fit$summary.fitted.values))) {
+        low50 <- fit$summary.fitted.values[idx_reg, "0.25quant"]
+        up50  <- fit$summary.fitted.values[idx_reg, "0.75quant"]
+        cov50 <- mean(y_obs >= low50 & y_obs <= up50, na.rm = TRUE)
+      } else {
+        cov50 <- "—"
+      }
+    }
   }
 
   # CI/median ratios
-  ci_ratios <- c(range_residual = ci_ratio("Range for spatial"),
-                 range_latent = ci_ratio("Range for GLspde"),
-                 sigma_residual = ci_ratio("Stdev for spatial"),
-                 sigma_latent = ci_ratio("Stdev for GLspde"))
+  ci_ratios <- c(range_Sloc = ci_ratio("Range for Sloc"),
+                 range_Sshared = ci_ratio("Range for Sshared"),
+                 sigma_Sloc = ci_ratio("Stdev for Sloc"),
+                 sigma_Sshared = ci_ratio("Stdev for Sshared"))
 
   # credibility interval ratios (CI/median)
   # High values indicate weak identifiability or non-informative priors.
@@ -666,80 +677,79 @@
   }
 
   prior_close <- list(
-    range_residual = if(!is.null(priors$spde.pcprior.range))
-    close_rel(range_res_mean, priors$spde.pcprior.range) else FALSE,
-  sigma_residual = if(!is.null(priors$spde.pcprior.sigma))
-    close_rel(sigma_res_mean, priors$spde.pcprior.sigma) else FALSE,
-  range_latent = if(!is.null(priors$latent.pcprior.range))
-    close_rel(range_lat_mean, priors$latent.pcprior.range) else FALSE,
-  sigma_latent = if(!is.null(priors$latent.pcprior.sigma))
-    close_rel(sigma_lat_mean, priors$latent.pcprior.sigma) else FALSE
+    range_Sloc = if(!is.null(priors$local.pcprior.range))
+    close_rel(range_res_mean, priors$local.pcprior.range) else FALSE,
+  sigma_Sloc = if(!is.null(priors$local.pcprior.sigma))
+    close_rel(sigma_res_mean, priors$local.pcprior.sigma) else FALSE,
+  range_Sshared = if(!is.null(priors$shared.pcprior.range))
+    close_rel(range_lat_mean, priors$shared.pcprior.range) else FALSE,
+  sigma_Sshared = if(!is.null(priors$shared.pcprior.sigma))
+    close_rel(sigma_lat_mean, priors$shared.pcprior.sigma) else FALSE
   )
 
   # variance and range ratios
-  # sigma latent mean / sigma residual mean > 1.5 ==> latent field dominates (Blangiardo & Cameletti 2015)
-  sigma_ratio <- if(spatial_local && latent_global && is.finite(sigma_lat_mean) && is.finite(sigma_res_mean) && sigma_res_mean > 0)
+  # sigma Sshared mean / sigma Sloc mean > 1.5 ==> Sshared field dominates (Blangiardo & Cameletti 2015)
+  sigma_ratio <- if(has_Sloc && has_Sshared && is.finite(sigma_lat_mean) && is.finite(sigma_res_mean) && sigma_res_mean > 0)
     sigma_lat_mean / sigma_res_mean else "—"
-  # 0.5 < range_latent / range_residual < 2 ==> poor scale separation (Bakka et al. 2018)
-  range_ratio <- if(spatial_local && latent_global && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
+  # 0.5 < range_Sshared / range_Sloc < 2 ==> poor scale separation (Bakka et al. 2018)
+  range_ratio <- if(has_Sloc && has_Sshared && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
     range_lat_mean / range_res_mean else "—"
 
-  # correlation spatial–latent fields
+  # correlation Sloc–Sshared fields
   # r > 0.7 00> high correlation
   field_correlation <- "—"
-  if(spatial_local && latent_global) {
-    f_sp <- fit$summary.random$spatial$mean
-    f_lat <- fit$summary.random$GLspde$mean
+  if(has_Sloc && has_Sshared) {
+    f_sp <- fit$summary.random$Sloc$mean
+    f_lat <- fit$summary.random$Sshared$mean
     n <- min(length(f_sp), length(f_lat))
     field_correlation <- stats::cor(f_sp[seq_len(n)], f_lat[seq_len(n)], use = "pairwise.complete.obs")
   } 
 
   # warnings
   warns <- character()
-  # overlap latent vs residual
-  if(spatial_local && latent_global && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 3) {
+  # overlap Sshared vs Sloc
+  if(has_Sloc && has_Sshared && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 3) {
     warns <- c(warns,
-      paste("⚠️  Insufficient spatial scale separation: latent/spatial range ratio = ",round(range_ratio, 2), ").\n",
-             "   When 0.5 < ratio < 3, both fields may capture the same spatial structure, which causes identifiability issues and double-smoothing.\n",
-             "   Recomended: latent.pcprior.range ≥ 3–5× residual range, or tighten spatial.pcprior.range.\n")
+      paste("⚠️  Insufficient Sloc scale separation: Sshared/Sloc range ratio = ",round(range_ratio, 2), ").",
+             "   When 0.5 < ratio < 3, both fields may capture the same Sloc structure, which causes identifiability issues and double-smoothing.",
+             "   Recomended: shared.pcprior.range ≥ 3–5× Sloc range, or tighten Sloc.pcprior.range.\n")
     )
   }  
   # weak identifiability (CI/median ratio)
   if(is.finite(max_CIratio) && max_CIratio > 25) {
     warns <- c(warns,
-      "⚠️ Weak hyperparameter identifiability detected (CI/median > 25).\n",
+      "⚠️ Weak hyperparameter identifiability detected (CI/median > 25).",
       "   Recommended: use stronger PC priors.\n"
     )
   }
-  # latent field dominating variance
-  if(spatial_local && latent_global && is.finite(sigma_ratio) && sigma_ratio > 1.5) {
+  # Sshared field dominating variance
+  if(has_Sloc && has_Sshared && is.finite(sigma_ratio) && sigma_ratio > 1.5) {
     warns <- c(warns,
-      "⚠️ Variance imbalance between latent and residual/spatial SPDE. Variance ratio (sigma latent / sigma residual) = ", round(sigma_ratio, 2), ".\n",
-      "   The latent field dominates the spatial variability, making the residual SPDE redundant.\n",
-      "   Recommended: reduce latent.pcprior.sigma or increase spatial.pcprior.sigma.\n"
+      "⚠️ Variance imbalance between Sshared and Sloc SPDE. Variance ratio (sigma Sshared / sigma Sloc) = ", round(sigma_ratio, 2), ".",
+      "   The Sshared field dominates the Sloc variability, making the Sloc SPDE redundant.",
+      "   Recommended: reduce shared.pcprior.sigma or increase local.pcprior.sigma.\n"
     )
   }
-  # high correlation between latent and residual
-  if(spatial_local && latent_global && is.finite(field_correlation) && field_correlation > 0.7) {
+  # high correlation between Sshared and Sloc
+  if(has_Sloc && has_Sshared && is.finite(field_correlation) && field_correlation > 0.7) {
     warns <- c(warns,
-      paste0("⚠️ High correlation between latent and residual spatial fields (r = ",
-             round(field_correlation, 2), ").\n",
-             "   Possible redundancy: both SPDE components capture the same spatial pattern.\n",
+      paste0("⚠️ High correlation between Sshared and Sloc fields (r = ", round(field_correlation, 2), ").",
+             "   Possible redundancy: both SPDE components capture the same spatial pattern.",
              "   Recommended: strengthen priors to separate scales, or remove one SPDE fields.\n")
     )
   }
   # residual autocorrelation
   if(is.finite(moran_I) && moran_I > 0.10) {
     warns <- c(warns,
-      paste0("⚠️ Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").\n",
-             "   Model missing local spatial structure.\n",
+      paste0("⚠️ Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").",
+             "   Model missing local spatial structure.",
              "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates.\n")  #@@@JMB no estoy segura
     )
   }
   # posterior ≈ prior (weak data information)
   if(any(unlist(prior_close))) {
     warns <- c(warns,
-      "⚠️ Posterior close to PC-prior mode: weak data information relative to prior strength.\n",
+      "⚠️ Posterior close to PC-prior mode: weak data information relative to prior strength.",
       "   Recommended: relax priors or increase data resolution.\n")    #@@@JMB rev recommendation??
   }
   # cpo
@@ -750,27 +760,10 @@
       perc_failures <- (cpo_failures / total_obs) * 100
       if(perc_failures > 1) {     #@@@JMB 1% of observations????
         warns <- c(warns,
-          paste0("⚠️ CPO failures detected (", round(perc_failures, 2), "% of observations).\n",
-          "   Model severely struggles to predict these points (CPO ≈ 0).\n",
-          "   Recommended: check for outliers or review model specification/priors.\n\n"))
+          paste0("⚠️ CPO failures detected (", round(perc_failures, 2), "% of observations).",
+          "   Model severely struggles to predict these points (CPO ≈ 0).",
+          "   Recommended: check for outliers or review model specification/priors.\n"))
       }
-    }
-  }
-  # convergence
-  # INLA native mode status (0 = success, >0 = problems)
-  if(!is.null(fit$mode$mode.status) && fit$mode$mode.status > 0) {
-    warns <- c(warns, paste0("⚠️ INLA optimization issues detected (mode.status = ", fit$mode$mode.status, ").\n",
-                             "   The deterministic approximation may not have fully converged.\n",
-                             "   Recommended: Check plot(x, which='convergence') or run inlabru::bru_log().\n"))
-  }
-  if(!is.null(fit$bru_iinla$track)) {
-    max_iter <- fit$bru_info$options$bru_max_iter
-    if(is.null(max_iter)) max_iter <- 10 # inlabru default
-    if(max(fit$bru_iinla$track$iteration) >= max_iter) {
-      warns <- c(warns, paste0(
-        "⚠️ inlabru Newton-Raphson optimization reached maximum iterations without full convergence.\n",
-        "   Parameter estimates might be unstable.\n",
-        "   Recommended: Check plot(x, which='convergence').\n"))
     }
   }
 
@@ -786,10 +779,10 @@
   }
   # Create prior reference ticks for vertical lines
   prior_ticks <- do.call(rbind, Filter(Negate(is.null), list(
-    if(!is.null(priors$spde.pcprior.range)) data.frame(x = priors$spde.pcprior.range[1], par = "Range for spatial"),
-    if(!is.null(priors$spde.pcprior.sigma)) data.frame(x = priors$spde.pcprior.sigma[1], par = "Stdev for spatial"),
-    if(!is.null(priors$latent.pcprior.range)) data.frame(x = priors$latent.pcprior.range[1], par = "Range for GLspde"),
-    if(!is.null(priors$latent.pcprior.sigma)) data.frame(x = priors$latent.pcprior.sigma[1], par = "Stdev for GLspde")
+    if(!is.null(priors$local.pcprior.range)) data.frame(x = priors$local.pcprior.range[1], par = "Range for Sloc"),
+    if(!is.null(priors$local.pcprior.sigma)) data.frame(x = priors$local.pcprior.sigma[1], par = "Stdev for Sloc"),
+    if(!is.null(priors$shared.pcprior.range)) data.frame(x = priors$shared.pcprior.range[1], par = "Range for Sshared"),
+    if(!is.null(priors$shared.pcprior.sigma)) data.frame(x = priors$shared.pcprior.sigma[1], par = "Stdev for Sshared")
   )))
   if(!is.null(prior_ticks) && nrow(prior_ticks) > 0 && !is.null(post_df)) {
     ymax_fac <- aggregate(y ~ par, post_df, function(z) max(z, na.rm = TRUE))
@@ -822,7 +815,7 @@
       panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
     )
 
-  # pB spatial residual vs latent fields
+  # pB Sloc vs Sshared fields
   ras_to_df <- function(r, nm) {
     rr <- terra::unwrap(r)[["mean"]]
     df <- terra::as.data.frame(rr, xy = TRUE, na.rm = FALSE)
@@ -831,8 +824,8 @@
     df
   }
   maps_df <- data.frame()
-  if(!is.null(pred_sp)) maps_df <- rbind(maps_df, ras_to_df(pred_sp, "Residual spatial field"))
-  if(!is.null(pred_lat)) maps_df <- rbind(maps_df, ras_to_df(pred_lat, "Latent global field"))
+  if(!is.null(pred_local)) maps_df <- rbind(maps_df, ras_to_df(pred_local, "Sloc field"))
+  if(!is.null(pred_shared)) maps_df <- rbind(maps_df, ras_to_df(pred_shared, "Sshared field"))
 
   ordered_hierarchical <- any(grepl("copy", rownames(fit$summary.hyperpar), ignore.case = TRUE)) ||
                    "IGlobal" %in% names(fit$summary.random)
@@ -859,7 +852,7 @@
       ggplot2::coord_equal(expand = FALSE) +
       ggplot2::facet_wrap(~which, ncol = 2, scales = "fixed") +
       ggplot2::labs(
-        title = "B) Spatial fields (posterior mean)",
+        title = "B) Sloc fields (posterior mean)",
         subtitle = if(has_copy_structure)
           "Red = below global mean, Blue = above global mean (centered at model mean)"
         else
@@ -888,8 +881,8 @@
   } else {
     pB <- ggplot2::ggplot() +
       ggplot2::labs(
-        title = "B) Spatial fields (posterior mean)",
-        subtitle = "No spatial or latent fields present in the model"
+        title = "B) Sloc fields (posterior mean)",
+        subtitle = "No Sloc or Sshared fields present in the model"
       ) +
       ggplot2::theme_void() +
       ggplot2::theme(
@@ -931,7 +924,7 @@
       subtitle = if(is.finite(range_eff))
         paste0("Model range ≈ ", round(range_eff, 3), " (map units)\n(distance where correlation vanishes)")
       else
-        "No spatial/latent field: full extent shown",
+        "No Sloc/Sshared field: full extent shown",
       x = "Distance (map units)",
       y = "Residual correlation"
     ) +
@@ -1025,14 +1018,14 @@
 
   # pE semivariaogram
   coords <- as.matrix(data_used[, c("x", "y")])
-  if(spatial_local) {
-    sp_vals <- fit$summary.random$spatial$mean
+  if(has_Sloc) {
+    sp_vals <- fit$summary.random$Sloc$mean
     sp_vals <- sp_vals[seq_len(nrow(data_used))]
   } else {
     sp_vals <- 0
   }
-  if(latent_global) {
-    lat_vals <- fit$summary.random$GLspde$mean
+  if(has_Sshared) {
+    lat_vals <- fit$summary.random$Sshared$mean
     lat_vals <- lat_vals[seq_len(nrow(data_used))]
   } else {
     lat_vals <- 0
@@ -1079,17 +1072,17 @@
       panel.grid.minor = ggplot2::element_blank(),
       panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
     )
-  if(spatial_local) {
+  if(has_Sloc) {
     pE <- pE + ggplot2::geom_vline(xintercept = range_res_mean, linetype = "dashed", color = "#c0392b", linewidth = 0.5) +
       ggplot2::geom_text(
-        data = data.frame(x = range_res_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Spatial range"),
+        data = data.frame(x = range_res_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sloc range"),
         ggplot2::aes(x = x, y = y, label = label), 
         color = "#c0392b", angle = 90, hjust = 1, vjust = -0.5, size = 3)
   }
-  if(latent_global) {
+  if(has_Sshared) {
     pE <- pE + ggplot2::geom_vline(xintercept = range_lat_mean, linetype = "dashed", color = "#2980b9", linewidth = 0.5) +
       ggplot2::geom_text(
-      data = data.frame(x = range_lat_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Latent range"),
+      data = data.frame(x = range_lat_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sshared range"),
       ggplot2::aes(x = x, y = y, label = label),
       color = "#2980b9", angle = 90, hjust = 1, vjust = -0.5, size = 3)
   }
@@ -1101,17 +1094,6 @@
     pD2 <- NULL
     pE <- NULL
   }  
-
-  # pG convergence
-  pG <- NULL
-  if(inherits(fit, "bru")) {
-    pG <- tryCatch(inlabru::bru_convergence_plot(fit), error = function(e) NULL)
-    if(!is.null(pG)) {
-      pG <- pG + ggplot2::labs(title = "G) Optimization Convergence", 
-                               subtitle = "Parameter estimates across Newton-Raphson iterations") +
-                 ggplot2::theme_minimal(base_size = 10)
-    }
-  }
 
   # pH covariates importance
   #pH <- .nsbm_vars_importance(fit)
@@ -1151,13 +1133,12 @@
                        field_correlation = field_correlation), # prior influence
     warnings = warns,
     plots = list(hyperparams = pA,
-                 spatialfields = pB,
+                 Slocfields = pB,
                  correlogram = pC,
                  hist = pD1,
                  qq = pD2,
                  #vars_importance = pF,
-                 semivariogram = pE,
-                 convergence = pG)
+                 semivariogram = pE)
   )
 
   return(out)
@@ -1246,15 +1227,15 @@
     paste0(round(mean, digits), " ± ", round(sd, digits))
   }
 
-  spatial_local <- "spatial" %in% names(fit$summary.random)
-  latent_global <- "GLspde" %in% names(fit$summary.random)
+  has_Sloc <- "Sloc" %in% names(fit$summary.random)
+  has_Sshared <- "Sshared" %in% names(fit$summary.random)
   has_covariates <- nrow(fit$summary.fixed) > 0
 
   # metadata
   species_name <- gsub("\\.", " ", species)
   model_type <- paste0("NSBM",
-   if(spatial_local) " + spatial" else "",
-   if(latent_global) " + latent" else "",
+   if(has_Sloc) " + Sloc" else "",
+   if(has_Sshared) " + Sshared" else "",
    if(has_covariates) " + covariates" else ""
   )
 
@@ -1294,11 +1275,11 @@
   params <- character(0)
   values <- character(0)
 
-  if(spatial_local) {
+  if(has_Sloc) {
     params <- c(
       params,
-      "Spatial local field – Range (posterior mean ± SD)",
-      "Spatial local field – Sigma (posterior mean ± SD)"
+      "Sloc local field – Range (posterior mean ± SD)",
+      "Sloc local field – Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1306,11 +1287,11 @@
       hyp_block$sigma_res
     )
   }
-  if(latent_global) {
+  if(has_Sshared) {
     params <- c(
       params,
-      "Latent global field – Range (posterior mean ± SD)",
-      "Latent global field – Sigma (posterior mean ± SD)"
+      "Sshared global field – Range (posterior mean ± SD)",
+      "Sshared global field – Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1396,29 +1377,33 @@
   )
 
   # calibration & coverage
-  cal_block <- diag_block$calibration
-  cov_block <- diag_block$coverage
+  if (fam %in% c("cp", "binomial")) {
+    tbl_cal <- NULL
+  } else {
+    cal_block <- diag_block$calibration
+    cov_block <- diag_block$coverage
 
-  tbl_cal <- data.frame(
-    Metric = c("Calibration slope",
-               "PIT KS p-value",
-               "Coverage (central 50%)",
-               "Coverage (central 95%)"),
-    Value = c(fmt_val(cal_block$slope),
-              fmt_val(cal_block$ks_pit),
-              fmt_val(cov_block$cov50),
-              fmt_val(cov_block$cov95)),
-    stringsAsFactors = FALSE
-  )
+    tbl_cal <- data.frame(
+      Metric = c("Calibration slope",
+                 "PIT KS p-value",
+                 "Coverage (central 50%)",
+                 "Coverage (central 95%)"),
+      Value = c(fmt_val(cal_block$slope),
+                fmt_val(cal_block$ks_pit),
+                fmt_val(cov_block$cov50),
+                fmt_val(cov_block$cov95)),
+      stringsAsFactors = FALSE
+    )
+  }
 
   # diagnostics
   tbl_diag <- data.frame(
     Metric = c(
       "Residual Moran's I",
       "Max CI/median ratio (hyperparameters)",
-      "Scale-separation ratio (range_latent / range_spatial)",
-      "Variance ratio (sigma_latent / sigma_spatial)",
-      "Latent–residual field correlation (r)"
+      "Scale-separation ratio (range_Sshared / range_Sloc)",
+      "Variance ratio (sigma_Sshared / sigma_Sloc)",
+      "Sshared–Sloc field correlation (r)"
     ),
     Value = c(
       fmt_val(diag_block$diagnostics$moran_I),
@@ -1453,7 +1438,7 @@
   tbl_hyper <- drop_null_rows(tbl_hyper)
   tbl_intercepts <- drop_null_rows(tbl_intercepts)
   tbl_pred <- drop_null_rows(tbl_pred)
-  tbl_cal <- drop_null_rows(tbl_cal)
+  if (!is.null(tbl_cal)) tbl_cal <- drop_null_rows(tbl_cal)
   tbl_diag <- drop_null_rows(tbl_diag)
 
   # list of tables
@@ -1464,12 +1449,10 @@
     Intercepts = tbl_intercepts,
     `Fixed effects` = tbl_fixed,
     `Predictive performance` = tbl_pred,
-    `Calibration & coverage` = tbl_cal,
     Diagnostics = tbl_diag
   )
-
-  if(!is.null(tbl_cv))
-    out[["Cross-validation"]] <- tbl_cv
+  if(!is.null(tbl_cal) && nrow(tbl_cal) > 0) out[["Calibration & coverage"]] <- tbl_cal
+  if(!is.null(tbl_cv)) out[["Cross-validation"]] <- tbl_cv
 
   return(out)
 }
@@ -1485,7 +1468,7 @@
   df <- fit$summary.fixed
   df$var <- rownames(df)
 
-  # exclude intercepts and latent
+  # exclude intercepts and Sshared
   drop <- c("IGlobal", "IRegional", "beta_GL")
   df <- df[!(df$var %in% drop), , drop = FALSE]
 

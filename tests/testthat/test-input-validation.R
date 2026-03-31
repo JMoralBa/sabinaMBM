@@ -31,20 +31,12 @@ test_that("invalid link for binomial throws error", {
 })
 
 test_that("family = 'cp' is accepted without error at validation stage", {
-  obj  <- make_mock_vinput()
-  mesh <- make_fake_mesh()
-  # Should NOT throw a family/link error (may fail later for other reasons)
-  expect_no_error_matching <- function(expr, pattern) {
-    tryCatch(expr, error = function(e) {
-      if(grepl(pattern, conditionMessage(e))) stop(conditionMessage(e))
-    })
-  }
-  expect_no_error_matching(
-    NSBM.pure(obj, family = "cp",
-              spde.mesh = mesh,
-              spde.pcprior.range = c(2, 0.95),
-              spde.pcprior.sigma = c(1, 0.01)),
-    "family|link"
+  obj <- make_mock_vinput()
+  suppressWarnings(
+    expect_no_error_matching(
+      NSBM.pure(obj, family = "cp"),
+      "unsupported family"
+    )
   )
 })
 
@@ -74,8 +66,8 @@ test_that("coupling.intercept != NULL with no global covariates throws error", {
     NSBM.pure(obj,
               coupling.intercept = "unpooled",
               spde.mesh = mesh,
-              spde.pcprior.range = c(2, 0.95),
-              spde.pcprior.sigma = c(1, 0.01)),
+              local.pcprior.range = c(2, 0.95),
+              local.pcprior.sigma = c(1, 0.01)),
     "global component"
   )
 })
@@ -87,9 +79,10 @@ test_that("coupling.intercept = NULL with latent SPDE throws error", {
     NSBM.pure(obj,
               coupling.intercept   = NULL,
               spde.mesh            = mesh,
-              latent.pcprior.range = c(5, 0.95),
-              latent.pcprior.sigma = c(1, 0.01)),
-    "Latent global SPDE"
+              shared.pcprior.range = c(5, 0.95),
+              shared.pcprior.sigma = c(1, 0.01)),
+    fixed = TRUE,
+    "S_shared (shared spatial field) not allowed in regional-only model"
   )
 })
 
@@ -101,8 +94,8 @@ test_that("SPDE priors with NULL mesh throws error", {
   expect_error(
     NSBM.pure(obj,
               spde.mesh          = NULL,
-              spde.pcprior.range = c(2, 0.95),
-              spde.pcprior.sigma = c(1, 0.01),
+              local.pcprior.range = c(2, 0.95),
+              local.pcprior.sigma = c(1, 0.01),
               coupling.intercept = NULL),  # evita el check de mesh previo
     "spde.mesh"
   )
@@ -113,8 +106,8 @@ test_that("mesh of wrong class throws error", {
   expect_error(
     NSBM.pure(obj,
               spde.mesh          = list(),   # not inla.mesh
-              spde.pcprior.range = c(2, 0.95),
-              spde.pcprior.sigma = c(1, 0.01)),
+              local.pcprior.range = c(2, 0.95),
+              local.pcprior.sigma = c(1, 0.01)),
     "inla.mesh"
   )
 })
@@ -169,10 +162,10 @@ test_that("global RW2 with active latent SPDE throws error", {
   expect_error(
     NSBM.pure(obj,
               spde.mesh            = mesh,
-              spde.pcprior.range   = c(2,  0.95),
-              spde.pcprior.sigma   = c(1,  0.01),
-              latent.pcprior.range = c(10, 0.95),
-              latent.pcprior.sigma = c(1,  0.01),
+              local.pcprior.range   = c(2,  0.95),
+              local.pcprior.sigma   = c(1,  0.01),
+              shared.pcprior.range = c(10, 0.95),
+              shared.pcprior.sigma = c(1,  0.01),
               covariate.effects    = list(
                 global = list(bio1 = list(model = "rw2", u = 0.5, alpha = 0.01))
               )),

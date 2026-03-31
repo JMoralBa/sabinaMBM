@@ -91,18 +91,18 @@ test_that("fit: unpooled intercept, no predictor coupling", {
     nsbm_obj            = sv,
     family              = binomial(link = "logit"),
     spde.mesh           = mesh,
-    spde.pcprior.range  = c(2, 0.95),
-    spde.pcprior.sigma  = c(1, 0.01),
+    local.pcprior.range  = c(2, 0.95),
+    local.pcprior.sigma  = c(1, 0.01),
     coupling.intercept  = "ordered_hierarchical",
     coupling.predictors = NULL,
     proj.new.env        = TRUE,
     cv.folds = 1, n.threads = 1, seed = 1)
  
   expect_valid_nsbm(fit)
-  # spatial SPDE is active (spde.pcprior.range provided) → pred_sp should exist
-  expect_s4_class(terra::unwrap(fit$current.projections$pred_sp), "SpatRaster")
-  # latent SPDE is NOT active (latent.pcprior.range = NULL) → pred_latent should be NULL
-  expect_null(fit$current.projections$pred_latent)
+  # spatial SPDE is active (local.pcprior.range provided) → pred_local should exist
+  expect_s4_class(terra::unwrap(fit$current.projections$pred_local), "SpatRaster")
+  # latent SPDE is NOT active (shared.pcprior.range = NULL) → pred_shared should be NULL
+  expect_null(fit$current.projections$pred_shared)
 })
  
  
@@ -116,8 +116,8 @@ test_that("fit: ordered_hierarchical intercept + predictors", {
     nsbm_obj            = sv,
     family              = binomial(link = "logit"),
     spde.mesh           = mesh,
-    spde.pcprior.range  = c(2, 0.95),
-    spde.pcprior.sigma  = c(1, 0.01),
+    local.pcprior.range  = c(2, 0.95),
+    local.pcprior.sigma  = c(1, 0.01),
     coupling.intercept  = "ordered_hierarchical",
     coupling.predictors = "ordered_hierarchical",
     proj.new.env        = TRUE,
@@ -126,7 +126,7 @@ test_that("fit: ordered_hierarchical intercept + predictors", {
   expect_valid_nsbm(fit)
   # Spatial field should be present
   expect_s4_class(
-    terra::unwrap(fit$current.projections$pred_sp), "SpatRaster")
+    terra::unwrap(fit$current.projections$pred_local), "SpatRaster")
 })
  
  
@@ -140,8 +140,8 @@ test_that("fit: scale_decomposed predictor coupling", {
     nsbm_obj            = sv,
     family              = binomial(link = "logit"),
     spde.mesh           = mesh,
-    spde.pcprior.range  = c(2, 0.95),
-    spde.pcprior.sigma  = c(1, 0.01),
+    local.pcprior.range  = c(2, 0.95),
+    local.pcprior.sigma  = c(1, 0.01),
     coupling.intercept  = "unpooled",
     coupling.predictors = "scale_decomposed",
     proj.new.env        = FALSE,
@@ -164,8 +164,8 @@ test_that("fit: regional-only model (coupling.intercept = NULL)", {
     nsbm_obj            = sv,
     family              = binomial(link = "logit"),
     spde.mesh           = mesh,
-    spde.pcprior.range  = c(2, 0.95),
-    spde.pcprior.sigma  = c(1, 0.01),
+    local.pcprior.range  = c(2, 0.95),
+    local.pcprior.sigma  = c(1, 0.01),
     coupling.intercept  = NULL,
     coupling.predictors = NULL,
     proj.new.env        = FALSE,
@@ -185,10 +185,10 @@ test_that("fit: spatial + latent SPDE both active", {
     nsbm_obj             = sv,
     family               = binomial(link = "logit"),
     spde.mesh            = mesh,
-    spde.pcprior.range   = c(2,  0.95),
-    spde.pcprior.sigma   = c(1,  0.01),
-    latent.pcprior.range = c(8,  0.95),  # > 3× spatial range
-    latent.pcprior.sigma = c(1,  0.01),
+    local.pcprior.range   = c(2,  0.95),
+    local.pcprior.sigma   = c(1,  0.01),
+    shared.pcprior.range = c(8,  0.95),  # > 3× spatial range
+    shared.pcprior.sigma = c(1,  0.01),
     coupling.intercept   = "unpooled",
     coupling.predictors  = NULL,
     proj.new.env         = FALSE,
@@ -196,7 +196,7 @@ test_that("fit: spatial + latent SPDE both active", {
  
   expect_valid_nsbm(fit)
   expect_s4_class(
-    terra::unwrap(fit$current.projections$pred_latent), "SpatRaster")
+    terra::unwrap(fit$current.projections$pred_shared), "SpatRaster")
 })
  
  
@@ -210,19 +210,19 @@ test_that("plot.nsbm.inlabru: all which= options run without error", {
     nsbm_obj            = sv,
     family              = binomial(link = "logit"),
     spde.mesh           = mesh,
-    spde.pcprior.range  = c(2, 0.95),
-    spde.pcprior.sigma  = c(1, 0.01),
+    local.pcprior.range  = c(2, 0.95),
+    local.pcprior.sigma  = c(1, 0.01),
     coupling.intercept  = "unpooled",
     coupling.predictors = NULL,
     proj.new.env        = TRUE,
     cv.folds = 1, n.threads = 1, seed = 1)
  
   expect_no_error(plot(fit, which = "pred"))
-  expect_no_error(plot(fit, which = "pred_sp"))
+  expect_no_error(plot(fit, which = "pred_local"))
   expect_no_error(plot(fit, which = "scenario1"))
  
-  # pred_latent absent → should give informative error
-  expect_error(plot(fit, which = "pred_latent"), "pred_latent")
+  # pred_shared absent → should give informative error
+  expect_error(plot(fit, which = "pred_shared"), "pred_shared")
 })
  
  
@@ -236,8 +236,8 @@ test_that("summary.nsbm.inlabru runs without error", {
     nsbm_obj            = sv,
     family              = binomial(link = "logit"),
     spde.mesh           = mesh,
-    spde.pcprior.range  = c(2, 0.95),
-    spde.pcprior.sigma  = c(1, 0.01),
+    local.pcprior.range  = c(2, 0.95),
+    local.pcprior.sigma  = c(1, 0.01),
     coupling.intercept  = "unpooled",
     coupling.predictors = NULL,
     proj.new.env        = FALSE,

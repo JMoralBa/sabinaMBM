@@ -8,13 +8,12 @@
 #' @param which Component to plot. One of:
 #'   \itemize{
 #'     \item \code{"pred"}: current suitability prediction (default).
-#'     \item \code{"pred_sp"}: residual spatial field (requires SPDE).
-#'     \item \code{"pred_latent"}: latent global field (requires latent SPDE).
+#'     \item \code{"pred_local"}: Sloc field (requires SPDE).
+#'     \item \code{"pred_shared"}: Sshared field (requires SPDE).
 #'     \item \code{"hyperparams"}: posterior marginals of SPDE hyperparameters with PC-priors overlaid.
 #'     \item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
 #'     \item \code{"fixed"}: posterior marginals of all fixed effect coefficients, back-transformed to original covariate scale.
 #'     \item \code{"pit"}: histogram of Probability Integral Transform values. A uniform distribution indicates good calibration.
-#'     \item \code{"convergence"}: optimization convergence plot across Newton-Raphson iterations.
 #'     \item \code{"new.projections"}, \code{"new.projections[[1]]"}, or scenario name: future/alternative scenario.
 #'   }
 #' @param layer Raster layer to display (default = "mean"). Available: "mean", "sd", "q0.025", "q0.5", "q0.975", "median", "sd.mc_std_err", "mean.mc_std_err".
@@ -28,8 +27,8 @@
 #' # Default: current prediction (mean layer)
 #' plot(myPred.pure)
 #'
-#' ## Spatial field
-#' # plot(myPred.pure, which = "pred_sp", layer = "sd")
+#' ## Sloc field
+#' # plot(myPred.pure, which = "pred_local", layer = "sd")
 #'
 #' ## Scenario by index or name
 #' # plot(myPred.pure, which = "new.projections[[1]]")
@@ -56,15 +55,15 @@ plot.nsbm.inlabru <- function(x,
     r <- x$current.projections$pred
     scope_label <- "Current"
 
-  } else if(identical(which, "pred_sp")) {
-    r <- x$current.projections$pred_sp
-    if(is.null(r)) stop("❌ No spatial field ('pred_sp') in this model. Refit with `spde.pcprior.range` and `spde.pcprior.sigma`.\n")
-    scope_label <- "Spatial field"
+  } else if(identical(which, "pred_local")) {
+    r <- x$current.projections$pred_local
+    if(is.null(r)) stop("❌ No Sloc field ('pred_local') in this model. Refit with `local.pcprior.range` and `local.pcprior.sigma`.\n")
+    scope_label <- "Sloc field"
 
-  } else if(identical(which, "pred_latent")) {
-    r <- x$current.projections$pred_latent
-    if(is.null(r)) stop("❌ No latent field ('pred_latent') in this model. Refit with `latent.pcprior.range` and `latent.pcprior.sigma`.\n")
-    scope_label <- "Latent field"
+  } else if(identical(which, "pred_shared")) {
+    r <- x$current.projections$pred_shared
+    if(is.null(r)) stop("❌ No Sshared field ('pred_shared') in this model. Refit with `shared.pcprior.range` and `shared.pcprior.sigma`.\n")
+    scope_label <- "Sshared field"
 
   } else if(identical(which, "hyperparams")) {
     marg <- x$marginals$hyperpar
@@ -72,10 +71,10 @@ plot.nsbm.inlabru <- function(x,
       stop("❌ No hyperparameter marginals in this model. Refit with SPDE priors.\n")
     species <- gsub("\\.", " ", x$Species.Name)
     param_labels <- c(
-      "Range for spatial" = "Spatial field: Range",
-      "Stdev for spatial" = "Spatial field: Sigma",
-      "Range for GLspde" = "Latent field: Range",
-      "Stdev for GLspde" = "Latent field: Sigma",
+      "Range for Sloc" = "Sloc field: Range",
+      "Stdev for Sloc" = "Sloc field: Sigma",
+      "Range for GLspde" = "Sshared field: Range",
+      "Stdev for GLspde" = "Sshared field: Sigma",
       "Precision for IGlobal" = "IGlobal: Precision",
       "Precision for IRegional" = "IRegional: Precision",
       "Beta for IRegional" = "IRegional: Beta (copy)"
@@ -191,14 +190,14 @@ plot.nsbm.inlabru <- function(x,
   } else if(identical(which, "correlogram")) {
     p <- x$diagnostic_plots$correlogram
     if(is.null(p))
-      stop("❌ No correlogram available. Refit with spatial or latent SPDE.\n")
+      stop("❌ No correlogram available. Refit with Sloc or Sshared SPDE.\n")
     if(!is.null(title)) p <- p + ggplot2::labs(title = title)
     return(p)
 
   } else if(identical(which, "semivariogram")) {
     p <- x$diagnostic_plots$semivariogram
     if(is.null(p))
-      stop("❌ No semivariogram available. Refit with spatial or latent SPDE.\n")
+      stop("❌ No semivariogram available. Refit with Sloc or Sshared SPDE.\n")
     if(!is.null(title)) p <- p + ggplot2::labs(title = title)
     return(p)
 
@@ -224,13 +223,6 @@ plot.nsbm.inlabru <- function(x,
         subtitle = "Dashed line = uniform (perfect calibration)",
         x = "PIT value", y = "Density") +
       ggplot2::theme_minimal()
-    return(p)
-
-  } else if(identical(which, "convergence")) {
-    p <- x$diagnostic_plots$convergence
-    if(is.null(p)) 
-      stop("❌ No convergence plot available. Model might not have been fitted with inlabru iterations.\n")
-    if(!is.null(title)) p <- p + ggplot2::labs(title = title)
     return(p)
 
   } else {
@@ -266,7 +258,7 @@ plot.nsbm.inlabru <- function(x,
     } else if(which %in% names(np)) {
       pick <- get_np_by(which)
     } else {
-      stop("`which` must be 'pred', 'pred_sp', 'new.projections', 'new.projections[[...]]', or an exact scenario name in new.projections.")
+      stop("`which` must be 'pred', 'pred_local', 'new.projections', 'new.projections[[...]]', or an exact scenario name in new.projections.")
     }
 
     r <- pick$obj
@@ -319,10 +311,12 @@ plot.nsbm.inlabru <- function(x,
     "mean.mc_std_err"="MC SE of mean (λ)",
     "Intensity (λ)")
 
-  auto_legend <- if(grepl("binomial", fam)) {
-    if(identical(scope_label, "Residual spatial field (SPDE)")) legend_eta(ln) else legend_prob(ln)
-  } else if(grepl("poisson", fam)) {
-    if(identical(scope_label, "Residual spatial field (SPDE)")) legend_eta(ln) else legend_int(ln)
+  auto_legend <- if(scope_label %in% c("Sloc field", "Sshared field")) {
+    legend_eta(ln)
+  } else if(grepl("binomial", fam)) {
+    legend_prob(ln)
+  } else if(grepl("poisson|cp", fam)) {
+    legend_int(ln)
   } else if(grepl("gaussian", fam)) {
     switch(ln,
       "mean"="Expected value",

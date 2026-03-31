@@ -6,12 +6,11 @@
 #'
 #' @param nsbm_obj An object of class \code{nsdm.vinput}, resulting from \code{sabinaNSDM::NSDM.SelectCovariates()}.
 #' @param family A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity). 
-#' @param spde.mesh An \code{inla.mesh} object created externally with \code{create_mesh()}. Requiered if spatial and/or latent SPDE components are used. If `NULL` (default), the model runs without spatial structure. 
-#' @param max.iter Numeric. Maximum number of Newton-Raphson iterations for the \code{inlabru} optimization (default: 10). Increasing this value helps convergence in complex models.
-#' @param spde.pcprior.range Numeric vector length 2. PC-prior on the spatial range (e.g., \code{c(5, 0.01)}).
-#' @param spde.pcprior.sigma Numeric vector length 2. PC-prior on the marginal standard deviation (e.g., \code{c(1, 0.01)}).
-#' @param latent.pcprior.range Numeric vector length 2. PC-prior on the range of the latent global field SPDE. If \code{NULL}, no latent SPDE is created.
-#' @param latent.pcprior.sigma Numeric vector length 2. PC-prior on the marginal standard deviation of the latent global field.
+#' @param spde.mesh An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_loc) is used. If \code{NULL} (default), the model runs without spatial structure.#' @param local.pcprior.range Numeric vector length 2. PC-prior on the range of the local residual field S_loc (e.g., \code{c(2, 0.01)}). If \code{NULL} and \code{shared.pcprior.range} is also \code{NULL}, no spatial fields are used.
+#' @param shared.pcprior.range Numeric vector of length 2. PC-prior for the range of the shared spatial field S_shared, e.g. \code{c(10, 0.01)} means P(range < 10) = 0.01. Must be substantially larger than \code{local.pcprior.range} to ensure scale separation (Bakka et al., 2018). If \code{NULL} (and \code{local.pcprior.range} is also \code{NULL}), no spatial fields are used.
+#' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01.
+#' @param local.pcprior.range Numeric vector of length 2. PC-prior for the range of the local residual field S_loc (regional predictor only). If \code{NULL} (and \code{shared.pcprior.range} is also \code{NULL}), no spatial fields are used. Providing \code{shared.pcprior.range} without \code{local.pcprior.range} raises an error.
+#' @param local.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_loc.
 #' @param covariate.effects Optional named list to control the functional form of covariates (e.g., \code{"linear"} for linear, or \code{"rw2"} for non-linear splines)(see details). If \code{NULL} (default), all covariate effects remain constant (linear).
 #' @param coupling.intercept Character. Controls how the regional intercept inherits information from the global intercept. Options:
 #'   \itemize{
@@ -47,7 +46,7 @@
 #' \item{args}{List of arguments used in the model fitting.}
 #' \item{Selected.Variables.Global}{Names of selected global-scale covariates.}
 #' \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
-#' \item{current.projections}{List with: current prediction (\code{pred}), residual spatial field (\code{pred_sp}), and latent global field (\code{pred_latent}).}
+#' \item{current.projections}{List with: current prediction (\code{pred}), local residual spatial field (\code{pred_local}, if S_loc was specified), and shared broad-scale spatial field (\code{pred_shared}, if S_shared was specified).}
 #' \item{marginals}{List with posterior marginals: \code{hyperpar} (SPDE hyperparameters), \code{random} (IGlobal, IRegional intercepts), \code{fixed} (covariate coefficients). Use with \code{plot(x, which = "hyperparams")} or \code{plot(x, which = "intercepts")}.}
 #' \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
@@ -66,11 +65,16 @@
 #' - cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
 #'
 #' SPDE structure and priors:
-#' - The mesh (`spde.mesh`) defines the domain for spatial and latent fields.  
-#' - If neither spatial nor latent priors are defined, the model runs without SPDE components.
-#' - Residual spatial field `spatial(geometry, model=matern)`: captures local spatial autocorrelation in the response not explained by covariates. Requires `spde.mesh`.
-#' - Latent global field: captures broad-scale structure across regions and enters the linear predictor via \code{beta_GL * GLspde}.
-#' - If both spatial and latent fields are used, the latent range should be ≥ 3× the spatial range to avoid overlap (Bakka et al., 2018).
+#' - The mesh (\code{spde.mesh}) discretizes the spatial domain for the SPDE approximation (Lindgren et al., 2011).
+#' - Spatial architecture is determined by which priors are supplied:
+#'   - Both \code{NULL}: no spatial fields; purely covariate-driven model.
+#'   - Only \code{local.pcprior.*}: S_loc only, in the regional predictor.
+#'   - Both specified: S_shared (enters both global and regional predictors with weight 1) + S_loc (regional only).
+#'   - Only \code{shared.pcprior.*}: not allowed (raises an error).
+#' - S_shared is a broad-scale Matern GRF estimated jointly from both likelihoods, capturing shared biogeographic autocorrelation not explained by covariates. It enters both \eqn{\eta_{GL}} and \eqn{\eta_{RE}} with fixed weight 1 (no scaling coefficient).
+#' - S_loc is a fine-scale Matern GRF in the regional predictor only, capturing residual local autocorrelation.
+#' - To avoid double-smoothing, \code{shared.pcprior.range[1]} should be at least 3x \code{local.pcprior.range[1]} (Bakka et al., 2018).
+#' - Both fields use Penalised Complexity (PC) priors (Simpson et al., 2017; Fuglstad et al., 2019), which shrink toward a structureless base model unless data provide evidence of spatial structure.
 #'
 #' coupling.intercept = "ordered_hierarchical"
 #' This option implements a true hierarchical Bayesian nested structure in which the regional intercept borrows strength from the global one. 
@@ -145,15 +149,14 @@ NSBM.pure <- function(nsbm_obj,
                       coupling.intercept = "unpooled",
                       coupling.predictors = "unpooled",
                       spde.mesh = NULL,
-                      spde.pcprior.range = NULL,
-                      spde.pcprior.sigma = NULL,
-                      latent.pcprior.range = NULL,
-                      latent.pcprior.sigma = NULL,
+                      local.pcprior.range = NULL,
+                      local.pcprior.sigma = NULL,
+                      shared.pcprior.range = NULL,
+                      shared.pcprior.sigma = NULL,
                       background.weights = NULL,
                       proj.new.env = TRUE,
                       cv.folds = 1,
                       n.threads = 1,
-                      max.iter = 10,
                       inla.int.strategy = "eb", 
                       seed = NULL,
                       save.output = FALSE) {
@@ -161,8 +164,10 @@ NSBM.pure <- function(nsbm_obj,
   vg <- nsbm_obj$Selected.Variables.Global
   vr <- nsbm_obj$Selected.Variables.Regional
 
-  spatial_local <- !is.null(spde.mesh) && !is.null(spde.pcprior.range) && !is.null(spde.pcprior.sigma)
-  latent_global <- !is.null(spde.mesh) && !is.null(latent.pcprior.range) && !is.null(latent.pcprior.sigma)
+  #Sloc_local <- !is.null(spde.mesh) && !is.null(local.pcprior.range) && !is.null(local.pcprior.sigma)
+  #Sshared_global <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
+  has_Sloc <- !is.null(spde.mesh) && !is.null(local.pcprior.range)  && !is.null(local.pcprior.sigma)
+  has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
 
   ## Checks
   if(!inherits(nsbm_obj, "nsdm.vinput")) {
@@ -196,7 +201,7 @@ NSBM.pure <- function(nsbm_obj,
   valid_ic <- c("unpooled", "ordered_hierarchical", "bayesian_feedback")
   if(is.null(coupling.intercept)) {
     if(length(vr) == 0) stop("❌ 'coupling.intercept = NULL' (regional-only) but no regional covariates are present.\n\n")
-    if(latent_global) stop("❌ Latent global SPDE not allowed in regional-only model (no global scale exists).\n\n")
+    if(has_Sshared) stop("❌ S_shared (shared spatial field) not allowed in regional-only model (coupling.intercept = NULL).\n\n")
     message("ℹ️ 'coupling.intercept = NULL'; running a regional-only model (no global component will be used).\n\n")
   } else {
     if(!is.character(coupling.intercept) || length(coupling.intercept) != 1 || !coupling.intercept %in% valid_ic) {
@@ -207,21 +212,21 @@ NSBM.pure <- function(nsbm_obj,
            "   Use 'coupling.intercept = NULL' for a regional-only model.\n\n")
     }
   }
-  if(is.null(spde.mesh) && (!is.null(spde.pcprior.range) || !is.null(latent.pcprior.range))) {
+  if(is.null(spde.mesh) && (!is.null(local.pcprior.range) || !is.null(shared.pcprior.range))) {
     stop("❌ SPDE priors were provided but 'spde.mesh' is NULL. Create a mesh with `create_mesh()` and pass it to `spde.mesh`.\n\n")
   }
   if(!is.null(spde.mesh) && !inherits(spde.mesh, "inla.mesh")) {
     stop("❌ `spde.mesh` must be a valid INLA mesh object (class 'inla.mesh'). Use `create_mesh()` to build it.\n\n")
   }
-  if(spatial_local && (is.null(spde.pcprior.range) || is.null(spde.pcprior.sigma))) {
-    stop("❌ Missing priors for spatial field. Must provide both `spde.pcprior.range` and `spde.pcprior.sigma`.\n\n")
+  if(has_Sloc && (is.null(local.pcprior.range) || is.null(local.pcprior.sigma))) {
+    stop("❌ Missing priors for Sloc field. Must provide both `local.pcprior.range` and `local.pcprior.sigma`.\n\n")
   }
-  if(latent_global && (is.null(latent.pcprior.range) || is.null(latent.pcprior.sigma))) {
-      stop("❌ Missing priors for latent field. Mus provide both `latent.pcprior.range` and `latent.pcprior.sigma`.\n\n")
+  if(has_Sshared && (is.null(shared.pcprior.range) || is.null(shared.pcprior.sigma))) {
+      stop("❌ Missing priors for Sshared field. Mus provide both `shared.pcprior.range` and `shared.pcprior.sigma`.\n\n")
   }
-  if(spatial_local && latent_global) {
-    if(latent.pcprior.range[1] < spde.pcprior.range[1] * 3) {
-      warning("⚠️ `latent.pcprior.range` < 3× `spde.pcprior.range`: fields may overlap, causing double-counting of spatial variance.\n\n")
+  if(has_Sloc && has_Sshared) {
+    if(shared.pcprior.range[1] < local.pcprior.range[1] * 3) {
+      warning("⚠️ `shared.pcprior.range` < 3× `local.pcprior.range`: Sloc and Sshared may overlap, causing double-counting of Sloc variance.\n\n")
     }
   }
   #
@@ -246,12 +251,11 @@ NSBM.pure <- function(nsbm_obj,
     else if(all_dropped_re) message("ℹ️ All regional covariates dropped.\n")
 
   }
-  if(latent_global && length(vg) > 0) {
+  if(has_Sshared && length(vg) > 0) {
     if(any(vapply(vg, function(x) .resolve_covariate_effects(x, "global", covariate.effects)$model == "rw2", logical(1)))) {
-      stop("❌ RW2 global effects are not allowed when the latent SPDE is active.\n",
+      stop("❌ RW2 global effects are not allowed when the Sshared SPDE is active.\n",
            "   Both mechanisms smooth broad-scale structure and become redundant.\n",
-           "   Disable RW2 for global covariates (in `covariate.effects`) or disable the latent SPDE\n",
-           "   (`latent.pcprior.range` / `latent.pcprior.sigma` = NULL).\n\n")
+           "   Disable RW2 for global covariates (in `covariate.effects`) or set `shared.pcprior.range` / `shared.pcprior.sigma` = NULL).\n\n")
     }
   }
   #
@@ -495,21 +499,21 @@ NSBM.pure <- function(nsbm_obj,
   pred_sf$region <- 1L
 
   ## SPDE components
-  if(spatial_local)  {
-    matern <- INLA::inla.spde2.pcmatern(
+  if(has_Sloc)  {
+    matern_loc <- INLA::inla.spde2.pcmatern(
       mesh = spde.mesh,
-      prior.range = spde.pcprior.range,
-      prior.sigma = spde.pcprior.sigma
+      prior.range = local.pcprior.range,
+      prior.sigma = local.pcprior.sigma
     )
   }
 
-  if(latent_global) {
-    spde_cov <- INLA::inla.spde2.pcmatern(
+  if(has_Sshared) {
+    matern_shared <- INLA::inla.spde2.pcmatern(
       mesh = spde.mesh,
-      prior.range = latent.pcprior.range,
-      prior.sigma = latent.pcprior.sigma)
+      prior.range = shared.pcprior.range,
+      prior.sigma = shared.pcprior.sigma)
   } else {
-    spde_cov <- NULL
+    matern_shared <- NULL
   }
 
 
@@ -554,28 +558,28 @@ NSBM.pure <- function(nsbm_obj,
                   pp_glo_sf = pp_glo,
                   pp_reg_sf = pp_reg)
 
-  # component formula (intercept + spataial + latent + fcovs
+  # component formula (intercept + spataial + Sshared + fcovs
   cmp <- c(
     base_intercepts,
-    if(spatial_local) "spatial(geometry, model = matern)" else NULL, # residual field local (mesh)
-    if(latent_global) "GLspde(main = geometry, model = spde_cov) + beta_GL(1)" else NULL, # global field + coef
+    if(has_Sloc) "Sloc(geometry, model = matern_loc)" else NULL, # local residual field (regional only)
+    if(has_Sshared) "Sshared(main = geometry, model = matern_shared)" else NULL, # shared broad-scale field (both likelihoods)
     cmp_cov$cmp   # bio1GL(), bio1RE(),...
   )
   cmp <- paste(cmp[!is.na(cmp) & nzchar(cmp)], collapse = " + ")
   cmp <- as.formula(paste("~", cmp))
 
-  dom <- if (spatial_local || latent_global) list(geometry = spde.mesh) else NULL
-  f_spatial <- if(spatial_local) " + spatial" else ""
-  f_latent <- if(latent_global) " + beta_GL * GLspde" else ""
+  dom <- if (has_Sloc || has_Sshared) list(geometry = spde.mesh) else NULL
+  f_Sloc <- if(has_Sloc) " + Sloc" else ""
+  f_Sshared <- if(has_Sshared) " + Sshared" else ""
 
   .opt_plus <- function(s) if(!is.null(s) && nzchar(s)) paste0(" + ", s) else ""
  
   rhs_glo <- if(is.null(coupling.intercept)) {
     NULL  # no for regional-only
   } else {
-    paste0("IGlobal", f_spatial, f_latent, .opt_plus(cmp_cov$like$fglobal))
+    paste0("IGlobal", f_Sshared, .opt_plus(cmp_cov$like$fglobal))
   }
-  rhs_reg <- paste0("IRegional", f_spatial, f_latent, .opt_plus(cmp_cov$like$fregional))
+  rhs_reg <- paste0("IRegional", f_Sshared, f_Sloc, .opt_plus(cmp_cov$like$fregional))
 
   # likelihoods
   liks <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
@@ -587,9 +591,8 @@ NSBM.pure <- function(nsbm_obj,
 
   eta_terms <- c(
     "IRegional",
-    #if(!is.null(coupling.intercept) && coupling.intercept == "unpooled") "IGlobal" else NULL,
-    if(spatial_local) "spatial" else NULL,
-    if(latent_global) "beta_GL * GLspde" else NULL,
+    if(has_Sshared) "Sshared" else NULL,
+    if(has_Sloc) "Sloc" else NULL,
     cmp_cov$like$fregional
   )
   eta <- paste(stats::na.omit(eta_terms), collapse = " + ")
@@ -626,8 +629,7 @@ NSBM.pure <- function(nsbm_obj,
     vr = vr,
     n.threads = n.threads,
     seed = seed,
-    int.strategy = inla.int.strategy,
-    max.iter = max.iter
+    int.strategy = inla.int.strategy
   )
 
   ## K-fold CV (only fam no cp)
@@ -724,11 +726,11 @@ NSBM.pure <- function(nsbm_obj,
   ## Predictions
   pred_combined <- predict(fit, pred_sf, pred_formula)
   pred <- .pred_as_tif(pred_combined, sp_covreg)
-  pred_sp <- if(spatial_local) {
-    .pred_as_tif(predict(fit, pred_sf, ~ spatial), sp_covreg)
+  pred_local <- if(has_Sloc) {
+    .pred_as_tif(predict(fit, pred_sf, ~ Sloc), sp_covreg)
   } else NULL
-  pred_lat <- if(latent_global) {
-    .pred_as_tif(predict(fit, pred_sf, ~ beta_GL * GLspde), sp_covreg)
+  pred_shared <- if(has_Sshared) {
+    .pred_as_tif(predict(fit, pred_sf, ~ Sshared), sp_covreg)
   } else NULL
 
 
@@ -755,12 +757,12 @@ NSBM.pure <- function(nsbm_obj,
                   fam,  
                   data_used,
                   n_glo = if(!is.null(coupling.intercept)) nrow(pp_glo) else 0L,
-                  priors = list(spde.pcprior.range = spde.pcprior.range,
-                                spde.pcprior.sigma = spde.pcprior.sigma,
-                                latent.pcprior.range = latent.pcprior.range,
-                                latent.pcprior.sigma = latent.pcprior.sigma),
-                  pred_sp = if(spatial_local) pred_sp else NULL,
-                  pred_lat = if(latent_global) pred_lat else NULL,
+                  priors = list(local.pcprior.range = local.pcprior.range,
+                                local.pcprior.sigma = local.pcprior.sigma,
+                                shared.pcprior.range = shared.pcprior.range,
+                                shared.pcprior.sigma = shared.pcprior.sigma),
+                  pred_local = if(has_Sloc) pred_local else NULL,
+                  pred_shared = if(has_Sshared) pred_shared else NULL,
                   coupling.intercept = coupling.intercept,
                   scale_params = scale_params)
 
@@ -781,7 +783,7 @@ NSBM.pure <- function(nsbm_obj,
     if(!is.null(fit$summary.fixed)) {
       write.csv(fit$summary.fixed, file = file.path(values_path, paste0(species, "_fixed_effects.csv")), row.names = TRUE)
     }
-    # spatial random effects
+    # Sloc random effects
     if(!is.null(fit$summary.random)) {
       for(ran in names(fit$summary.random)) {
         write.csv(fit$summary.random[[ran]], file = file.path(values_path, paste0(species, "_random_", ran, ".csv")), row.names = TRUE)
@@ -806,14 +808,14 @@ NSBM.pure <- function(nsbm_obj,
       terra::writeRaster(terra::unwrap(pred), file_path, overwrite = TRUE)   
     }
     # pred_sf
-    if(!is.null(pred_sp)) {
-      file_path <- file.path(projections_path, paste0(species, "_Current_Spatial.tif"))
-      terra::writeRaster(terra::unwrap(pred_sp), file_path, overwrite = TRUE)
+    if(!is.null(pred_local)) {
+      file_path <- file.path(projections_path, paste0(species, "_Current_Sloc.tif"))
+      terra::writeRaster(terra::unwrap(pred_local), file_path, overwrite = TRUE)
     }
-    # latent contribution
-    if(!is.null(pred_lat)) {
-      file_path <- file.path(projections_path, paste0(species, "_Current_latent.tif"))
-      terra::writeRaster(terra::unwrap(pred_lat), file_path, overwrite = TRUE)
+    # Sshared contribution
+    if(!is.null(pred_shared)) {
+      file_path <- file.path(projections_path, paste0(species, "_Current_Sshared.tif"))
+      terra::writeRaster(terra::unwrap(pred_shared), file_path, overwrite = TRUE)
     }
     # new scenarios
     if(length(proj_list) > 0 && !is.null(nsbm_obj$Scenarios)) {
@@ -829,7 +831,7 @@ NSBM.pure <- function(nsbm_obj,
       list(key = "correlogram", file = "_correlogram.png", w = 6, h = 5),
       list(key = "hist", file = "_residualHistogram.png", w = 6, h = 5),
       list(key = "qq", file = "_QQplot.png", w = 6, h = 4),
-      list(key = "spatialfields", file = "_SPDEfields.png", w = 6, h = 5),
+      list(key = "Slocfields", file = "_SPDEfields.png", w = 6, h = 5),
       list(key = "semivariogram", file = "_semivariogram.png", w = 6, h = 4)
     )
     for(ps in plot_specs) {
@@ -861,7 +863,7 @@ NSBM.pure <- function(nsbm_obj,
 
      message("ℹ️ Results saved in the following local folder(s):")
      message(paste(
-     "  - Projections (current pred, spatial field pred_sp, latent field pred_lat and scenarios: ", projections_path, "\n",
+     "  - Projections (current pred, Sloc field pred_local, Sshared field pred_shared and scenarios: ", projections_path, "\n",
      " - Model values (fixed/random effects, hyperparameters, evaluation and diagnostics: ", values_path, "\n",
      " - Full model object (.rds): ", file.path(values_path, paste0(species, "_model_fit.rds")), "\n"
      ))
@@ -890,10 +892,10 @@ NSBM.pure <- function(nsbm_obj,
       family = fam,
       link = lnk,
       #spde.mesh = !is.null(spde.mesh),
-      spde.pcprior.range = spde.pcprior.range,
-      spde.pcprior.sigma = spde.pcprior.sigma,
-      latent.pcprior.range = latent.pcprior.range,
-      latent.pcprior.sigma = latent.pcprior.sigma,
+      local.pcprior.range = local.pcprior.range,
+      local.pcprior.sigma = local.pcprior.sigma,
+      shared.pcprior.range = shared.pcprior.range,
+      shared.pcprior.sigma = shared.pcprior.sigma,
       coupling.intercept = coupling.intercept,
       coupling.predictors = coupling.predictors,
       covariate.effects = covariate.effects,
@@ -908,8 +910,8 @@ NSBM.pure <- function(nsbm_obj,
     Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
     current.projections = list(
       pred = terra::wrap(pred),
-      pred_sp = if(!is.null(pred_sp)) terra::wrap(pred_sp) else NULL,
-      pred_latent = if(!is.null(pred_lat)) terra::wrap(pred_lat) else NULL
+      pred_local = if(!is.null(pred_local)) terra::wrap(pred_local) else NULL,
+      pred_shared = if(!is.null(pred_shared)) terra::wrap(pred_shared) else NULL
     ),
     new.projections = if(length(proj_list) > 0) lapply(proj_list, terra::wrap) else list(),
     marginals = list(

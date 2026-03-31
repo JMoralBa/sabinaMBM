@@ -58,15 +58,15 @@ summary.nsbm.inlabru <- function(object, ...) {
     paste0(round(mean, digits), " ± ", round(sd, digits))
   }
 
-  spatial_local <- "spatial" %in% names(fit$summary.random)
-  latent_global <- "GLspde" %in% names(fit$summary.random)
+  Sloc_local <- "Sloc" %in% names(fit$summary.random)
+  Sshared_global <- "Sshared" %in% names(fit$summary.random)
   has_covariates <- nrow(fit$summary.fixed) > 0
 
   # metadata
   species_name <- gsub("\\.", " ", species)
   model_type <- paste0("NSBM",
-   if(spatial_local) " + spatial" else "",
-   if(latent_global) " + latent" else "",
+   if(Sloc_local) " + Sloc" else "",
+   if(Sshared_global) " + Sshared" else "",
    if(has_covariates) " + covariates" else ""
   )
 
@@ -106,11 +106,11 @@ summary.nsbm.inlabru <- function(object, ...) {
   params <- character(0)
   values <- character(0)
 
-  if(spatial_local) {
+  if(Sloc_local) {
     params <- c(
       params,
-      "Spatial field: Range (posterior mean ± SD)",
-      "Spatial field: Sigma (posterior mean ± SD)"
+      "Sloc field: Range (posterior mean ± SD)",
+      "Sloc field: Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -118,16 +118,16 @@ summary.nsbm.inlabru <- function(object, ...) {
       hyp_block$sigma_res
     )
   }
-  if(latent_global) {
+  if(Sshared_global) {
     params <- c(
       params,
-      "Latent field: Range (posterior mean ± SD)",
-      "Latent field: Sigma (posterior mean ± SD)"
+      "Sshared field: Range (posterior mean ± SD)",
+      "Sshared field: Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
-      hyp_block$range_lat,
-      hyp_block$sigma_lat
+      hyp_block$range_Sshared,
+      hyp_block$sigma_Sshared
     )
   }
   params <- c(params, "IGlobal: Precision (mean ± SD)")
@@ -224,9 +224,9 @@ summary.nsbm.inlabru <- function(object, ...) {
     Metric = c(
       "Residual Moran's I (obs - fitted mean)",
       "Max CI/median ratio (hyperparameters)",
-      "Scale-separation ratio (range_latent / range_spatial)",
-      "Variance ratio (sigma_latent / sigma_spatial)",
-      "Latent–residual field correlation (r)"
+      "Scale-separation ratio (range_Sshared / range_Sloc)",
+      "Variance ratio (sigma_Sshared / sigma_Sloc)",
+      "Sshared–Sloc field correlation (r)"
     ),
     Value = c(
       fmt_val(diag_block$diagnostics$moran_I),
