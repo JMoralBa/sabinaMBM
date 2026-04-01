@@ -25,7 +25,7 @@ library(sabinaNSBM)   # devtools::load_all(...)
 SpeciesName <- "Fagus.sylvatica"
  
 # Occurrence records
-data(Fagus.sylvatica.xy.global,   package = "sabinaNSDM")
+data(Fagus.sylvatica.xy.global, package = "sabinaNSDM")
 data(Fagus.sylvatica.xy.regional, package = "sabinaNSDM")
  
 # Environmental rasters — current climate
@@ -110,14 +110,14 @@ myModel <- NSBM.pure(
   nsbm_obj            = mySelvars,
   family              = binomial(link = "logit"),
   spde.mesh           = myMesh,
-  spde.pcprior.range  = c(2, 0.95),    # spatial range prior
-  spde.pcprior.sigma  = c(1, 0.01),    # spatial variance prior
-  latent.pcprior.range = NULL,         # NULL = no latent global SPDE
-  latent.pcprior.sigma = NULL,
+  local.pcprior.range  = c(2, 0.95),   # Sloc range prior
+  spde.pcprior.sigma  = c(1, 0.01),    # Sloc variance prior
+  shared.pcprior.range = NULL,         # NULL = no shared SPDE
+  shared.pcprior.sigma = NULL,
   coupling.intercept  = "ordered_hierarchical",
-  covariate.effects   = NULL,           # NULL = all covariates linear // cve 
   coupling.predictors = "ordered_hierarchical",
-  background.weights   = "none",
+  covariate.effects   = NULL,           # NULL = all covariates linear // cve 
+  background.weights   = NULL,
   proj.new.env        = TRUE,
   cv.folds            = 1,               # 1 = no cross-validation
   n.threads           = 2,
@@ -125,13 +125,13 @@ myModel <- NSBM.pure(
   seed                = 123,
   save.output         = FALSE)
  
- 
+
 # -----------------------------------------------------------------------------
 # MODEL SUMMARY
 # -----------------------------------------------------------------------------
 summary(myModel)
  
- 
+
 # -----------------------------------------------------------------------------
 # PLOTS
 # -----------------------------------------------------------------------------
@@ -145,14 +145,11 @@ pts_reg <- sf::st_as_sf(
   crs    = terra::crs(terra::unwrap(myModel$current.projections$pred), proj = TRUE))
 p_current + ggplot2::geom_sf(data = pts_reg, colour = "black", size = 1.5, alpha = 0.4)
  
- 
 # Uncertainty (posterior standard deviation)
 plot(myModel, which = "pred", layer = "sd")
  
- 
-# Residual spatial field (if SPDE was fitted)
-plot(myModel, which = "pred_sp", layer = "mean")
- 
+# Residual spatial fields (if SPDE was fitted)
+plot(myModel, which = "pred_local", layer = "mean")
  
 # Future / alternative scenario
 plot(myModel, which = "scenario1", layer = "mean")
