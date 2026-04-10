@@ -710,48 +710,49 @@
   # overlap Sshared vs Sloc
   if(has_Sloc && has_Sshared && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 3) {
     warns <- c(warns,
-      paste("⚠️  Insufficient Sloc scale separation: Sshared/Sloc range ratio = ",round(range_ratio, 2), ").",
-             "   When 0.5 < ratio < 3, both fields may capture the same Sloc structure, which causes identifiability issues and double-smoothing.",
-             "   Recomended: shared.pcprior.range ≥ 3–5× Sloc range, or tighten Sloc.pcprior.range.\n")
+      paste("⚠️  Insufficient Sloc scale separation: Sshared/Sloc range ratio = ",round(range_ratio, 2), ").\n",
+             "   When 0.5 < ratio < 3, both fields may capture the same Sloc structure, which causes identifiability issues and double-smoothing.\n",
+             "   Recomended: shared.pcprior.range ≥ 3–5× Sloc range, or tighten Sloc.pcprior.range.")
     )
   }  
   # weak identifiability (CI/median ratio)
   if(is.finite(max_CIratio) && max_CIratio > 25) {
-    warns <- c(warns,
-      "⚠️ Weak hyperparameter identifiability detected (CI/median > 25).",
-      "   Recommended: use stronger PC priors.\n"
-    )
+    warns <- c(warns, paste0(
+      "⚠️ Weak hyperparameter identifiability detected (CI/median > 25).\n",
+      "   Recommended: use stronger PC priors."
+    ))
   }
   # Sshared field dominating variance
-  if(has_Sloc && has_Sshared && is.finite(sigma_ratio) && sigma_ratio > 1.5) {
-    warns <- c(warns,
-      "⚠️ Variance imbalance between Sshared and Sloc SPDE. Variance ratio (sigma Sshared / sigma Sloc) = ", round(sigma_ratio, 2), ".",
-      "   The Sshared field dominates the Sloc variability, making the Sloc SPDE redundant.",
-      "   Recommended: reduce shared.pcprior.sigma or increase local.pcprior.sigma.\n"
-    )
+  if(has_Sshared && has_Sloc && is.finite(sigma_ratio) && sigma_ratio > 1.5) {
+    warns <- c(warns, paste0(
+      "⚠️ Variance imbalance between Sshared and Sloc SPDE. Variance ratio (sigma Sshared / sigma Sloc) = ", round(sigma_ratio, 2), ".\n",
+      "   The Sshared field dominates the Sloc variability, making the Sloc SPDE redundant.\n",
+      "   Recommended: reduce shared.pcprior.sigma or increase local.pcprior.sigma."
+    ))
   }
   # high correlation between Sshared and Sloc
   if(has_Sloc && has_Sshared && is.finite(field_correlation) && field_correlation > 0.7) {
     warns <- c(warns,
-      paste0("⚠️ High correlation between Sshared and Sloc fields (r = ", round(field_correlation, 2), ").",
-             "   Possible redundancy: both SPDE components capture the same spatial pattern.",
-             "   Recommended: strengthen priors to separate scales, or remove one SPDE fields.\n")
+      paste0("⚠️ High correlation between Sshared and Sloc fields (r = ", round(field_correlation, 2), ").\n",
+             "   Possible redundancy: both SPDE components capture the same spatial pattern.\n",
+             "   Recommended: strengthen priors to separate scales, or remove one SPDE fields.")
     )
   }
   # residual autocorrelation
   if(is.finite(moran_I) && moran_I > 0.10) {
     warns <- c(warns,
-      paste0("⚠️ Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").",
-             "   Model missing local spatial structure.",
-             "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates.\n")  #@@@JMB no estoy segura
+      paste0("⚠️ Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").\n",
+             "   Model missing local spatial structure.\n",
+             "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates.")  #@@@JMB no estoy segura
     )
   }
   # posterior ≈ prior (weak data information)
   if(any(unlist(prior_close))) {
-    warns <- c(warns,
-      "⚠️ Posterior close to PC-prior mode: weak data information relative to prior strength.",
-      "   Recommended: relax priors or increase data resolution.\n")    #@@@JMB rev recommendation??
-  }
+    warns <- c(warns, paste0(
+      "⚠️ Posterior close to PC-prior mode: weak data information relative to prior strength.\n",
+      "   Recommended: relax priors or increase data resolution."    #@@@JMB rev recommendation??
+    ))
+  }    
   # cpo
   if(!is.null(fit$cpo$cpo)) {
     cpo_failures <- sum(fit$cpo$failure, na.rm = TRUE)
@@ -760,9 +761,9 @@
       perc_failures <- (cpo_failures / total_obs) * 100
       if(perc_failures > 1) {     #@@@JMB 1% of observations????
         warns <- c(warns,
-          paste0("⚠️ CPO failures detected (", round(perc_failures, 2), "% of observations).",
-          "   Model severely struggles to predict these points (CPO ≈ 0).",
-          "   Recommended: check for outliers or review model specification/priors.\n"))
+          paste0("⚠️ CPO failures detected (", round(perc_failures, 2), "% of observations).\n",
+          "   Model severely struggles to predict these points (CPO ≈ 0).\n",
+          "   Recommended: check for outliers or review model specification/priors."))
       }
     }
   }
@@ -1213,7 +1214,7 @@
 
 #' prepare summary
 #' @noRd
-.nsbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL) {
+.nsbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL, scale_params=NULL, has_spatial=FALSE) {
   
   fmt_val <- function(x, digits = 3) {
     if(is.null(x) || length(x) == 0) return("—")
@@ -1233,11 +1234,22 @@
 
   # metadata
   species_name <- gsub("\\.", " ", species)
-  model_type <- paste0("NSBM",
-   if(has_Sloc) " + Sloc" else "",
-   if(has_Sshared) " + Sshared" else "",
-   if(has_covariates) " + covariates" else ""
-  )
+  base_name <- if (!has_spatial) "Non-spatial baseline" else "NSBM"
+  suf <- c()
+  if(has_Sloc) suf <- c(suf, "Sloc")
+  if(has_Sshared) suf <- c(suf, "Sshared")
+  if(has_covariates) suf <- c(suf, "covariates")
+
+  model_type <- if(length(suf) > 0) {
+    paste0(base_name, ": ", paste(suf, collapse = " + "))
+  } else {
+    base_name
+  }
+  #model_type <- paste0("NSBM",
+  # if(has_Sloc) " + Sloc" else "",
+  # if(has_Sshared) " + Sshared" else "",
+  # if(has_covariates) " + covariates" else ""
+  #)
 
   cp_int <- if(is.null(coupling.intercept)) "NULL" else coupling.intercept
   cp_pred <- if(is.list(coupling.predictors)) "custom list" else if(is.null(coupling.predictors)) "NULL" else coupling.predictors

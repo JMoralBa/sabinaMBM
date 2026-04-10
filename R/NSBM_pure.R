@@ -126,6 +126,14 @@
 #' - If the regional effect is dropped, hierarchical coupling is also invalid.
 #' - Global RW2 smoothing cannot be combined with hierarchical coupling for the same variable (avoids identifiability and double-smoothing issues).
 #'
+#' bayesian_feedback for new scenarios:
+#' When using \code{coupling.predictors = "bayesian_feedback"} with \code{proj.new.env = TRUE},
+#' note that the regional priors are fixed based on the present-day global posteriors.
+#' They are NOT updated for future scenarios. This is a current limitation.
+#' For dynamic re-estimation of priors under different climate conditions, use
+#' \code{coupling.predictors = "ordered_hierarchical"} (soft constraint) or
+#' \code{coupling.predictors = "scale_decomposed"} (macro/micro decomposition) instead.
+#'
 #' @seealso \code{\link{create_mesh}}, \code{\link{plot.nsbm.inlabru}}, \code{\link{summary.nsbm.inlabru}}
 #'
 #' @references
@@ -164,8 +172,6 @@ NSBM.pure <- function(nsbm_obj,
   vg <- nsbm_obj$Selected.Variables.Global
   vr <- nsbm_obj$Selected.Variables.Regional
 
-  #Sloc_local <- !is.null(spde.mesh) && !is.null(local.pcprior.range) && !is.null(local.pcprior.sigma)
-  #Sshared_global <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
   has_Sloc <- !is.null(spde.mesh) && !is.null(local.pcprior.range)  && !is.null(local.pcprior.sigma)
   has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
 
@@ -372,46 +378,51 @@ NSBM.pure <- function(nsbm_obj,
   sp_covreg <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
   crs <- sf::st_crs(sp_covglo)
 
-    #@@@JMB ESTANDARIZACIÓN INTERNA??? var estandarizadas (media=0, sd=1) sobre el raster completo antes de entrar al modelo. 
-    # Necesario para estabilidad INLA con copy en ordered_hierarchical porque daba problemas
-    # Virgilio, estandarizar sobre raster completo o solo puntos de datos????
-  # var standarization
-  all_vars <- unique(c(names(sp_covglo), names(sp_covreg)))
+  all_model_vars <- unique(c(names(sp_covglo), names(sp_covreg)))
   scale_params <- list()
-  for(v in names(sp_covglo)) {
-    vals <- terra::values(sp_covglo[[v]], na.rm = TRUE)
-    scale_params[[v]] <- list(mean = mean(vals), sd = sd(vals))
-    sp_covglo[[v]] <- (sp_covglo[[v]] - scale_params[[v]]$mean) / scale_params[[v]]$sd
-  }
-  for(v in names(sp_covreg)) {
-    if(!v %in% names(scale_params)) {
-      vals <- terra::values(sp_covreg[[v]], na.rm = TRUE)
-      scale_params[[v]] <- list(mean = mean(vals), sd = sd(vals))
-    }
-    sp_covreg[[v]] <- (sp_covreg[[v]] - scale_params[[v]]$mean) / scale_params[[v]]$sd
-  }
 
-  # scale_decomposed pre-processing spatial anomalies 
+  # scale decomposed pre-processing
   shared_vars <- intersect(vg, vr)
-  
-  # large-scale trend (_ls) and small-scale anomaly (_ss) — Zhou & Bradley (2024), Cressie & Wikle (2011)
-  sd_vars <- shared_vars[vapply(shared_vars, function(X)
-    .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed", logical(1))]
-
+  sd_vars <- shared_vars[vapply(shared_vars, function(X) .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed", logical(1))]
   if(length(sd_vars) > 0) {
     glo_resampled_stack <- terra::resample(sp_covglo[[sd_vars]], sp_covreg[[sd_vars[1]]])
     for(X in sd_vars) {
       sp_covreg[[paste0(X, "_ss")]] <- sp_covreg[[X]] - glo_resampled_stack[[X]]
       sp_covreg[[paste0(X, "_ls")]] <- glo_resampled_stack[[X]]
-      for(sfx in c("_ls", "_ss")) {
-        vname <- paste0(X, sfx)
-        vals  <- terra::values(sp_covreg[[vname]], na.rm = TRUE)
-        scale_params[[vname]] <- list(mean = mean(vals), sd = sd(vals))
-        sp_covreg[[vname]] <- (sp_covreg[[vname]] - scale_params[[vname]]$mean) / scale_params[[vname]]$sd
-      }
     }
   }
-  
+
+  # global standarization 
+  for(v in names(sp_covglo)) {
+    vals <- terra::values(sp_covglo[[v]], na.rm = TRUE)
+    scale_params[[v]] <- list(mean = mean(vals), sd = sd(vals))
+    sp_covglo[[v]] <- (sp_covglo[[v]] - scale_params[[v]]$mean) / scale_params[[v]]$sd
+  }
+
+  # regional standarization
+  for(v in names(sp_covreg)) {
+    if(v %in% names(scale_params) && !grepl("_ls$|_ss$", v)) {
+      m <- scale_params[[v]]$mean
+      s <- scale_params[[v]]$sd
+    } else {
+      vals <- terra::values(sp_covreg[[v]], na.rm = TRUE)
+      m <- mean(vals)
+      s <- sd(vals)
+      scale_params[[v]] <- list(mean = m, sd = s)
+    }
+    # Ahora SÍ estandarizamos el raster regional
+    sp_covreg[[v]] <- (sp_covreg[[v]] - m) / s
+  }
+
+  # log current
+  message("ℹ️ Standardizing regional variables for the historical baseline...")
+  stats_pres <- vapply(names(sp_covreg), function(v) {
+    sprintf("    ✓ %s: Z-mean = %+.3f, Z-sd = %.3f", 
+            v, mean(terra::values(sp_covreg[[v]]), na.rm=TRUE), sd(terra::values(sp_covreg[[v]]), na.rm=TRUE))
+  }, character(1))
+  message(paste(stats_pres, collapse = "\n"), "\n")
+
+  #
   pp_glo <- rbind(
     cbind(nsbm_obj$SpeciesData.XY.Global, resp = if(!is.null(nsbm_obj$Response.Global)) nsbm_obj$Response.Global else 1L),  #@@@JMB nsbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
     cbind(nsbm_obj$Background.XY.Global, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
@@ -475,9 +486,7 @@ NSBM.pure <- function(nsbm_obj,
   }
 
   ## SPDE domain definition
-  pred_sf <- sf::st_as_sf(terra::as.points(sp_covreg, values = FALSE))
-  #sf::st_crs(pred_sf) <- crs  # !!!
-  #pred_sf <- sf::st_set_crs(pred_sf, crs)
+  pred_sf <- sf::st_as_sf(terra::as.points(sp_covreg, values = TRUE))
   pred_sf <- sf::st_transform(pred_sf, crs)
 
   #rm NAs
@@ -488,7 +497,7 @@ NSBM.pure <- function(nsbm_obj,
   pred_sf <- pred_sf[stats::complete.cases(ext_pred), ]
 
   if(!is.null(coupling.intercept)) {
-    # Use global raster bbox as domain — more conservative than convex hull over points,
+    # Use global raster bbox as domain. more conservative than convex hull over points,
     # avoids excluding raster cells that lack nearby presence/background records.
     bdy_glo <- sf::st_as_sfc(sf::st_bbox(sp_covglo))
     sf::st_crs(bdy_glo) <- crs
@@ -712,10 +721,10 @@ NSBM.pure <- function(nsbm_obj,
 
       metric_name <- if(fam %in% c("binomial", "beta")) "AUC" else "RMSE"
       cv_res <- list(
-        cv.folds    = cv.folds,
+        cv.folds = cv.folds,
         metric_name = metric_name,
         metric_mean = mean(cv_metrics, na.rm = TRUE),
-        metric_sd   = sd(cv_metrics, na.rm = TRUE)
+        metric_sd = sd(cv_metrics, na.rm = TRUE)
       )
     }
   } else {
@@ -737,15 +746,104 @@ NSBM.pure <- function(nsbm_obj,
   ## New scenarios
   proj_list <- list()
   if(proj.new.env && !is.null(nsbm_obj$Scenarios)) {
+
+    sp_covglo_curr <- sp_covglo
+    sp_covreg_curr <- sp_covreg
+   
     for(sc in names(nsbm_obj$Scenarios)) {
-      #sc <- 1
       scen_rast <- terra::unwrap(nsbm_obj$Scenarios[[sc]])
+
+      message("ℹ️ Projecting to new scenario: '", sc, "'")
+      message("   Standardizing scenario variables using historical calibration parameters...")
+           
+      if(!identical(sf::st_crs(crs), terra::crs(scen_rast))) {
+        scen_rast <- terra::project(scen_rast, terra::crs(sp_covreg_curr))
+      }
+
+      sp_covglo_fut <- sp_covglo_curr
+      sp_covreg_fut <- sp_covreg_curr      
+      stats_msg <- character()
+
+      # global standarization fut
+      for(v in names(sp_covglo_fut)) {
+        if(v %in% names(scen_rast)) {
+          fut_layer <- terra::resample(scen_rast[[v]], sp_covglo_fut)
+          std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
+          
+          if(!(v %in% names(sp_covreg_fut))) {
+            m_pres <- mean(terra::values(sp_covglo_curr[[v]]), na.rm = TRUE)
+            m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
+            stats_msg <- c(stats_msg, sprintf("    ✓ %s (Global): Present Z-mean = %+.3f | Scenario Z-mean = %+.3f | Shift = %+.3f", 
+                                              v, m_pres, m_fut, m_fut - m_pres))
+          }
+          sp_covglo_fut[[v]] <- std_fut_layer
+        } else {
+          if(!(v %in% names(sp_covreg_fut))) {
+            stats_msg <- c(stats_msg, sprintf("    ⚠️ %s (Global): NOT in scenario (retaining present-day values)", v))
+          }
+        }
+      }
+
+      # regional standarization fut
+      for(v in names(sp_covreg_fut)) {
+        if(grepl("_ls$|_ss$", v)) next 
+        
+        if(v %in% names(scen_rast)) {
+          fut_layer <- terra::resample(scen_rast[[v]], sp_covreg_fut)
+          std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
+          
+          m_pres <- mean(terra::values(sp_covreg_curr[[v]]), na.rm = TRUE)
+          m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
+          stats_msg <- c(stats_msg, sprintf("    ✓ %s: Present Z-mean = %+.3f | Scenario Z-mean = %+.3f | Shift = %+.3f", 
+                                            v, m_pres, m_fut, m_fut - m_pres))
+          sp_covreg_fut[[v]] <- std_fut_layer
+        } else {
+          stats_msg <- c(stats_msg, sprintf("    ⚠️ %s: NOT in scenario (retaining present-day values)", v))
+        }
+      }
+
+      # scale decomposed fut
+      if(length(sd_vars) > 0) {
+        message("   Applying scale_decomposed partitioning to scenario...")
+        raw_glo_base <- terra::resample(scen_rast[[sd_vars]], sp_covglo_curr)
+        glo_resampled_scenario <- terra::resample(raw_glo_base, sp_covreg_curr)
+        
+        for(X in sd_vars) {
+          if(X %in% names(scen_rast)) {
+            # Cálculo sobre datos RAW (sin estandarizar)
+            raw_reg <- terra::resample(scen_rast[[X]], sp_covreg_curr)
+            raw_glo <- glo_resampled_scenario[[X]]
+            
+            # Estandarización con parámetros del histórico
+            std_ss <- ((raw_reg - raw_glo) - scale_params[[paste0(X, "_ss")]]$mean) / scale_params[[paste0(X, "_ss")]]$sd
+            std_ls <- (raw_glo - scale_params[[paste0(X, "_ls")]]$mean) / scale_params[[paste0(X, "_ls")]]$sd
+            
+            sp_covreg_fut[[paste0(X, "_ss")]] <- std_ss
+            sp_covreg_fut[[paste0(X, "_ls")]] <- std_ls
+            
+            shift_ss <- mean(terra::values(std_ss), na.rm=TRUE) - mean(terra::values(sp_covreg_curr[[paste0(X, "_ss")]]), na.rm=TRUE)
+            shift_ls <- mean(terra::values(std_ls), na.rm=TRUE) - mean(terra::values(sp_covreg_curr[[paste0(X, "_ls")]]), na.rm=TRUE)
+            stats_msg <- c(stats_msg, sprintf("    ✓ %s_ss: Shift = %+.3f | %s_ls: Shift = %+.3f", X, shift_ss, X, shift_ls))
+          }
+        }
+      }
+      
+      # Log
+      message(paste(stats_msg, collapse = "\n"), "\n")
+      
+      sp_covglo <- sp_covglo_fut
+      sp_covreg <- sp_covreg_fut
+      
       scen_df <- sf::st_as_sf(terra::as.points(scen_rast, values = FALSE))
       scen_df <- sf::st_transform(scen_df, crs)
       scen_df$region <- 1L
+      
       proj_pred <- predict(fit, scen_df, pred_formula)
-      proj_list[[sc]] <- .pred_as_tif(proj_pred, template = scen_rast)  # from sf to tif
+      proj_list[[sc]] <- .pred_as_tif(proj_pred, template = scen_rast)
     }
+    
+    sp_covglo <- sp_covglo_curr
+    sp_covreg <- sp_covreg_curr
   }
 
 
@@ -767,7 +865,7 @@ NSBM.pure <- function(nsbm_obj,
                   scale_params = scale_params)
 
   if(length(diag_block$warnings)) {
-    message(paste(unique(diag_block$warnings), collapse = "\n\n"))
+    message(paste(diag_block$warnings, collapse = "\n\n"))
   }
 
 
@@ -881,7 +979,9 @@ NSBM.pure <- function(nsbm_obj,
     diag_block = diag_block, 
     cv_res = cv_res,
     vg = vg,
-    vr = vr
+    vr = vr,
+    scale_params = scale_params,
+    has_spatial = !is.null(spde.mesh)
   )
 
 
