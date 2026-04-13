@@ -111,7 +111,7 @@ myModel <- NSBM.pure(
   family              = binomial(link = "logit"),
   spde.mesh           = myMesh,
   local.pcprior.range  = c(2, 0.95),   # Sloc range prior
-  spde.pcprior.sigma  = c(1, 0.01),    # Sloc variance prior
+  local.pcprior.sigma  = c(1, 0.01),   # Sloc variance prior
   shared.pcprior.range = NULL,         # NULL = no shared SPDE
   shared.pcprior.sigma = NULL,
   coupling.intercept  = "ordered_hierarchical",
