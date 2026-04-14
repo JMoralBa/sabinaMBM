@@ -8,7 +8,7 @@
 #' @param family A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity). 
 #' @param spde.mesh An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_loc) is used. If \code{NULL} (default), the model runs without spatial structure.#' @param local.pcprior.range Numeric vector length 2. PC-prior on the range of the local residual field S_loc (e.g., \code{c(2, 0.01)}). If \code{NULL} and \code{shared.pcprior.range} is also \code{NULL}, no spatial fields are used.
 #' @param shared.pcprior.range Numeric vector of length 2. PC-prior for the range of the shared spatial field S_shared, e.g. \code{c(10, 0.01)} means P(range < 10) = 0.01. Must be substantially larger than \code{local.pcprior.range} to ensure scale separation (Bakka et al., 2018). If \code{NULL} (and \code{local.pcprior.range} is also \code{NULL}), no spatial fields are used.
-#' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01.
+#' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01. For multi-scale separation, set \code{shared.pcprior.sigma[1]} substantially higher than \code{local.pcprior.sigma[1]} (e.g., c(1, 0.01) vs c(0.5, 0.01)).
 #' @param local.pcprior.range Numeric vector of length 2. PC-prior for the range of the local residual field S_loc (regional predictor only). If \code{NULL} (and \code{shared.pcprior.range} is also \code{NULL}), no spatial fields are used. Providing \code{shared.pcprior.range} without \code{local.pcprior.range} raises an error.
 #' @param local.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_loc.
 #' @param covariate.effects Optional named list to control the functional form of covariates (e.g., \code{"linear"} for linear, or \code{"rw2"} for non-linear splines)(see details). If \code{NULL} (default), all covariate effects remain constant (linear).
@@ -392,35 +392,30 @@ NSBM.pure <- function(nsbm_obj,
     }
   }
 
+  message("ℹ️ Standardizing covariates (using ", n.threads, " core(s))...")
+  n_cores_std <- min(n.threads, max(length(names(sp_covglo)), length(names(sp_covreg))))
+
   # global standarization 
-  for(v in names(sp_covglo)) {
-    vals <- terra::values(sp_covglo[[v]], na.rm = TRUE)
-    scale_params[[v]] <- list(mean = mean(vals), sd = sd(vals))
-    sp_covglo[[v]] <- (sp_covglo[[v]] - scale_params[[v]]$mean) / scale_params[[v]]$sd
-  }
+if(length(names(sp_covglo)) > 0) {
+  result_glo <- .standardize_rasters(sp_covglo, n_cores = n_cores_std)
+  sp_covglo <- result_glo$rast
+  scale_params <- c(scale_params, result_glo$params)
+}
 
   # regional standarization
-  for(v in names(sp_covreg)) {
-    if(v %in% names(scale_params) && !grepl("_ls$|_ss$", v)) {
-      m <- scale_params[[v]]$mean
-      s <- scale_params[[v]]$sd
-    } else {
-      vals <- terra::values(sp_covreg[[v]], na.rm = TRUE)
-      m <- mean(vals)
-      s <- sd(vals)
-      scale_params[[v]] <- list(mean = m, sd = s)
-    }
-    # Ahora SÍ estandarizamos el raster regional
-    sp_covreg[[v]] <- (sp_covreg[[v]] - m) / s
-  }
+if(length(names(sp_covreg)) > 0) {
+  result_reg <- .standardize_rasters(sp_covreg, n_cores = n_cores_std)
+  sp_covreg <- result_reg$rast
+  scale_params <- c(scale_params, result_reg$params)
+}
 
-  # log current
-  message("ℹ️ Standardizing regional variables for the historical baseline...")
-  stats_pres <- vapply(names(sp_covreg), function(v) {
-    sprintf("    ✓ %s: Z-mean = %+.3f, Z-sd = %.3f", 
-            v, mean(terra::values(sp_covreg[[v]]), na.rm=TRUE), sd(terra::values(sp_covreg[[v]]), na.rm=TRUE))
-  }, character(1))
-  message(paste(stats_pres, collapse = "\n"), "\n")
+  # log stats
+stats_pres <- vapply(names(sp_covreg), function(v) {
+  sprintf("    ✓ %s: Z-mean = %+.3f, Z-sd = %.3f", v,
+          terra::global(sp_covreg[[v]], "mean", na.rm = TRUE)[1, 1],
+          terra::global(sp_covreg[[v]], "sd", na.rm = TRUE)[1, 1])
+}, character(1))
+message(paste(stats_pres, collapse = "\n"), "\n")
 
   #
   pp_glo <- rbind(
@@ -804,23 +799,24 @@ NSBM.pure <- function(nsbm_obj,
 
       # scale decomposed fut
       if(length(sd_vars) > 0) {
-        message("   Applying scale_decomposed partitioning to scenario...")
-        raw_glo_base <- terra::resample(scen_rast[[sd_vars]], sp_covglo_curr)
-        glo_resampled_scenario <- terra::resample(raw_glo_base, sp_covreg_curr)
+        message("  Applying scale_decomposed to scenario '", sc, "'...")
+        glo_resampled_scenario <- terra::resample(sp_covglo_curr[[sd_vars]], scen_rast[[sd_vars[1]]])
         
         for(X in sd_vars) {
           if(X %in% names(scen_rast)) {
-            # Cálculo sobre datos RAW (sin estandarizar)
-            raw_reg <- terra::resample(scen_rast[[X]], sp_covreg_curr)
+            raw_reg <- scen_rast[[X]]
             raw_glo <- glo_resampled_scenario[[X]]
             
-            # Estandarización con parámetros del histórico
+            # Standarization with historical parameters
             std_ss <- ((raw_reg - raw_glo) - scale_params[[paste0(X, "_ss")]]$mean) / scale_params[[paste0(X, "_ss")]]$sd
             std_ls <- (raw_glo - scale_params[[paste0(X, "_ls")]]$mean) / scale_params[[paste0(X, "_ls")]]$sd
             
+            scen_rast[[paste0(X, "_ss")]] <- std_ss
+            scen_rast[[paste0(X, "_ls")]] <- std_ls
+
             sp_covreg_fut[[paste0(X, "_ss")]] <- std_ss
             sp_covreg_fut[[paste0(X, "_ls")]] <- std_ls
-            
+
             shift_ss <- mean(terra::values(std_ss), na.rm=TRUE) - mean(terra::values(sp_covreg_curr[[paste0(X, "_ss")]]), na.rm=TRUE)
             shift_ls <- mean(terra::values(std_ls), na.rm=TRUE) - mean(terra::values(sp_covreg_curr[[paste0(X, "_ls")]]), na.rm=TRUE)
             stats_msg <- c(stats_msg, sprintf("    ✓ %s_ss: Shift = %+.3f | %s_ls: Shift = %+.3f", X, shift_ss, X, shift_ls))

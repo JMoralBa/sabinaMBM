@@ -1,3 +1,46 @@
+#' Fast standardization of SpatRaster stack
+#' @noRd
+.standardize_rasters <- function(sp_rast, var_names = NULL, n_cores = 1) {
+  
+  if(is.null(var_names)) var_names <- names(sp_rast)
+  if(length(var_names) == 0) return(list(rast = sp_rast, params = list()))
+  
+  # Parallel if n_cores > 1
+  if(n_cores > 1) {
+    furrr::plan(furrr::multisession, workers = n_cores, quiet = TRUE)
+    on.exit(furrr::plan(furrr::sequential), add = TRUE)
+    
+    stats_list <- furrr::future_lapply(
+      var_names,
+      function(v) {
+        m <- terra::global(sp_rast[[v]], "mean", na.rm = TRUE)[1, 1]
+        s <- terra::global(sp_rast[[v]], "sd", na.rm = TRUE)[1, 1]
+        list(mean = m, sd = s)
+      },
+      .options = furrr::furrr_options(seed = NULL)
+    )
+  } else {
+    stats_list <- lapply(var_names, function(v) {
+      m <- terra::global(sp_rast[[v]], "mean", na.rm = TRUE)[1, 1]
+      s <- terra::global(sp_rast[[v]], "sd", na.rm = TRUE)[1, 1]
+      list(mean = m, sd = s)
+    })
+  }
+  
+  names(stats_list) <- var_names
+  
+  # Standardize
+  for(v in var_names) {
+    sp_rast[[v]] <- (sp_rast[[v]] - stats_list[[v]]$mean) / stats_list[[v]]$sd
+  }
+  
+  list(rast = sp_rast, params = stats_list)
+}
+
+
+# -----------------------------
+
+
 #' Build inlabru likelihood objects
 #' @noRd
 .build_likelihoods <- function(fam, lnk, rhs_glo, rhs_reg,
@@ -695,6 +738,25 @@
   range_ratio <- if(has_Sloc && has_Sshared && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
     range_lat_mean / range_res_mean else "—"
 
+var_explained_sloc <- if(has_Sloc && has_Sshared) {
+  var_sloc_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sloc`)
+  var_sshared_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sshared`)
+  var_sloc_contrib / (var_sloc_contrib + var_sshared_contrib)
+} else "—"
+ssi <- if(is.finite(range_ratio) && is.finite(sigma_ratio)) {
+  # SSI ideal: range_ratio > 3 AND sigma_ratio ≈ 1–2
+  range_penalty <- if(range_ratio > 3) 1 else range_ratio / 3
+  sigma_penalty <- min(sigma_ratio, 1/sigma_ratio)  # simétrico
+  range_penalty * sigma_penalty
+} else NA_real_
+sri <- if(has_Sloc && has_Sshared) {
+  resid_sloc <- fit$summary.random$Sloc$mean
+  resid_sshared <- fit$summary.random$Sshared$mean
+  n <- min(length(resid_sloc), length(resid_sshared))
+  cor_fields <- cor(resid_sloc[1:n], resid_sshared[1:n], use = "complete.obs")
+  cor_fields^2  # R² de correlación
+} else "—"
+
   # correlation Sloc–Sshared fields
   # r > 0.7 00> high correlation
   field_correlation <- "—"
@@ -711,8 +773,11 @@
   if(has_Sloc && has_Sshared && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 3) {
     warns <- c(warns,
       paste("⚠️  Insufficient Sloc scale separation: Sshared/Sloc range ratio = ",round(range_ratio, 2), ").\n",
-             "   When 0.5 < ratio < 3, both fields may capture the same Sloc structure, which causes identifiability issues and double-smoothing.\n",
-             "   Recomended: shared.pcprior.range ≥ 3–5× Sloc range, or tighten Sloc.pcprior.range.")
+             "   Scales are overlapping (ideal: ratio > 3–5).\n",
+             "   Recomended actions: (1) Tighten local.pcprior.range[1] (e.g., 2 → 1.5),\n",
+             "   (2) Increase shared.pcprior.range[1] (e.g., 50 → 100),\n",
+             "   (3) Run prior sensitivity analysis,\n",
+             "   (4) Evaluate if study domain truly supports two scales.\n")
     )
   }  
   # weak identifiability (CI/median ratio)
@@ -1415,14 +1480,20 @@
       "Max CI/median ratio (hyperparameters)",
       "Scale-separation ratio (range_Sshared / range_Sloc)",
       "Variance ratio (sigma_Sshared / sigma_Sloc)",
-      "Sshared–Sloc field correlation (r)"
+      "Sshared–Sloc field correlation (r)",
+      "Variance explained by Sloc (%)",
+      "Scale separation Index (SSI) [0–1]",
+      "Spatial redundancy Index (SRI) [0–1]"
     ),
     Value = c(
       fmt_val(diag_block$diagnostics$moran_I),
       fmt_val(diag_block$diagnostics$max_CIratio),
       fmt_val(diag_block$diagnostics$range_ratio),
       fmt_val(diag_block$diagnostics$sigma_ratio),
-      fmt_val(diag_block$diagnostics$field_correlation)
+      fmt_val(diag_block$diagnostics$field_correlation),
+      fmt_val(var_explained_sloc * 100),
+      fmt_val(ssi),
+      fmt_val(sri) 
     ),
     stringsAsFactors = FALSE
   )
