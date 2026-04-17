@@ -352,8 +352,7 @@ NSBM.pure <- function(nsbm_obj,
   if(inla.int.strategy == "eb") {
     warning("⚠️ `inla.int.strategy = 'eb'` (Empirical Bayes) is fast but underestimates uncertainty\n",
             "   by fixing hyperparameters at their posterior mode instead of integrating over them.\n",
-            "   For final/publication results use `inla.int.strategy = 'ccd'`.\n",
-            "   Reference: Rue et al. (2009) JRSS-B, Simpson et al. (2017) Statistical Science.\n\n")
+            "   For final/publication results use `inla.int.strategy = 'ccd'`.\n")
   }
   #
   available_cores <- parallel::detectCores(logical = TRUE)
@@ -396,26 +395,38 @@ NSBM.pure <- function(nsbm_obj,
   n_cores_std <- min(n.threads, max(length(names(sp_covglo)), length(names(sp_covreg))))
 
   # global standarization 
-if(length(names(sp_covglo)) > 0) {
-  result_glo <- .standardize_rasters(sp_covglo, n_cores = n_cores_std)
-  sp_covglo <- result_glo$rast
-  scale_params <- c(scale_params, result_glo$params)
-}
+  if(!is.null(coupling.intercept) && length(names(sp_covglo)) > 0) {
+    result_glo <- .standardize_rasters(sp_covglo, n_cores = n.threads)
+    sp_covglo <- result_glo$rast
+    scale_params <- c(scale_params, result_glo$params)
+  }
 
   # regional standarization
-if(length(names(sp_covreg)) > 0) {
-  result_reg <- .standardize_rasters(sp_covreg, n_cores = n_cores_std)
-  sp_covreg <- result_reg$rast
-  scale_params <- c(scale_params, result_reg$params)
-}
+  if(length(names(sp_covreg)) > 0) {
+    result_reg <- .standardize_rasters(sp_covreg, n_cores = n_cores_std)
+    sp_covreg <- result_reg$rast
+    scale_params <- c(scale_params, result_reg$params)
+  }
 
   # log stats
-stats_pres <- vapply(names(sp_covreg), function(v) {
-  sprintf("    ✓ %s: Z-mean = %+.3f, Z-sd = %.3f", v,
-          terra::global(sp_covreg[[v]], "mean", na.rm = TRUE)[1, 1],
-          terra::global(sp_covreg[[v]], "sd", na.rm = TRUE)[1, 1])
-}, character(1))
-message(paste(stats_pres, collapse = "\n"), "\n")
+  if(length(names(sp_covreg)) > 0) {
+    stats_pres <- vapply(names(sp_covreg), function(v) {
+      m_val <- terra::global(sp_covreg[[v]], "mean", na.rm = TRUE)[1, 1]
+      s_val <- terra::global(sp_covreg[[v]], "sd", na.rm = TRUE)[1, 1]
+      
+      sprintf("    ✓ %s: Z-mean = %+.3f, Z-sd = %.3f", v, m_val, s_val)
+    }, character(1))
+    message(paste(stats_pres, collapse = "\n"), "\n")
+  }
+
+  if(!is.null(coupling.intercept) && !is.null(sp_covglo) && length(names(sp_covglo)) > 0) {
+    stats_glo <- vapply(names(sp_covglo), function(v) {
+      m_val <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
+      s_val <- terra::global(sp_covglo[[v]], "sd", na.rm = TRUE)[1, 1]
+      sprintf("    ✓ %s (global): Z-mean = %+.3f, Z-sd = %.3f", v, m_val, s_val)
+    }, character(1))
+    message(paste(stats_glo, collapse = "\n"), "\n")
+  }
 
   #
   pp_glo <- rbind(
@@ -636,6 +647,7 @@ message(paste(stats_pres, collapse = "\n"), "\n")
     int.strategy = inla.int.strategy
   )
 
+
   ## K-fold CV (only fam no cp)
   if(cv.folds > 1) {      #@@@JMB la cv actual usa k-folds random. Deberíamos cosiderar cV espacial bloqueado con blockCV::cv_spatial()??? 
     if(fam == "cp") {
@@ -645,33 +657,41 @@ message(paste(stats_pres, collapse = "\n"), "\n")
       # stratified k folds
       folds_g <- if(!is.null(coupling.intercept)) .make_stratified_kfolds(pp_glo$resp, cv.folds) else NULL
       folds_r <- .make_stratified_kfolds(pp_reg$resp, cv.folds)
-      cv_metrics <- numeric(cv.folds)
+
+      n_cores_cv <- min(n.threads, cv.folds)
+      inla_threads_k <- max(1, floor(n.threads / n_cores_cv))
+
+      if(n_cores_cv > 1) {
+        furrr::plan(furrr::multisession, workers = n_cores_cv, quiet = TRUE)
+      }
+
+      A_glo_total <- if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp" && !is.null(coupling.intercept)) as.numeric(terra::expanse(sp_covglo[[1]], unit = "km")) else NULL
+      A_reg_total <- if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") as.numeric(terra::expanse(sp_covreg[[1]], unit = "km")) else NULL
 
       both_cov <- c(sp_covglo, sp_covreg)
+      coords_all_r <- sf::st_coordinates(pp_reg)
+      valid_pts_mask <- stats::complete.cases(terra::extract(both_cov, coords_all_r, ID = FALSE))
 
-      for(k in seq_len(cv.folds)) {
-        # build likelihoods for fold k
+     cv_worker <- function(k) {
         train_g <- if(!is.null(coupling.intercept)) pp_glo[folds_g != k, ] else NULL
         train_r <- pp_reg[folds_r != k, ]
         test_r  <- pp_reg[folds_r == k, ]
 
-        # recalculate weights for this k fold's training data
         w_glo_k <- NULL
         w_reg_k <- NULL
+        
         if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") {
           if(!is.null(coupling.intercept) && !is.null(train_g)) {
             n_bg_glo_k <- sum(train_g$resp == 0L)
-            A_glo_k    <- as.numeric(terra::expanse(sp_covglo[[1]], unit = "km"))
-            w_glo_k    <- ifelse(train_g$resp != 0L, 1, A_glo_k / n_bg_glo_k)
+            w_glo_k    <- ifelse(train_g$resp != 0L, 1, A_glo_total / n_bg_glo_k)
           }
           n_bg_reg_k <- sum(train_r$resp == 0L)
-          A_reg_k    <- as.numeric(terra::expanse(sp_covreg[[1]], unit = "km"))
-          w_reg_k    <- ifelse(train_r$resp != 0L, 1, A_reg_k / n_bg_reg_k)
+          w_reg_k    <- ifelse(train_r$resp != 0L, 1, A_reg_total / n_bg_reg_k)
         } else if(is.numeric(background.weights)) {
-          # subset user weights to training indices
           w_glo_k <- if(!is.null(coupling.intercept) && !is.null(w_glo)) w_glo[folds_g != k] else NULL
           w_reg_k <- if(!is.null(w_reg)) w_reg[folds_r != k] else NULL
         }
+
         liks_k <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
                                       train_g, train_r,
                                       bdy_glo, bdy_reg, dom,
@@ -687,34 +707,39 @@ message(paste(stats_pres, collapse = "\n"), "\n")
           coupling.predictors = coupling.predictors,
           needs_feedback = needs_feedback,
           vr = vr,
-          n.threads = n.threads,
+          n.threads = inla_threads_k,
           seed = seed,
           int.strategy = inla.int.strategy
         )
 
-        # rm NAs from test set
-        coords_t <- sf::st_coordinates(test_r)
-        keep <- stats::complete.cases(terra::extract(both_cov, coords_t))
+        # rm NAs
+        keep_k <- valid_pts_mask[folds_r == k]
+        test_r2 <- test_r[keep_k, ]
 
-        # pred and metric
-        test_r2 <- test_r[keep, ]
         if(nrow(test_r2) > 0) {
           pk <- predict(fit_k, test_r2, pred_formula)
           if(fam %in% c("binomial", "beta")) {
             if(length(unique(test_r2$resp)) > 1) {
-              cv_metrics[k] <- suppressMessages(as.numeric(pROC::auc(test_r2$resp, pk$mean)))
-            } else {
-              cv_metrics[k] <- NA_real_
-            }
+              suppressMessages(as.numeric(pROC::auc(test_r2$resp, pk$mean)))
+            } else { NA_real_ }
           } else {
-            cv_metrics[k] <- sqrt(mean((test_r2$resp - pk$mean)^2, na.rm = TRUE))
+            sqrt(mean((test_r2$resp - pk$mean)^2, na.rm = TRUE))
           }
         } else {
-          cv_metrics[k] <- NA_real_
+          NA_real_
         }
       }
 
+      if(n_cores_cv > 1) {
+        cv_metrics_list <- furrr::future_lapply(seq_len(cv.folds), cv_worker, .options = furrr::furrr_options(seed = TRUE))
+        furrr::plan(furrr::sequential) # Reseteo de seguridad al terminar
+      } else {
+        cv_metrics_list <- lapply(seq_len(cv.folds), cv_worker)
+      }
+     
+      cv_metrics <- unlist(cv_metrics_list)
       metric_name <- if(fam %in% c("binomial", "beta")) "AUC" else "RMSE"
+   
       cv_res <- list(
         cv.folds = cv.folds,
         metric_name = metric_name,
@@ -737,6 +762,9 @@ message(paste(stats_pres, collapse = "\n"), "\n")
     .pred_as_tif(predict(fit, pred_sf, ~ Sshared), sp_covreg)
   } else NULL
 
+  rm(pred_combined, pred_sf)
+  gc(verbose = FALSE)
+
 
   ## New scenarios
   proj_list <- list()
@@ -749,32 +777,45 @@ message(paste(stats_pres, collapse = "\n"), "\n")
       scen_rast <- terra::unwrap(nsbm_obj$Scenarios[[sc]])
 
       message("ℹ️ Projecting to new scenario: '", sc, "'")
-      message("   Standardizing scenario variables using historical calibration parameters...")
            
       if(!identical(sf::st_crs(crs), terra::crs(scen_rast))) {
         scen_rast <- terra::project(scen_rast, terra::crs(sp_covreg_curr))
       }
+      message("   Standardizing scenario variables using historical calibration parameters...")
 
       sp_covglo_fut <- sp_covglo_curr
       sp_covreg_fut <- sp_covreg_curr      
       stats_msg <- character()
 
+      vars_glo <- intersect(names(sp_covglo_fut), names(scen_rast))
+      if(length(vars_glo) > 0) {
+        scen_glo_resampled <- terra::resample(scen_rast[[vars_glo]], sp_covglo_fut)
+      }
+      
+      vars_reg <- setdiff(names(sp_covreg_fut), grep("_ls$|_ss$", names(sp_covreg_fut), value = TRUE))
+      vars_reg <- intersect(vars_reg, names(scen_rast))
+      if(length(vars_reg) > 0) {
+        scen_reg_resampled <- terra::resample(scen_rast[[vars_reg]], sp_covreg_fut)
+      }
+
       # global standarization fut
-      for(v in names(sp_covglo_fut)) {
-        if(v %in% names(scen_rast)) {
-          fut_layer <- terra::resample(scen_rast[[v]], sp_covglo_fut)
-          std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
+      if (!is.null(coupling.intercept) && length(vars_glo) > 0) {
+        for(v in names(sp_covglo_fut)) {
+          if(v %in% names(scen_rast)) {
+            fut_layer <- scen_glo_resampled[[v]]
+            std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
           
-          if(!(v %in% names(sp_covreg_fut))) {
-            m_pres <- mean(terra::values(sp_covglo_curr[[v]]), na.rm = TRUE)
-            m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
-            stats_msg <- c(stats_msg, sprintf("    ✓ %s (Global): Present Z-mean = %+.3f | Scenario Z-mean = %+.3f | Shift = %+.3f", 
+            if(!(v %in% names(sp_covreg_fut))) {
+              m_pres <- mean(terra::values(sp_covglo_curr[[v]]), na.rm = TRUE)
+              m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
+              stats_msg <- c(stats_msg, sprintf("    ✓ %s (Global): Present Z-mean = %+.3f | Scenario Z-mean = %+.3f | Shift = %+.3f", 
                                               v, m_pres, m_fut, m_fut - m_pres))
-          }
-          sp_covglo_fut[[v]] <- std_fut_layer
-        } else {
-          if(!(v %in% names(sp_covreg_fut))) {
-            stats_msg <- c(stats_msg, sprintf("    ⚠️ %s (Global): NOT in scenario (retaining present-day values)", v))
+            }
+            sp_covglo_fut[[v]] <- std_fut_layer
+          } else {
+            if(!(v %in% names(sp_covreg_fut))) {
+              stats_msg <- c(stats_msg, sprintf("    ⚠️ %s (Global): NOT in scenario (retaining present-day values)", v))
+            }
           }
         }
       }
@@ -784,14 +825,19 @@ message(paste(stats_pres, collapse = "\n"), "\n")
         if(grepl("_ls$|_ss$", v)) next 
         
         if(v %in% names(scen_rast)) {
-          fut_layer <- terra::resample(scen_rast[[v]], sp_covreg_fut)
-          std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
-          
-          m_pres <- mean(terra::values(sp_covreg_curr[[v]]), na.rm = TRUE)
-          m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
-          stats_msg <- c(stats_msg, sprintf("    ✓ %s: Present Z-mean = %+.3f | Scenario Z-mean = %+.3f | Shift = %+.3f", 
+          fut_layer <- scen_reg_resampled[[v]]
+
+          if (!is.null(scale_params[[v]])) {
+            std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
+         
+            if(!(v %in% names(sp_covreg_fut))) {
+              m_pres <- mean(terra::values(sp_covreg_curr[[v]]), na.rm = TRUE)
+              m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
+              stats_msg <- c(stats_msg, sprintf("    ✓ %s: Present Z-mean = %+.3f | Scenario Z-mean = %+.3f | Shift = %+.3f", 
                                             v, m_pres, m_fut, m_fut - m_pres))
-          sp_covreg_fut[[v]] <- std_fut_layer
+            }
+            sp_covreg_fut[[v]] <- std_fut_layer
+          }
         } else {
           stats_msg <- c(stats_msg, sprintf("    ⚠️ %s: NOT in scenario (retaining present-day values)", v))
         }
@@ -800,11 +846,14 @@ message(paste(stats_pres, collapse = "\n"), "\n")
       # scale decomposed fut
       if(length(sd_vars) > 0) {
         message("  Applying scale_decomposed to scenario '", sc, "'...")
-        glo_resampled_scenario <- terra::resample(sp_covglo_curr[[sd_vars]], scen_rast[[sd_vars[1]]])
+        vars_sd <- intersect(sd_vars, names(scen_rast))
         
-        for(X in sd_vars) {
-          if(X %in% names(scen_rast)) {
-            raw_reg <- scen_rast[[X]]
+        if(length(vars_sd) > 0) {
+          raw_glo_base <- scen_glo_resampled[[vars_sd]]
+          glo_resampled_scenario <- terra::resample(raw_glo_base, sp_covreg_curr)
+          
+          for(X in vars_sd) {
+            raw_reg <- scen_reg_resampled[[X]]
             raw_glo <- glo_resampled_scenario[[X]]
             
             # Standarization with historical parameters
@@ -813,7 +862,7 @@ message(paste(stats_pres, collapse = "\n"), "\n")
             
             scen_rast[[paste0(X, "_ss")]] <- std_ss
             scen_rast[[paste0(X, "_ls")]] <- std_ls
-
+            
             sp_covreg_fut[[paste0(X, "_ss")]] <- std_ss
             sp_covreg_fut[[paste0(X, "_ls")]] <- std_ls
 
@@ -830,12 +879,17 @@ message(paste(stats_pres, collapse = "\n"), "\n")
       sp_covglo <- sp_covglo_fut
       sp_covreg <- sp_covreg_fut
       
-      scen_df <- sf::st_as_sf(terra::as.points(scen_rast, values = FALSE))
+      scen_pts <- terra::as.points(scen_rast, values = TRUE, na.rm = TRUE)
+      scen_df <- sf::st_as_sf(scen_pts)
       scen_df <- sf::st_transform(scen_df, crs)
       scen_df$region <- 1L
-      
+
+      message("   Generating predictions...")
       proj_pred <- predict(fit, scen_df, pred_formula)
       proj_list[[sc]] <- .pred_as_tif(proj_pred, template = scen_rast)
+
+      rm(scen_pts, scen_df, proj_pred)
+      gc(verbose = FALSE)
     }
     
     sp_covglo <- sp_covglo_curr

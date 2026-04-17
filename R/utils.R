@@ -1,39 +1,32 @@
 #' Fast standardization of SpatRaster stack
 #' @noRd
 .standardize_rasters <- function(sp_rast, var_names = NULL, n_cores = 1) {
-  
+
+  if(is.null(sp_rast)) return(list(rast = NULL, params = list()))
+  if(!inherits(sp_rast, "SpatRaster")) return(list(rast = sp_rast, params = list()))
+
   if(is.null(var_names)) var_names <- names(sp_rast)
   if(length(var_names) == 0) return(list(rast = sp_rast, params = list()))
+
+  stats_all <- terra::global(sp_rast[[var_names]], fun = c("mean", "sd"), na.rm = TRUE)
   
-  # Parallel if n_cores > 1
-  if(n_cores > 1) {
-    furrr::plan(furrr::multisession, workers = n_cores, quiet = TRUE)
-    on.exit(furrr::plan(furrr::sequential), add = TRUE)
-    
-    stats_list <- furrr::future_lapply(
-      var_names,
-      function(v) {
-        m <- terra::global(sp_rast[[v]], "mean", na.rm = TRUE)[1, 1]
-        s <- terra::global(sp_rast[[v]], "sd", na.rm = TRUE)[1, 1]
-        list(mean = m, sd = s)
-      },
-      .options = furrr::furrr_options(seed = NULL)
-    )
-  } else {
-    stats_list <- lapply(var_names, function(v) {
-      m <- terra::global(sp_rast[[v]], "mean", na.rm = TRUE)[1, 1]
-      s <- terra::global(sp_rast[[v]], "sd", na.rm = TRUE)[1, 1]
-      list(mean = m, sd = s)
-    })
-  }
-  
-  names(stats_list) <- var_names
-  
-  # Standardize
+  # Convertimos a la estructura de lista que espera el resto del paquete
+  stats_list <- list()
   for(v in var_names) {
-    sp_rast[[v]] <- (sp_rast[[v]] - stats_list[[v]]$mean) / stats_list[[v]]$sd
+    m_val <- stats_all[v, "mean"]
+    s_val <- stats_all[v, "sd"]
+    
+    stats_list[[v]] <- list(mean = m_val, sd = s_val)
+    
+    # Estandarización con blindaje contra varianza cero
+    if(!is.na(s_val) && s_val > 1e-10) {
+      sp_rast[[v]] <- (sp_rast[[v]] - m_val) / s_val
+    } else {
+      warning("⚠️ Variable '", v, "' has near-zero variance. Centering only.")
+      sp_rast[[v]] <- sp_rast[[v]] - m_val
+    }
   }
-  
+
   list(rast = sp_rast, params = stats_list)
 }
 
@@ -142,24 +135,25 @@
     v
   }
 
-  # detect rw2 needs
-  need_rw2_global <- FALSE
-  need_rw2_regional <- FALSE
-  if(is.list(covariate.effects)) {
+    spec_glo <- list()
     if(length(vg) > 0) {
-      need_rw2_global <- any(vapply(vg, function(x) 
-        .resolve_covariate_effects(x, "global",  covariate.effects)$model == "rw2", logical(1)))
+      spec_glo <- lapply(stats::setNames(vg, vg), function(x) .resolve_covariate_effects(x, "global", covariate.effects))
     }
+  
+    spec_reg <- list()
     if(length(vr) > 0) {
-      need_rw2_regional <- any(vapply(vr, function(x) 
-        .resolve_covariate_effects(x, "regional", covariate.effects)$model == "rw2", logical(1)))
+      spec_reg <- lapply(stats::setNames(vr, vr), function(x) .resolve_covariate_effects(x, "regional", covariate.effects))
     }
-  }
+
+  # detect rw2 needs
+    need_rw2_global <- if(length(spec_glo) > 0) any(vapply(spec_glo, function(s) s$model == "rw2", logical(1))) else FALSE
+    need_rw2_regional <- if(length(spec_reg) > 0) any(vapply(spec_reg, function(s) s$model == "rw2", logical(1))) else FALSE
 
   coords_all <- if(need_rw2_global) {
     rbind(sf::st_coordinates(pp_glo_sf),
           sf::st_coordinates(pp_reg_sf))
   } else NULL
+
   coords_r <- if(need_rw2_regional) {
     sf::st_coordinates(pp_reg_sf)
   } else NULL
@@ -175,17 +169,17 @@
   for(X in vg) {
     cp_mode <- .resolve_coupling_predictor(X, coupling.predictors, vg)
     if(cp_mode == "NULL") next
-    specX <- .resolve_covariate_effects(X, "global", covariate.effects)
+    specX <- spec_glo[[X]]
     if(specX$model == "drop") next
     if(specX$model == "linear") {
       cmpglobal <- c(cmpglobal,
-        paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'linear')"))
+                     paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'linear')"))
     } else if(specX$model == "rw2") {
       vals <- .build_rw2_values(sp_covglo[[X]], coords_all)
       cmpglobal <- c(cmpglobal,
-        paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'rw2', scale.model = TRUE, ",
-               "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))), ",
-               "values = ", fmt_vals(vals),")"))
+                     paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'rw2', scale.model = TRUE, ",
+                            "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))), ",
+                            "values = ", fmt_vals(vals),")"))
     }
     fglobal <- c(fglobal, paste0(X, "GL"))
   }
@@ -195,24 +189,23 @@
   fregional <- character(0)
 
   for(X in vr) {
-    #cp_mode <- .resolve_coupling_predictor(X, coupling.predictors, vg)
     is_shared <- X %in% vg
     cp_mode <- if(is_shared) .resolve_coupling_predictor(X, coupling.predictors, vg) else "unpooled"
 
-    specX <- .resolve_covariate_effects(X, "regional", covariate.effects)
+    specX <- spec_reg[[X]]
     if(specX$model == "drop") next
 
     ## scale_decomposed: global (XGL_reg) + regional anomaly (XRE_delta)
     if(cp_mode == "scale_decomposed") {
       if(specX$model == "linear") {
         cmpregional <- c(cmpregional,
-          paste0(X, "GL_ls(main = ", spobjreg, ", main_layer = '", X, "_ls', model = 'linear')"),
-          paste0(X, "RE_ss(main = ", spobjreg, ", main_layer = '", X, "_ss', model = 'linear')"))
+          paste0(X, "GL_ls(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_ls']]), model = 'linear')"),
+          paste0(X, "RE_ss(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_ss']]), model = 'linear')"))
       } else if(specX$model == "rw2") {
         vals <- .build_rw2_values(sp_covreg[[paste0(X, "_ss")]], coords_r)
         cmpregional <- c(cmpregional,
-          paste0(X, "GL_ls(main = ", spobjreg, ", main_layer = '", X, "_ls', model = 'linear')"),
-          paste0(X, "RE_ss(main = ", spobjreg, ", main_layer = '", X, "_ss', model='rw2', scale.model=TRUE, values = ", fmt_vals(vals), ", hyper = list(prec=list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
+          paste0(X, "GL_ls(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_ls']]), model = 'linear')"),
+          paste0(X, "RE_ss(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_ss']]), model='rw2', scale.model=TRUE, values = ", fmt_vals(vals), ", hyper = list(prec=list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
       }
       fregional <- c(fregional, paste0(X, "GL_ls"), paste0(X, "RE_ss"))
     }
@@ -222,32 +215,26 @@
     #@@@JMB PENDIENTE consultar con Virgilio: La version A con prior fijo N(1, 0.5^2) funciona pero es soft constraint????, no jerarquía real. 
        # La versión B hace copy sobre componente lineal global es jerarquía real beta_RE|beta_GL~N(beta_GL,tau) pero se rompe. Pendiente verificar si es por strategy eb o por linear effects o q????
     else if(cp_mode == "ordered_hierarchical") {
-      # version A
       cmpregional <- c(cmpregional,
-        paste0(X, "RE_oh(main = ", spobjreg, ", main_layer = '", X, "', model = 'linear', mean.linear = 1, prec.linear = 4)"))
-      # version B
-      # cmpregional <- c(cmpregional,
-      #   paste0(X, "RE_oh(main = ", spobjreg, ", main_layer = '", X, "', ",
-      #          "copy = '", X, "GL', fixed = FALSE, ",
-      #          "hyper = list(beta = list(prior = 'normal', param = c(1, 4))))"))
+        paste0(X, "RE_oh(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'linear', mean.linear = 1, prec.linear = 4)"))
       fregional <- c(fregional, paste0(X, "RE_oh"))
     }
 
     # bayesian_feedback: global priors
     else if(cp_mode == "bayesian_feedback") {
       cmpregional <- c(cmpregional,
-        paste0(X, "RE(main = ", spobjreg, ", main_layer = '", X, "', model = 'linear', mean.linear = bf_mean_", X, ", prec.linear = bf_prec_", X, ")"))
+        paste0(X, "RE(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'linear', mean.linear = bf_mean_", X, ", prec.linear = bf_prec_", X, ")"))
       fregional <- c(fregional, paste0(X, "RE"))
     }
 
     # unpooled/NULL: coefs independent
     else {
       if(specX$model == "linear") {
-        cmpregional <- c(cmpregional, paste0(X, "RE(main = ", spobjreg, ", main_layer = '", X, "', model = 'linear')"))
+        cmpregional <- c(cmpregional, paste0(X, "RE(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'linear')"))
       } else if(specX$model == "rw2") {
         vals <- .build_rw2_values(sp_covreg[[X]], coords_r)
         cmpregional <- c(cmpregional,
-          paste0(X, "RE(main = ", spobjreg, ", main_layer = '", X, "', model = 'rw2', scale.model = TRUE, ",
+          paste0(X, "RE(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'rw2', scale.model = TRUE, ",
                  "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))), ",
                  "values = ", fmt_vals(vals),")"))
       }
@@ -470,6 +457,33 @@
 #' from sf to tif
 #' @noRd
 .pred_as_tif <- function(pred, template, vars_to_export = c("mean", 
+                                                           "sd", 
+                                                           "q0.025", 
+                                                           "q0.5", 
+                                                           "q0.975",
+                                                           "median",
+                                                           "sd.mc_std_err",
+                                                           "mean.mc_std_err")) {
+  
+  vars_avail <- intersect(vars_to_export, names(pred))
+  if(length(vars_avail) == 0) return(NULL)
+  
+  if(sf::st_crs(pred) != terra::crs(template)) {
+    pred <- sf::st_transform(pred, terra::crs(template))
+  }
+  
+  vect_pred <- terra::vect(pred)
+  r_pred <- terra::rasterize(vect_pred, template, field = vars_avail)
+  
+  rm(vect_pred, pred)
+  gc(verbose = FALSE)
+  
+  names(r_pred) <- vars_avail
+  return(r_pred)
+}
+
+
+.pred_as_tif2 <- function(pred, template, vars_to_export = c("mean", 
                                                            "sd", 
                                                            "q0.025", 
                                                            "q0.5", 
@@ -738,24 +752,34 @@
   range_ratio <- if(has_Sloc && has_Sshared && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
     range_lat_mean / range_res_mean else "—"
 
-var_explained_sloc <- if(has_Sloc && has_Sshared) {
-  var_sloc_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sloc`)
-  var_sshared_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sshared`)
-  var_sloc_contrib / (var_sloc_contrib + var_sshared_contrib)
-} else "—"
-ssi <- if(is.finite(range_ratio) && is.finite(sigma_ratio)) {
-  # SSI ideal: range_ratio > 3 AND sigma_ratio ≈ 1–2
-  range_penalty <- if(range_ratio > 3) 1 else range_ratio / 3
-  sigma_penalty <- min(sigma_ratio, 1/sigma_ratio)  # simétrico
-  range_penalty * sigma_penalty
-} else NA_real_
-sri <- if(has_Sloc && has_Sshared) {
-  resid_sloc <- fit$summary.random$Sloc$mean
-  resid_sshared <- fit$summary.random$Sshared$mean
-  n <- min(length(resid_sloc), length(resid_sshared))
-  cor_fields <- cor(resid_sloc[1:n], resid_sshared[1:n], use = "complete.obs")
-  cor_fields^2  # R² de correlación
-} else "—"
+  var_explained_sloc <- "—"
+  ssi <- NA_real_
+  sri <- "—"
+
+  if(has_Sloc && has_Sshared) {
+    
+    if(!is.null(marginals$`Stdev for Sloc`) && !is.null(marginals$`Stdev for Sshared`)) {
+      var_sloc_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sloc`)
+      var_sshared_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sshared`)
+      var_explained_sloc <- var_sloc_contrib / (var_sloc_contrib + var_sshared_contrib)
+    }
+
+    # SSI (scale separation index)
+    if(is.numeric(range_ratio) && is.numeric(sigma_ratio) && is.finite(range_ratio) && is.finite(sigma_ratio)) {
+      range_penalty <- if(range_ratio > 3) 1 else range_ratio / 3
+      sigma_penalty <- min(sigma_ratio, 1/sigma_ratio)
+      ssi <- range_penalty * sigma_penalty
+    }
+
+    # SRI (spatial redundancy index)
+    resid_sloc <- fit$summary.random$Sloc$mean
+    resid_sshared <- fit$summary.random$Sshared$mean
+    if(!is.null(resid_sloc) && !is.null(resid_sshared)) {
+      n_min <- min(length(resid_sloc), length(resid_sshared))
+      cor_fields <- stats::cor(resid_sloc[1:n_min], resid_sshared[1:n_min], use = "complete.obs")
+      sri <- cor_fields^2
+    }
+  }
 
   # correlation Sloc–Sshared fields
   # r > 0.7 00> high correlation
@@ -1196,7 +1220,10 @@ sri <- if(has_Sloc && has_Sshared) {
                        max_CIratio = max_CIratio, # relative uncertainty
                        range_ratio = range_ratio, # scale separation ratio
                        sigma_ratio = sigma_ratio, # variance ratio
-                       field_correlation = field_correlation), # prior influence
+                       field_correlation = field_correlation, # prior influence
+                       var_explained_sloc = var_explained_sloc,
+                       ssi = ssi,
+                       sri = sri), 
     warnings = warns,
     plots = list(hyperparams = pA,
                  Slocfields = pB,
@@ -1491,9 +1518,10 @@ sri <- if(has_Sloc && has_Sshared) {
       fmt_val(diag_block$diagnostics$range_ratio),
       fmt_val(diag_block$diagnostics$sigma_ratio),
       fmt_val(diag_block$diagnostics$field_correlation),
-      fmt_val(var_explained_sloc * 100),
-      fmt_val(ssi),
-      fmt_val(sri) 
+      if(is.numeric(diag_block$diagnostics$var_explained_sloc)) 
+        fmt_val(diag_block$diagnostics$var_explained_sloc * 100) else "—",
+      fmt_val(diag_block$diagnostics$ssi),
+      fmt_val(diag_block$diagnostics$sri)
     ),
     stringsAsFactors = FALSE
   )
