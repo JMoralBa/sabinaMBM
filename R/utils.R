@@ -498,9 +498,9 @@
   r_stack <- lapply(vars_to_export, function(var) {
     if(!is.null(pred[[var]])) {
       df <- as.data.frame(cbind(sf::st_coordinates(pred), value = pred[[var]]))
-      sf_pts <- sf::st_as_sf(df, coords = c("X", "Y"), crs = sf::st_crs(pred))
-      sf_pts <- sf::st_transform(sf_pts, terra::crs(template))
-      r <- terra::rasterize(sf_pts, template, field = "value")
+      sv_pts <- terra::vect(df, geom = c("X", "Y"), crs = terra::crs(sf::st_crs(pred)$wkt))
+      sv_pts <- terra::project(sv_pts, terra::crs(template))
+      r <- terra::rasterize(sv_pts, template, field = "value")
       names(r) <- var
       return(r)
     } else {
@@ -547,6 +547,10 @@
                              pred_shared = NULL,
                              coupling.intercept,
                              scale_params = NULL) {
+
+  .info <- function(msg) message("ℹ ", msg)
+  .warn <- function(msg) warning("⚠️  ", msg, call. = FALSE, immediate. = TRUE)
+  .stop <- function(msg) stop("❌ ", msg, call. = FALSE)
 
   has_Sloc <- "Sloc" %in% names(fit$summary.random)
   has_Sshared <- "Sshared" %in% names(fit$summary.random)
@@ -792,53 +796,52 @@
   } 
 
   # warnings
-  warns <- character()
   # overlap Sshared vs Sloc
   if(has_Sloc && has_Sshared && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 3) {
-    warns <- c(warns,
-      paste("⚠️  Insufficient Sloc scale separation: Sshared/Sloc range ratio = ",round(range_ratio, 2), ").\n",
-             "   Scales are overlapping (ideal: ratio > 3–5).\n",
-             "   Recomended actions: (1) Tighten local.pcprior.range[1] (e.g., 2 → 1.5),\n",
-             "   (2) Increase shared.pcprior.range[1] (e.g., 50 → 100),\n",
-             "   (3) Run prior sensitivity analysis,\n",
-             "   (4) Evaluate if study domain truly supports two scales.\n")
-    )
+    .warn(paste0(
+      "Insufficient Sloc scale separation: Sshared/Sloc range ratio = ",round(range_ratio, 2), ").\n",
+      "   Scales are overlapping (ideal: ratio > 3–5).\n",
+      "   Recomended actions: (1) Tighten local.pcprior.range[1] (e.g., 2 → 1.5),\n",
+      "   (2) Increase shared.pcprior.range[1] (e.g., 50 → 100),\n",
+      "   (3) Run prior sensitivity analysis,\n",
+      "   (4) Evaluate if study domain truly supports two scales.\n"
+    ))
   }  
   # weak identifiability (CI/median ratio)
   if(is.finite(max_CIratio) && max_CIratio > 25) {
-    warns <- c(warns, paste0(
-      "⚠️ Weak hyperparameter identifiability detected (CI/median > 25).\n",
+    .warn(paste0(
+      "Weak hyperparameter identifiability detected (CI/median > 25).\n",
       "   Recommended: use stronger PC priors."
     ))
   }
   # Sshared field dominating variance
   if(has_Sshared && has_Sloc && is.finite(sigma_ratio) && sigma_ratio > 1.5) {
-    warns <- c(warns, paste0(
-      "⚠️ Variance imbalance between Sshared and Sloc SPDE. Variance ratio (sigma Sshared / sigma Sloc) = ", round(sigma_ratio, 2), ".\n",
+    .warn(paste0(
+      "Variance imbalance between Sshared and Sloc SPDE. Variance ratio (sigma Sshared / sigma Sloc) = ", round(sigma_ratio, 2), ".\n",
       "   The Sshared field dominates the Sloc variability, making the Sloc SPDE redundant.\n",
       "   Recommended: reduce shared.pcprior.sigma or increase local.pcprior.sigma."
     ))
   }
   # high correlation between Sshared and Sloc
   if(has_Sloc && has_Sshared && is.finite(field_correlation) && field_correlation > 0.7) {
-    warns <- c(warns,
-      paste0("⚠️ High correlation between Sshared and Sloc fields (r = ", round(field_correlation, 2), ").\n",
-             "   Possible redundancy: both SPDE components capture the same spatial pattern.\n",
-             "   Recommended: strengthen priors to separate scales, or remove one SPDE fields.")
-    )
+    .warn(paste0(
+      "High correlation between Sshared and Sloc fields (r = ", round(field_correlation, 2), ").\n",
+      "   Possible redundancy: both SPDE components capture the same spatial pattern.\n",
+      "   Recommended: strengthen priors to separate scales, or remove one SPDE fields."
+    ))
   }
   # residual autocorrelation
   if(is.finite(moran_I) && moran_I > 0.10) {
-    warns <- c(warns,
-      paste0("⚠️ Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").\n",
-             "   Model missing local spatial structure.\n",
-             "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates.")  #@@@JMB no estoy segura
-    )
+    .warn(paste0(
+      "Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").\n",
+      "   Model missing local spatial structure.\n",
+      "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates."  #@@@JMB no estoy segura
+    ))
   }
   # posterior ≈ prior (weak data information)
   if(any(unlist(prior_close))) {
-    warns <- c(warns, paste0(
-      "⚠️ Posterior close to PC-prior mode: weak data information relative to prior strength.\n",
+    .warn(paste0(
+      "Posterior close to PC-prior mode: weak data information relative to prior strength.\n",
       "   Recommended: relax priors or increase data resolution."    #@@@JMB rev recommendation??
     ))
   }    
@@ -849,24 +852,29 @@
     if(cpo_failures > 0) {
       perc_failures <- (cpo_failures / total_obs) * 100
       if(perc_failures > 1) {     #@@@JMB 1% of observations????
-        warns <- c(warns,
-          paste0("⚠️ CPO failures detected (", round(perc_failures, 2), "% of observations).\n",
+        .warn(paste0(
+          "CPO failures detected (", round(perc_failures, 2), "% of observations).\n",
           "   Model severely struggles to predict these points (CPO ≈ 0).\n",
-          "   Recommended: check for outliers or review model specification/priors."))
+          "   Recommended: check for outliers or review model specification/priors."
+        ))
       }
     }
   }
 
   # plots
   # pA Hyperparameters: posterior marginals + PC priors
-  post_df <- NA_real_
+  post_df <- data.frame()
   if(!is.null(fit$marginals.hyperpar)) {
     for(nm in names(fit$marginals.hyperpar)) {
-      sm <- INLA::inla.smarginal(fit$marginals.hyperpar[[nm]])
-      post_df <- rbind(post_df, data.frame(x = sm$x, y = sm$y, par = nm))
-      post_df <- na.omit(post_df)
+      sm <- tryCatch(INLA::inla.smarginal(fit$marginals.hyperpar[[nm]]), error = function(e) NULL)
+      if(!is.null(sm)) {
+        post_df <- rbind(post_df, data.frame(x = sm$x, y = sm$y, par = nm))
+      } else {
+        .warn(paste0("Marginal posterior degenerada para '", nm, "'. Se omite de los gráficos de diagnóstico."))
+      }
     }
   }
+  if(nrow(post_df) == 0) post_df <- NULL
   # Create prior reference ticks for vertical lines
   prior_ticks <- do.call(rbind, Filter(Negate(is.null), list(
     if(!is.null(priors$local.pcprior.range)) data.frame(x = priors$local.pcprior.range[1], par = "Range for Sloc"),
@@ -1224,7 +1232,6 @@
                        var_explained_sloc = var_explained_sloc,
                        ssi = ssi,
                        sri = sri), 
-    warnings = warns,
     plots = list(hyperparams = pA,
                  Slocfields = pB,
                  correlogram = pC,

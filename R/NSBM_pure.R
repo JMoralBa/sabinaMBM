@@ -467,13 +467,13 @@ NSBM.pure <- function(nsbm_obj,
 
   # rm NAs
   if(length(vg) > 0) {
-    keep_glo <- stats::complete.cases(terra::extract(sp_covglo, pp_glo, ID = FALSE))
+    keep_glo <- stats::complete.cases(terra::extract(sp_covglo, terra::vect(pp_glo), ID = FALSE))
     pp_glo <- pp_glo[keep_glo, ]
   }
   if(length(vr) > 0) {
-    ext_reg <- terra::extract(sp_covreg, pp_reg, ID = FALSE)
+    ext_reg <- terra::extract(sp_covreg, terra::vect(pp_reg), ID = FALSE)
     if(has_joint) {
-      ext_reg <- cbind(ext_reg, terra::extract(sp_covglo, pp_reg, ID = FALSE))
+      ext_reg <- cbind(ext_reg, terra::extract(sp_covglo, terra::vect(pp_reg), ID = FALSE))
     }
     pp_reg <- pp_reg[stats::complete.cases(ext_reg), ]
   }
@@ -926,10 +926,6 @@ NSBM.pure <- function(nsbm_obj,
                   pred_shared = if(has_Sshared) pred_shared else NULL,
                   coupling.intercept = coupling.intercept,
                   scale_params = scale_params)
-
-  if(length(diag_block$warnings)) {
-    for (w in diag_block$warnings) .warn(w)
-  }
 
 
   ## Save outputs
