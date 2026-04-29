@@ -8,7 +8,7 @@
 #' @param family A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity). 
 #' @param spde.mesh An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_loc) is used. If \code{NULL} (default), the model runs without spatial structure.#' @param local.pcprior.range Numeric vector length 2. PC-prior on the range of the local residual field S_loc (e.g., \code{c(2, 0.01)}). If \code{NULL} and \code{shared.pcprior.range} is also \code{NULL}, no spatial fields are used.
 #' @param shared.pcprior.range Numeric vector of length 2. PC-prior for the range of the shared spatial field S_shared, e.g. \code{c(10, 0.01)} means P(range < 10) = 0.01. Must be substantially larger than \code{local.pcprior.range} to ensure scale separation (Bakka et al., 2018). If \code{NULL} (and \code{local.pcprior.range} is also \code{NULL}), no spatial fields are used.
-#' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01.
+#' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01. For multi-scale separation, set \code{shared.pcprior.sigma[1]} substantially higher than \code{local.pcprior.sigma[1]} (e.g., c(1, 0.01) vs c(0.5, 0.01)).
 #' @param local.pcprior.range Numeric vector of length 2. PC-prior for the range of the local residual field S_loc (regional predictor only). If \code{NULL} (and \code{shared.pcprior.range} is also \code{NULL}), no spatial fields are used. Providing \code{shared.pcprior.range} without \code{local.pcprior.range} raises an error.
 #' @param local.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_loc.
 #' @param covariate.effects Optional named list to control the functional form of covariates (e.g., \code{"linear"} for linear, or \code{"rw2"} for non-linear splines)(see details). If \code{NULL} (default), all covariate effects remain constant (linear).
@@ -167,7 +167,8 @@ NSBM.pure <- function(nsbm_obj,
                       n.threads = 1,
                       inla.int.strategy = "eb", 
                       seed = NULL,
-                      save.output = FALSE) {
+                      save.output = FALSE,
+                      verbose = TRUE) {
 
   vg <- nsbm_obj$Selected.Variables.Global
   vr <- nsbm_obj$Selected.Variables.Regional
@@ -175,9 +176,18 @@ NSBM.pure <- function(nsbm_obj,
   has_Sloc <- !is.null(spde.mesh) && !is.null(local.pcprior.range)  && !is.null(local.pcprior.sigma)
   has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
 
+  # Logs
+  .info <- function(msg) if(verbose) message("ℹ ", msg)
+  .check <- function(msg) if(verbose) message("  ✓ ", msg)
+  .item <- function(msg) if(verbose) message("    - ", msg)
+  .warn <- function(msg) warning("⚠️  ", msg, call. = FALSE)
+  .stop <- function(msg) stop("❌ ", msg, call. = FALSE)
+
+  .info("sabinaJMBM: Joint Multiscale Species Distribution Model")
+
   ## Checks
   if(!inherits(nsbm_obj, "nsdm.vinput")) {
-    stop("❌  The 'nsbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
+    .stop("The 'nsbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
   }
   #
   if(inherits(family, "family")) {
@@ -187,81 +197,81 @@ NSBM.pure <- function(nsbm_obj,
     fam <- "cp"
     lnk <- NULL
   } else {
-    stop("❌ `family` must be either:\n",
-         "  - a standard family() object (e.g. binomial(link = 'logit'), poisson(link = 'log'), etc.)\n",
-         "  - the string 'cp' for a Cox process.\n")  #@@@JMB poner permitidos o enviar a ?NSBM.pure details?
+    .stop("`family` must be either a standard family() object or the string 'cp'.")  #@@@JMB poner permitidos o enviar a ?NSBM.pure details?
   }
   valid_links <- list(binomial = c("logit", "cloglog"),
                       poisson = "log", nbinomial = "log",
                       gaussian = c("identity", "log"), beta = "logit",
                       tweedie = "log", cp = NULL)
   if(!fam %in% names(valid_links)) {
-    stop("❌ Unsupported family ", fam, ".\n",
-         "  Supported families are: ", paste(names(valid_links), collapse = ", "), "\n")
+    .stop(paste0("Unsupported family: ", fam, ". Supported: ", paste(names(valid_links), collapse = ", ")))
   }
   if(!is.null(lnk) && !lnk %in% valid_links[[fam]]) {
-    stop("❌ Inalid link `", lnk, "` for this family `", fam, "`.\n",
-         "  Allowed links for '", fam, "': ", paste(valid_links[[fam]], collapse = ", "), ".\n")
+    .stop(paste0("Invalid link '", lnk, "' for family '", fam, "'. Allowed: ", paste(valid_links[[fam]], collapse = ", ")))
   }
   #
   valid_ic <- c("unpooled", "ordered_hierarchical", "bayesian_feedback")
   if(is.null(coupling.intercept)) {
-    if(length(vr) == 0) stop("❌ 'coupling.intercept = NULL' (regional-only) but no regional covariates are present.\n\n")
-    if(has_Sshared) stop("❌ S_shared (shared spatial field) not allowed in regional-only model (coupling.intercept = NULL).\n\n")
-    message("ℹ️ 'coupling.intercept = NULL'; running a regional-only model (no global component will be used).\n\n")
+    if(length(vr) == 0) .stop("'coupling.intercept = NULL' (regional-only) but no regional covariates are present.")
+    if(has_Sshared) .stop("S_shared (shared spatial field) not allowed in regional-only model.")
   } else {
     if(!is.character(coupling.intercept) || length(coupling.intercept) != 1 || !coupling.intercept %in% valid_ic) {
-      stop("❌ The 'coupling.intercept' must be NULL, 'unpooled', 'ordered_hierarchical' or 'bayesian_feedback'.\n\n")
+      .stop("The 'coupling.intercept' must be NULL, 'unpooled', 'ordered_hierarchical' or 'bayesian_feedback'.")
     }
     if(length(vg) == 0) {
-      stop("❌ 'coupling.intercept = ", coupling.intercept, "' requires a global component,but none are present.\n",
-           "   Use 'coupling.intercept = NULL' for a regional-only model.\n\n")
+      .stop(paste0("'coupling.intercept = ", coupling.intercept, "' requires a global component. Use NULL for regional-only."))
     }
   }
   if(is.null(spde.mesh) && (!is.null(local.pcprior.range) || !is.null(shared.pcprior.range))) {
-    stop("❌ SPDE priors were provided but 'spde.mesh' is NULL. Create a mesh with `create_mesh()` and pass it to `spde.mesh`.\n\n")
+    .stop("SPDE priors were provided but 'spde.mesh' is NULL. Create a mesh with create_mesh().")
   }
   if(!is.null(spde.mesh) && !inherits(spde.mesh, "inla.mesh")) {
-    stop("❌ `spde.mesh` must be a valid INLA mesh object (class 'inla.mesh'). Use `create_mesh()` to build it.\n\n")
+    .stop("`spde.mesh` must be a valid INLA mesh object. Use create_mesh() to build it.")
   }
   if(has_Sloc && (is.null(local.pcprior.range) || is.null(local.pcprior.sigma))) {
-    stop("❌ Missing priors for Sloc field. Must provide both `local.pcprior.range` and `local.pcprior.sigma`.\n\n")
+    .stop("Missing priors for Sloc field. Provide both local.pcprior.range and sigma.")
   }
   if(has_Sshared && (is.null(shared.pcprior.range) || is.null(shared.pcprior.sigma))) {
-      stop("❌ Missing priors for Sshared field. Mus provide both `shared.pcprior.range` and `shared.pcprior.sigma`.\n\n")
+    .stop("Missing priors for Sshared field. Provide both shared.pcprior.range and sigma.")
   }
   if(has_Sloc && has_Sshared) {
     if(shared.pcprior.range[1] < local.pcprior.range[1] * 3) {
-      warning("⚠️ `shared.pcprior.range` < 3× `local.pcprior.range`: Sloc and Sshared may overlap, causing double-counting of Sloc variance.\n\n")
+      .warn("`shared.pcprior.range` < 3x `local.pcprior.range`: fields may overlap, causing variance inflation.")
     }
   }
   #
   if(!is.null(covariate.effects)) {
-    if(!is.list(covariate.effects)) stop("❌ `covariate.effects` must be a list or 'NULL'.\n")
-    if(any(!names(covariate.effects) %in% c("global", "regional", "default"))) stop("❌ Invalid entries in `covariate.effects`. Allowed: 'global', 'regional', 'default'.\n\n")
+    if(!is.list(covariate.effects)) .stop("`covariate.effects` must be a list or 'NULL'.")
+    if (any(!names(covariate.effects) %in% c("global", "regional", "default"))) {
+      .stop("Invalid entries in `covariate.effects`. Allowed: 'global', 'regional', 'default'.")
+    }
 
     def <- covariate.effects$default
     if(!is.null(def)) {
       if(is.list(def)) {
-        if(is.null(def$model) || !def$model %in% c("linear","rw2","drop")) stop("❌ `covariate.effects$default` must include `model = 'linear'|'rw2'|'drop'`.\n")
+        if (is.null(def$model) || !def$model %in% c("linear", "rw2", "drop")) {
+          .stop("`covariate.effects$default` must include `model = 'linear'|'rw2'|'drop'`.")
+        }
       } else if(is.character(def)) {
-        if(!def %in% c("linear","drop")) stop("❌ `covariate.effects$default` must be 'linear' or 'drop'.\n")
-      } else stop("❌ `covariate.effects$default` must be a character or list.\n")
+        if (!def %in% c("linear", "drop")) .stop("`covariate.effects$default` must be 'linear' or 'drop'.")
+      } else {
+        .stop("`covariate.effects$default` must be a character or list.")
+      }
     }
     # dropped vars
     all_dropped_gl <- !is.null(covariate.effects) && length(vg) > 0 && all(vapply(vg, function(x) .resolve_covariate_effects(x, "global", covariate.effects)$model == "drop", logical(1)))
     all_dropped_re <- !is.null(covariate.effects) && length(vr) > 0 && all(vapply(vr, function(x) .resolve_covariate_effects(x, "regional", covariate.effects)$model == "drop", logical(1)))
-
-    if(all_dropped_gl && all_dropped_re) message("ℹ️ All covariates dropped at both global and regional scales.\n")
-    else if(all_dropped_gl) message("ℹ️ All global covariates dropped.\n")
-    else if(all_dropped_re) message("ℹ️ All regional covariates dropped.\n")
-
+    if (all_dropped_gl && all_dropped_re) {
+      .info("All covariates dropped at both global and regional scales.")
+    } else if (all_dropped_gl) {
+      .info("All global covariates dropped.")
+    } else if (all_dropped_re) {
+      .info("All regional covariates dropped.")
+    }
   }
   if(has_Sshared && length(vg) > 0) {
     if(any(vapply(vg, function(x) .resolve_covariate_effects(x, "global", covariate.effects)$model == "rw2", logical(1)))) {
-      stop("❌ RW2 global effects are not allowed when the Sshared SPDE is active.\n",
-           "   Both mechanisms smooth broad-scale structure and become redundant.\n",
-           "   Disable RW2 for global covariates (in `covariate.effects`) or set `shared.pcprior.range` / `shared.pcprior.sigma` = NULL).\n\n")
+      .stop("RW2 global effects are not allowed when the Sshared SPDE is active. Both mechanisms smooth broad-scale structure. Disable RW2 or deactivate Sshared.")
     }
   }
   #
@@ -269,33 +279,30 @@ NSBM.pure <- function(nsbm_obj,
   if(!is.null(coupling.predictors)) {
     if(is.character(coupling.predictors)) {
       if(!coupling.predictors %in% valid_cp) {
-        stop("❌ `coupling.predictors` must be one of: ", paste(valid_cp, collapse=", "), ",\n",
-             " or a named list specifying defaults and variable-specific modes.\n\n")
+        .stop(paste0("`coupling.predictors` must be one of: ", paste(valid_cp, collapse = ", ")))
       }
     }
     else if(is.list(coupling.predictors)) {
       if(any(!names(coupling.predictors) %in% c("default", "variables"))) {
-        stop("❌ Invalid entries in `coupling.predictors`. Allowed components: 'default', 'variables'.\n\n")
+       .stop("Invalid entries in `coupling.predictors`. Allowed: 'default', 'variables'.")
       }
       if(!is.null(coupling.predictors$default)) {
         if(!coupling.predictors$default %in% valid_cp) {
-          stop("❌ `coupling.predictors$default` must be one of: ", paste(valid_cp, collapse=", "), ".\n\n")
+          .stop(paste0("`coupling.predictors$default` must be one of: ", paste(valid_cp, collapse = ", ")))
         }
       }
       if(!is.null(coupling.predictors$variables)) {
-        if(!is.list(coupling.predictors$variables)) {
-          stop("❌ `coupling.predictors$variables` must be a named list.\n\n")
-        }
+        if (!is.list(coupling.predictors$variables)) .stop("`coupling.predictors$variables` must be a named list.")
         for(v in names(coupling.predictors$variables)) {
           mode_v <- coupling.predictors$variables[[v]]
           if(!mode_v %in% valid_cp) {
-            stop("❌ Invalid coupling mode for variable '", v, "'. Allowed modes: ", paste(valid_cp, collapse=", "), ".\n\n")
+            .stop(paste0("Invalid coupling mode for variable '", v, "'. Allowed: ", paste(valid_cp, collapse = ", ")))
           }
         }
       }
     }
     else {
-      stop("❌ `coupling.predictors` must be NULL, a character mode, or a list(default=..., variables=list(...)).\n\n")
+      .stop("`coupling.predictors` must be NULL, a character mode, or a list.")
     }
   }
   # compatibility coupling.predictors x covariate.effects
@@ -312,65 +319,74 @@ NSBM.pure <- function(nsbm_obj,
       if(cp_mode == "bayesian_feedback") {
         has_bf <- TRUE
         if(!(v %in% vg_check)) {
-          stop("❌  `coupling.predictors`: variable '", v, "' explicitly requested 'bayesian_feedback', but it is missing in the global scale (or intercept is NULL).\n")
+          .stop(paste0("Variable '", v, "' requested 'bayesian_feedback' but is missing at global scale."))
         }
         if(identical(spec_re$model, "rw2")) {
-          stop("❌  `coupling.predictors`: variable '", v, "' cannot use 'bayesian_feedback' with 'rw2'. Supported for 'linear' only.\n")
+          .stop(paste0("Variable '", v, "' cannot use 'bayesian_feedback' with 'rw2'. Supported for 'linear' only."))
         }
       # hierarchical joint methods
       } else if(cp_mode %in% c("ordered_hierarchical", "scale_decomposed")) {
         has_joint <- TRUE
         if(!(v %in% vg_check)) {
-          stop("❌ `coupling.predictors`: variable '", v, "' cannot use '", cp_mode, "'. Missing in global scale.\n")
+          .stop(paste0("Variable '", v, "' cannot use '", cp_mode, "'. Missing at global scale."))
         }
         if(!is.null(spec_gl) && spec_gl$model == "drop") {
-          stop("❌ `coupling.predictors`: variable '", v, "' cannot use '", cp_mode, "'. Global effect is dropped.\n")
+          .stop(paste0("Variable '", v, "' cannot use '", cp_mode, "'. Global effect is dropped."))
         }
         if(spec_re$model == "drop") {
-          stop("❌ `coupling.predictors`: variable '", v, "' cannot use '", cp_mode, "'. Regional effect is dropped.\n")
+          .stop(paste0("Variable '", v, "' cannot use '", cp_mode, "'. Regional effect is dropped."))
         }
         if(cp_mode == "ordered_hierarchical" && !is.null(spec_gl) && spec_gl$model == "rw2") {
-          stop("❌ `coupling.predictors`: variable '", v, "' cannot use 'ordered_hierarchical'. Global effect uses RW2.\n")
+          .stop(paste0("Variable '", v, "' cannot use 'ordered_hierarchical'. Global effect uses RW2."))
         }
       }
     }
   }
   if(has_bf && has_joint) {
-    stop("❌  Cannot mix 'bayesian_feedback' with 'ordered_hierarchical' or 'scale_decomposed'.\n",
-         "    Feedback requires sequential fitting, while hierarchical couplings require joint fitting.\n\n")
+    .stop("Cannot mix 'bayesian_feedback' with 'ordered_hierarchical' or 'scale_decomposed'.")
   }
   #  
   if(!is.null(seed)) {
-    if(!is.numeric(seed) || length(seed) != 1) stop("❌ 'seed' must be a single numeric value.\n\n")
+    if (!is.numeric(seed) || length(seed) != 1) .stop("'seed' must be a single numeric value.")
     set.seed(seed)
   }
   #
   valid_int_strategy <- c("eb", "ccd", "grid")
   if(!inla.int.strategy %in% valid_int_strategy) {
-    stop("❌ `inla.int.strategy` must be one of: ", paste(valid_int_strategy, collapse = ", "), ".\n\n")
+    .stop(paste0("`inla.int.strategy` must be one of: ", paste(valid_int_strategy, collapse = ", ")))
   }
   if(inla.int.strategy == "eb") {
-    warning("⚠️ `inla.int.strategy = 'eb'` (Empirical Bayes) is fast but underestimates uncertainty\n",
-            "   by fixing hyperparameters at their posterior mode instead of integrating over them.\n",
-            "   For final/publication results use `inla.int.strategy = 'ccd'`.\n",
-            "   Reference: Rue et al. (2009) JRSS-B, Simpson et al. (2017) Statistical Science.\n\n")
+    .warn("'inla.int.strategy = eb' (Empirical Bayes) is fast but underestimates uncertainty. Use 'ccd' for final results.")
   }
   #
   available_cores <- parallel::detectCores(logical = TRUE)
   if(!is.null(n.threads) && n.threads > available_cores) {
-    stop(paste0("❌ Requested `n.threads` = ", n.threads, " exceeds available cores (", available_cores,").\n\n"))
+    .stop(paste0("Requested `n.threads` (", n.threads, ") exceeds available cores (", available_cores, ")."))
   }
   INLA::inla.setOption(num.threads = n.threads)
   #
   if(!is.null(background.weights) && !is.numeric(background.weights)) {
     if(!is.character(background.weights) || length(background.weights) != 1 || background.weights != "area_weighted") {
-      stop("❌ background.weights must be NULL, 'area_weighted', or a numeric vector.\n\n")
+      .stop("`background.weights` must be NULL, 'area_weighted', or a numeric vector.")
     }
   }
   if(!is.null(background.weights) && fam == "cp") {
-    message("ℹ️ background.weights is ignored for family = 'cp': area integration is handled via continuous samplers.\n")
+    .info("background.weights is ignored for family = 'cp' (handled via continuous samplers).")
     background.weights <- NULL
   }
+
+  if(is.null(coupling.intercept)) {
+    .check("Architecture: Regional-only (no global component)")
+  } else {
+    cp_pred_str <- if(is.list(coupling.predictors)) "variable-specific" else if(is.null(coupling.predictors)) "none" else coupling.predictors
+    .check(paste0("Architecture: Joint model (Intercepts: ", coupling.intercept, " | Predictors: ", cp_pred_str, ")"))
+  }
+  fam_str <- if(fam == "cp") {
+    "log-Gaussian Cox process (LGCP)"
+  } else {
+    paste0(fam, " (link: ", lnk, ")")
+  }
+  .check(paste0("Family: ", fam_str))
 
 
   ## Data preparation
@@ -392,35 +408,44 @@ NSBM.pure <- function(nsbm_obj,
     }
   }
 
+  if(length(all_model_vars) > 0) {
+    .info("Pre-processing environmental covariates...")
+    if(length(sd_vars) > 0) .check("Applying scale decomposition (macro-trend vs micro-anomaly)")
+    .check("Standardizing covariates (Z-score)")
+  }
+
+  n_cores_std <- min(n.threads, max(length(names(sp_covglo)), length(names(sp_covreg))))
+
   # global standarization 
-  for(v in names(sp_covglo)) {
-    vals <- terra::values(sp_covglo[[v]], na.rm = TRUE)
-    scale_params[[v]] <- list(mean = mean(vals), sd = sd(vals))
-    sp_covglo[[v]] <- (sp_covglo[[v]] - scale_params[[v]]$mean) / scale_params[[v]]$sd
+  if (!is.null(coupling.intercept) && length(names(sp_covglo)) > 0) {
+    result_glo <- .standardize_rasters(sp_covglo, n_cores = n.threads)
+    sp_covglo <- result_glo$rast
+    scale_params <- c(scale_params, result_glo$params)
   }
 
   # regional standarization
-  for(v in names(sp_covreg)) {
-    if(v %in% names(scale_params) && !grepl("_ls$|_ss$", v)) {
-      m <- scale_params[[v]]$mean
-      s <- scale_params[[v]]$sd
-    } else {
-      vals <- terra::values(sp_covreg[[v]], na.rm = TRUE)
-      m <- mean(vals)
-      s <- sd(vals)
-      scale_params[[v]] <- list(mean = m, sd = s)
-    }
-    # Ahora SÍ estandarizamos el raster regional
-    sp_covreg[[v]] <- (sp_covreg[[v]] - m) / s
+  if (length(names(sp_covreg)) > 0) {
+    result_reg <- .standardize_rasters(sp_covreg, n_cores = n_cores_std)
+    sp_covreg <- result_reg$rast
+    scale_params <- c(scale_params, result_reg$params)
   }
 
-  # log current
-  message("ℹ️ Standardizing regional variables for the historical baseline...")
-  stats_pres <- vapply(names(sp_covreg), function(v) {
-    sprintf("    ✓ %s: Z-mean = %+.3f, Z-sd = %.3f", 
-            v, mean(terra::values(sp_covreg[[v]]), na.rm=TRUE), sd(terra::values(sp_covreg[[v]]), na.rm=TRUE))
-  }, character(1))
-  message(paste(stats_pres, collapse = "\n"), "\n")
+  # log stats
+  if (length(names(sp_covreg)) > 0 && verbose) {
+    for (v in names(sp_covreg)) {
+      m_val <- terra::global(sp_covreg[[v]], "mean", na.rm = TRUE)[1, 1]
+      s_val <- terra::global(sp_covreg[[v]], "sd", na.rm = TRUE)[1, 1]
+      .item(sprintf("%s: Z-mean = %+.3f, Z-sd = %.3f", v, m_val, s_val))
+    }
+  }
+
+  if (!is.null(coupling.intercept) && !is.null(sp_covglo) && length(names(sp_covglo)) > 0 && verbose) {
+    for (v in names(sp_covglo)) {
+      m_val <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
+      s_val <- terra::global(sp_covglo[[v]], "sd", na.rm = TRUE)[1, 1]
+      .item(sprintf("%s (global): Z-mean = %+.3f, Z-sd = %.3f", v, m_val, s_val))
+    }
+  }
 
   #
   pp_glo <- rbind(
@@ -442,13 +467,13 @@ NSBM.pure <- function(nsbm_obj,
 
   # rm NAs
   if(length(vg) > 0) {
-    keep_glo <- stats::complete.cases(terra::extract(sp_covglo, pp_glo, ID = FALSE))
+    keep_glo <- stats::complete.cases(terra::extract(sp_covglo, terra::vect(pp_glo), ID = FALSE))
     pp_glo <- pp_glo[keep_glo, ]
   }
   if(length(vr) > 0) {
-    ext_reg <- terra::extract(sp_covreg, pp_reg, ID = FALSE)
+    ext_reg <- terra::extract(sp_covreg, terra::vect(pp_reg), ID = FALSE)
     if(has_joint) {
-      ext_reg <- cbind(ext_reg, terra::extract(sp_covglo, pp_reg, ID = FALSE))
+      ext_reg <- cbind(ext_reg, terra::extract(sp_covglo, terra::vect(pp_reg), ID = FALSE))
     }
     pp_reg <- pp_reg[stats::complete.cases(ext_reg), ]
   }
@@ -480,8 +505,7 @@ NSBM.pure <- function(nsbm_obj,
     } else if(length(background.weights) == n_reg_obs) {
       w_reg <- background.weights
     } else {
-      stop("❌ Length of background.weights (", length(background.weights), ") does not match ",
-           "n_global + n_regional (", n_glo_obs + n_reg_obs, ") or n_regional (", n_reg_obs, ").\n\n")
+      .stop(paste0("Length of background.weights (", length(background.weights), ") does not match observations."))
     }
   }
 
@@ -508,6 +532,12 @@ NSBM.pure <- function(nsbm_obj,
   pred_sf$region <- 1L
 
   ## SPDE components
+  if (has_Sloc || has_Sshared) {
+    .info("Building latent spatial fields (SPDE)...")
+    if (has_Sloc) .check("S_loc (fine-scale residual spatial field) activated")
+    if (has_Sshared) .check("S_shared (broad-scale spatial field) activated")
+  }
+
   if(has_Sloc)  {
     matern_loc <- INLA::inla.spde2.pcmatern(
       mesh = spde.mesh,
@@ -629,6 +659,8 @@ NSBM.pure <- function(nsbm_obj,
     any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.predictors, vg) == "bayesian_feedback", logical(1)))
   )
   
+  .info(sprintf("Fitting Bayesian model (Integration strategy: '%s')...", inla.int.strategy))
+
   fit <- .fit_nsbm(
     cmp = cmp, 
     lik_list = lik_list, 
@@ -641,42 +673,52 @@ NSBM.pure <- function(nsbm_obj,
     int.strategy = inla.int.strategy
   )
 
+
   ## K-fold CV (only fam no cp)
   if(cv.folds > 1) {      #@@@JMB la cv actual usa k-folds random. Deberíamos cosiderar cV espacial bloqueado con blockCV::cv_spatial()??? 
+    .info(sprintf("Performing spatial cross-validation (K = %d folds)...", cv.folds))
     if(fam == "cp") {
-      warning("⚠️ Cross-validation (cv.folds > 1) is not implemented for family = 'cp'. CV results will be NULL.")
+      .warn("Cross-validation (cv.folds > 1) is not implemented for family = 'cp'. CV results will be NULL.")
       cv_res <- NULL
     } else {
       # stratified k folds
       folds_g <- if(!is.null(coupling.intercept)) .make_stratified_kfolds(pp_glo$resp, cv.folds) else NULL
       folds_r <- .make_stratified_kfolds(pp_reg$resp, cv.folds)
-      cv_metrics <- numeric(cv.folds)
+
+      n_cores_cv <- min(n.threads, cv.folds)
+      inla_threads_k <- max(1, floor(n.threads / n_cores_cv))
+
+      if(n_cores_cv > 1) {
+        furrr::plan(furrr::multisession, workers = n_cores_cv, quiet = TRUE)
+      }
+
+      A_glo_total <- if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp" && !is.null(coupling.intercept)) as.numeric(terra::expanse(sp_covglo[[1]], unit = "km")) else NULL
+      A_reg_total <- if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") as.numeric(terra::expanse(sp_covreg[[1]], unit = "km")) else NULL
 
       both_cov <- c(sp_covglo, sp_covreg)
+      coords_all_r <- sf::st_coordinates(pp_reg)
+      valid_pts_mask <- stats::complete.cases(terra::extract(both_cov, coords_all_r, ID = FALSE))
 
-      for(k in seq_len(cv.folds)) {
-        # build likelihoods for fold k
+     cv_worker <- function(k) {
         train_g <- if(!is.null(coupling.intercept)) pp_glo[folds_g != k, ] else NULL
         train_r <- pp_reg[folds_r != k, ]
         test_r  <- pp_reg[folds_r == k, ]
 
-        # recalculate weights for this k fold's training data
         w_glo_k <- NULL
         w_reg_k <- NULL
+        
         if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") {
           if(!is.null(coupling.intercept) && !is.null(train_g)) {
             n_bg_glo_k <- sum(train_g$resp == 0L)
-            A_glo_k    <- as.numeric(terra::expanse(sp_covglo[[1]], unit = "km"))
-            w_glo_k    <- ifelse(train_g$resp != 0L, 1, A_glo_k / n_bg_glo_k)
+            w_glo_k    <- ifelse(train_g$resp != 0L, 1, A_glo_total / n_bg_glo_k)
           }
           n_bg_reg_k <- sum(train_r$resp == 0L)
-          A_reg_k    <- as.numeric(terra::expanse(sp_covreg[[1]], unit = "km"))
-          w_reg_k    <- ifelse(train_r$resp != 0L, 1, A_reg_k / n_bg_reg_k)
+          w_reg_k    <- ifelse(train_r$resp != 0L, 1, A_reg_total / n_bg_reg_k)
         } else if(is.numeric(background.weights)) {
-          # subset user weights to training indices
           w_glo_k <- if(!is.null(coupling.intercept) && !is.null(w_glo)) w_glo[folds_g != k] else NULL
           w_reg_k <- if(!is.null(w_reg)) w_reg[folds_r != k] else NULL
         }
+
         liks_k <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
                                       train_g, train_r,
                                       bdy_glo, bdy_reg, dom,
@@ -692,34 +734,39 @@ NSBM.pure <- function(nsbm_obj,
           coupling.predictors = coupling.predictors,
           needs_feedback = needs_feedback,
           vr = vr,
-          n.threads = n.threads,
+          n.threads = inla_threads_k,
           seed = seed,
           int.strategy = inla.int.strategy
         )
 
-        # rm NAs from test set
-        coords_t <- sf::st_coordinates(test_r)
-        keep <- stats::complete.cases(terra::extract(both_cov, coords_t))
+        # rm NAs
+        keep_k <- valid_pts_mask[folds_r == k]
+        test_r2 <- test_r[keep_k, ]
 
-        # pred and metric
-        test_r2 <- test_r[keep, ]
         if(nrow(test_r2) > 0) {
           pk <- predict(fit_k, test_r2, pred_formula)
           if(fam %in% c("binomial", "beta")) {
             if(length(unique(test_r2$resp)) > 1) {
-              cv_metrics[k] <- suppressMessages(as.numeric(pROC::auc(test_r2$resp, pk$mean)))
-            } else {
-              cv_metrics[k] <- NA_real_
-            }
+              suppressMessages(as.numeric(pROC::auc(test_r2$resp, pk$mean)))
+            } else { NA_real_ }
           } else {
-            cv_metrics[k] <- sqrt(mean((test_r2$resp - pk$mean)^2, na.rm = TRUE))
+            sqrt(mean((test_r2$resp - pk$mean)^2, na.rm = TRUE))
           }
         } else {
-          cv_metrics[k] <- NA_real_
+          NA_real_
         }
       }
 
+      if(n_cores_cv > 1) {
+        cv_metrics_list <- furrr::future_lapply(seq_len(cv.folds), cv_worker, .options = furrr::furrr_options(seed = TRUE))
+        furrr::plan(furrr::sequential) # Reseteo de seguridad al terminar
+      } else {
+        cv_metrics_list <- lapply(seq_len(cv.folds), cv_worker)
+      }
+     
+      cv_metrics <- unlist(cv_metrics_list)
       metric_name <- if(fam %in% c("binomial", "beta")) "AUC" else "RMSE"
+   
       cv_res <- list(
         cv.folds = cv.folds,
         metric_name = metric_name,
@@ -733,6 +780,9 @@ NSBM.pure <- function(nsbm_obj,
 
 
   ## Predictions
+  .info("Generating spatial predictions...")
+  .check("Current suitability map")
+
   pred_combined <- predict(fit, pred_sf, pred_formula)
   pred <- .pred_as_tif(pred_combined, sp_covreg)
   pred_local <- if(has_Sloc) {
@@ -742,19 +792,20 @@ NSBM.pure <- function(nsbm_obj,
     .pred_as_tif(predict(fit, pred_sf, ~ Sshared), sp_covreg)
   } else NULL
 
+  rm(pred_combined, pred_sf)
+  gc(verbose = FALSE)
+
 
   ## New scenarios
   proj_list <- list()
   if(proj.new.env && !is.null(nsbm_obj$Scenarios)) {
+    .check(sprintf("Projecting to new scenarios: %s", paste(names(nsbm_obj$Scenarios), collapse = ", ")))
 
     sp_covglo_curr <- sp_covglo
     sp_covreg_curr <- sp_covreg
    
     for(sc in names(nsbm_obj$Scenarios)) {
       scen_rast <- terra::unwrap(nsbm_obj$Scenarios[[sc]])
-
-      message("ℹ️ Projecting to new scenario: '", sc, "'")
-      message("   Standardizing scenario variables using historical calibration parameters...")
            
       if(!identical(sf::st_crs(crs), terra::crs(scen_rast))) {
         scen_rast <- terra::project(scen_rast, terra::crs(sp_covreg_curr))
@@ -762,25 +813,31 @@ NSBM.pure <- function(nsbm_obj,
 
       sp_covglo_fut <- sp_covglo_curr
       sp_covreg_fut <- sp_covreg_curr      
-      stats_msg <- character()
+
+      vars_glo <- intersect(names(sp_covglo_fut), names(scen_rast))
+      if(length(vars_glo) > 0) {
+        scen_glo_resampled <- terra::resample(scen_rast[[vars_glo]], sp_covglo_fut)
+      }
+      
+      vars_reg <- setdiff(names(sp_covreg_fut), grep("_ls$|_ss$", names(sp_covreg_fut), value = TRUE))
+      vars_reg <- intersect(vars_reg, names(scen_rast))
+      if(length(vars_reg) > 0) {
+        scen_reg_resampled <- terra::resample(scen_rast[[vars_reg]], sp_covreg_fut)
+      }
 
       # global standarization fut
-      for(v in names(sp_covglo_fut)) {
-        if(v %in% names(scen_rast)) {
-          fut_layer <- terra::resample(scen_rast[[v]], sp_covglo_fut)
-          std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
+      if (!is.null(coupling.intercept) && length(vars_glo) > 0) {
+        for(v in names(sp_covglo_fut)) {
+          if(v %in% names(scen_rast)) {
+            fut_layer <- scen_glo_resampled[[v]]
+            std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
           
-          if(!(v %in% names(sp_covreg_fut))) {
-            m_pres <- mean(terra::values(sp_covglo_curr[[v]]), na.rm = TRUE)
-            m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
-            stats_msg <- c(stats_msg, sprintf("    ✓ %s (Global): Present Z-mean = %+.3f | Scenario Z-mean = %+.3f | Shift = %+.3f", 
-                                              v, m_pres, m_fut, m_fut - m_pres))
-          }
-          sp_covglo_fut[[v]] <- std_fut_layer
-        } else {
-          if(!(v %in% names(sp_covreg_fut))) {
-            stats_msg <- c(stats_msg, sprintf("    ⚠️ %s (Global): NOT in scenario (retaining present-day values)", v))
-          }
+            if(!(v %in% names(sp_covreg_fut))) {
+              m_pres <- mean(terra::values(sp_covglo_curr[[v]]), na.rm = TRUE)
+              m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
+            }
+            sp_covglo_fut[[v]] <- std_fut_layer
+          } 
         }
       }
 
@@ -789,57 +846,61 @@ NSBM.pure <- function(nsbm_obj,
         if(grepl("_ls$|_ss$", v)) next 
         
         if(v %in% names(scen_rast)) {
-          fut_layer <- terra::resample(scen_rast[[v]], sp_covreg_fut)
-          std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
-          
-          m_pres <- mean(terra::values(sp_covreg_curr[[v]]), na.rm = TRUE)
-          m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
-          stats_msg <- c(stats_msg, sprintf("    ✓ %s: Present Z-mean = %+.3f | Scenario Z-mean = %+.3f | Shift = %+.3f", 
-                                            v, m_pres, m_fut, m_fut - m_pres))
-          sp_covreg_fut[[v]] <- std_fut_layer
-        } else {
-          stats_msg <- c(stats_msg, sprintf("    ⚠️ %s: NOT in scenario (retaining present-day values)", v))
-        }
+          fut_layer <- scen_reg_resampled[[v]]
+
+          if (!is.null(scale_params[[v]])) {
+            std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
+         
+            if(!(v %in% names(sp_covreg_fut))) {
+              m_pres <- mean(terra::values(sp_covreg_curr[[v]]), na.rm = TRUE)
+              m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
+            }
+            sp_covreg_fut[[v]] <- std_fut_layer
+          }
+        } 
       }
 
       # scale decomposed fut
       if(length(sd_vars) > 0) {
-        message("   Applying scale_decomposed partitioning to scenario...")
-        raw_glo_base <- terra::resample(scen_rast[[sd_vars]], sp_covglo_curr)
-        glo_resampled_scenario <- terra::resample(raw_glo_base, sp_covreg_curr)
+        vars_sd <- intersect(sd_vars, names(scen_rast))
         
-        for(X in sd_vars) {
-          if(X %in% names(scen_rast)) {
-            # Cálculo sobre datos RAW (sin estandarizar)
-            raw_reg <- terra::resample(scen_rast[[X]], sp_covreg_curr)
+        if(length(vars_sd) > 0) {
+          raw_glo_base <- scen_glo_resampled[[vars_sd]]
+          glo_resampled_scenario <- terra::resample(raw_glo_base, sp_covreg_curr)
+          
+          for(X in vars_sd) {
+            raw_reg <- scen_reg_resampled[[X]]
             raw_glo <- glo_resampled_scenario[[X]]
             
-            # Estandarización con parámetros del histórico
+            # Standarization with historical parameters
             std_ss <- ((raw_reg - raw_glo) - scale_params[[paste0(X, "_ss")]]$mean) / scale_params[[paste0(X, "_ss")]]$sd
             std_ls <- (raw_glo - scale_params[[paste0(X, "_ls")]]$mean) / scale_params[[paste0(X, "_ls")]]$sd
             
+            scen_rast[[paste0(X, "_ss")]] <- std_ss
+            scen_rast[[paste0(X, "_ls")]] <- std_ls
+            
             sp_covreg_fut[[paste0(X, "_ss")]] <- std_ss
             sp_covreg_fut[[paste0(X, "_ls")]] <- std_ls
-            
+
             shift_ss <- mean(terra::values(std_ss), na.rm=TRUE) - mean(terra::values(sp_covreg_curr[[paste0(X, "_ss")]]), na.rm=TRUE)
             shift_ls <- mean(terra::values(std_ls), na.rm=TRUE) - mean(terra::values(sp_covreg_curr[[paste0(X, "_ls")]]), na.rm=TRUE)
-            stats_msg <- c(stats_msg, sprintf("    ✓ %s_ss: Shift = %+.3f | %s_ls: Shift = %+.3f", X, shift_ss, X, shift_ls))
           }
         }
       }
-      
-      # Log
-      message(paste(stats_msg, collapse = "\n"), "\n")
-      
+           
       sp_covglo <- sp_covglo_fut
       sp_covreg <- sp_covreg_fut
       
-      scen_df <- sf::st_as_sf(terra::as.points(scen_rast, values = FALSE))
+      scen_pts <- terra::as.points(scen_rast, values = TRUE, na.rm = TRUE)
+      scen_df <- sf::st_as_sf(scen_pts)
       scen_df <- sf::st_transform(scen_df, crs)
       scen_df$region <- 1L
-      
+
       proj_pred <- predict(fit, scen_df, pred_formula)
       proj_list[[sc]] <- .pred_as_tif(proj_pred, template = scen_rast)
+
+      rm(scen_pts, scen_df, proj_pred)
+      gc(verbose = FALSE)
     }
     
     sp_covglo <- sp_covglo_curr
@@ -848,6 +909,8 @@ NSBM.pure <- function(nsbm_obj,
 
 
   ## Diagnostics
+  .info("Computing model diagnostics...")
+
   coords_reg <- sf::st_coordinates(pp_reg)
   data_used  <- data.frame(x = coords_reg[,1], y = coords_reg[,2], resp = pp_reg$resp)
   diag_block <- .nsbm_diagnostics(
@@ -863,10 +926,6 @@ NSBM.pure <- function(nsbm_obj,
                   pred_shared = if(has_Sshared) pred_shared else NULL,
                   coupling.intercept = coupling.intercept,
                   scale_params = scale_params)
-
-  if(length(diag_block$warnings)) {
-    message(paste(diag_block$warnings, collapse = "\n\n"))
-  }
 
 
   ## Save outputs
@@ -959,12 +1018,10 @@ NSBM.pure <- function(nsbm_obj,
               row.names = FALSE)
 
 
-     message("ℹ️ Results saved in the following local folder(s):")
-     message(paste(
-     "  - Projections (current pred, Sloc field pred_local, Sshared field pred_shared and scenarios: ", projections_path, "\n",
-     " - Model values (fixed/random effects, hyperparameters, evaluation and diagnostics: ", values_path, "\n",
-     " - Full model object (.rds): ", file.path(values_path, paste0(species, "_model_fit.rds")), "\n"
-     ))
+    .info("Results saved in the following local folder(s):")
+    .item(paste0("Projections: ", projections_path))
+    .item(paste0("Model values: ", values_path))
+    .item(paste0("Full model object (.rds): ", file.path(values_path, paste0(species, "_model_fit.rds"))))
   }
 
 
@@ -1029,6 +1086,9 @@ NSBM.pure <- function(nsbm_obj,
   )
  
   attr(sabina, "class") <- "nsbm.inlabru"
+
+  if(verbose) message("\n  ✓ Model fitted successfully. Check 'summary()' for evaluation metrics.\n")
+
   return(sabina)
 
 }

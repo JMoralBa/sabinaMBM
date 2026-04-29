@@ -222,18 +222,24 @@ summary.nsbm.inlabru <- function(object, ...) {
   # diagnostics
   tbl_diag <- data.frame(
     Metric = c(
-      "Residual Moran's I (obs - fitted mean)",
+      "Residual Moran's I",
       "Max CI/median ratio (hyperparameters)",
       "Scale-separation ratio (range_Sshared / range_Sloc)",
       "Variance ratio (sigma_Sshared / sigma_Sloc)",
-      "Sshared–Sloc field correlation (r)"
+      "Sshared–Sloc field correlation (r)",
+      "Variance explained by Sloc (%)",
+      "Scale separation Index (SSI) [0–1]",
+      "Spatial redundancy Index (SRI) [0–1]"
     ),
     Value = c(
       fmt_val(diag_block$diagnostics$moran_I),
       fmt_val(diag_block$diagnostics$max_CIratio),
       fmt_val(diag_block$diagnostics$range_ratio),
       fmt_val(diag_block$diagnostics$sigma_ratio),
-      fmt_val(diag_block$diagnostics$field_correlation)
+      fmt_val(diag_block$diagnostics$field_correlation),
+      if(is.numeric(diag_block$diagnostics$var_explained_sloc)) 
+        fmt_val(diag_block$diagnostics$var_explained_sloc * 100) else "—",      fmt_val(diag_block$diagnostics$ssi),
+      fmt_val(diag_block$diagnostics$sri)
     ),
     stringsAsFactors = FALSE
   )

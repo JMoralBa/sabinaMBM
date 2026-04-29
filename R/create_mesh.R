@@ -96,7 +96,7 @@ create_mesh <- function(nsdm_obj,
     convex_hull = { boundary_convex_hull(points_sf, buffer = buffer) },
     concave_hull = { boundary_concave_hull(nsdm_obj, concavity = concavity, buffer = buffer) },
     raster_mask = { 
-      b <- boundary_raster_mask(nsdm_obj, buffer = buffer, remove_holes = remove_holes)
+    b <- boundary_raster_mask(nsdm_obj, buffer = buffer, remove_holes = remove_holes)
       if(proj.new.env && !is.null(nsdm_obj$Scenarios)) {
         b <- add_new_scenario_boundary(b, nsdm_obj$Scenarios, remove_holes = remove_holes)
       }
@@ -107,7 +107,7 @@ create_mesh <- function(nsdm_obj,
   # create mesh
   mesh <- fmesher::fm_mesh_2d(
     boundary = boundary,
-    max.edge = 4 * edge,  #@@@JMB este 4* hay que quitarlo para la versión final. (Virgilio?). Aumenta arificialmente el tamaño los triangulos... 
+    max.edge = edge, #4 * edge,  #@@@JMB este 4* hay que quitarlo para la versión final. (Virgilio?). Aumenta arificialmente el tamaño los triangulos... 
     offset = offset
   )
   fmesher::fm_crs(mesh) <- crs
@@ -237,12 +237,14 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
   r_pts <- terra::rasterize(terra::vect(pts_sf), r_glo, field = 1)
   mask_raster <- !is.na(terra::app(r_glo, sum, na.rm = TRUE))
   mask_combined <- mask_raster | !is.na(r_pts)
+  mask_combined[!mask_combined] <- NA 
 
   # Mask a sf
   poly_vec <- terra::as.polygons(mask_combined, dissolve = TRUE)
   terra::crs(poly_vec) <- terra::crs(r_glo)
   boundary_all <- sf::st_as_sf(poly_vec)
-  boundary_all <- sf::st_make_valid(boundary_all)
+  #boundary_all <- sf::st_make_valid(boundary_all)
+
   boundary_all <- sf::st_buffer(boundary_all, 0)
 
   # Holes internos
@@ -270,8 +272,7 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
   holes_sfc <- extract_holes(boundary_all)
 
   # Valid polys (those with points)
-  #keep <- sf::st_intersects(boundary_all, pts_sf, sparse = FALSE)[,1]
-  keep <- rowSums(sf::st_intersects(boundary_all, pts_sf, sparse = FALSE)) > 0
+  keep <- lengths(sf::st_intersects(boundary_all, pts_sf)) > 0
   boundary_useful <- boundary_all[keep, ]
 
   # boundary para mesh
@@ -282,6 +283,13 @@ boundary_raster_mask <- function(nsdm_obj, buffer = buffer, remove_holes = remov
   }
 
   # Clean boundary
+  #boundary_mesh <- sf::st_make_valid(boundary_mesh)
+  #if(!sf::st_is_longlat(boundary_mesh)) {
+  #  boundary_mesh <- sf::st_buffer(boundary_mesh, 0)
+  #}
+  boundary_mesh <- sf::st_union(sf::st_make_valid(boundary_mesh))
+  pixel_res <- min(terra::res(r_glo)) / 2
+  boundary_mesh <- sf::st_simplify(boundary_mesh, dTolerance = pixel_res)
   boundary_mesh <- sf::st_make_valid(boundary_mesh)
   if(!sf::st_is_longlat(boundary_mesh)) {
     boundary_mesh <- sf::st_buffer(boundary_mesh, 0)
