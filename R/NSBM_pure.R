@@ -433,17 +433,27 @@ NSBM.pure <- function(nsbm_obj,
   # log stats
   if (length(names(sp_covreg)) > 0 && verbose) {
     for (v in names(sp_covreg)) {
+      # standardized values
       m_val <- terra::global(sp_covreg[[v]], "mean", na.rm = TRUE)[1, 1]
       s_val <- terra::global(sp_covreg[[v]], "sd", na.rm = TRUE)[1, 1]
-      .item(sprintf("%s: Z-mean = %+.3f, Z-sd = %.3f", v, m_val, s_val))
+      # original values
+      original_mean <- scale_params[[paste0(v, "_mean")]]
+      original_sd <- scale_params[[paste0(v, "_sd")]]
+      .item(sprintf("%s (regional): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f", 
+                    v, m_val, s_val, original_mean, original_sd))
     }
   }
 
   if (!is.null(coupling.intercept) && !is.null(sp_covglo) && length(names(sp_covglo)) > 0 && verbose) {
     for (v in names(sp_covglo)) {
+      # standardized values
       m_val <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
       s_val <- terra::global(sp_covglo[[v]], "sd", na.rm = TRUE)[1, 1]
-      .item(sprintf("%s (global): Z-mean = %+.3f, Z-sd = %.3f", v, m_val, s_val))
+      # original values
+      original_mean <- scale_params[[paste0(v, "_mean")]]
+      original_sd <- scale_params[[paste0(v, "_sd")]]
+      .item(sprintf("%s (global): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f", 
+                    v, m_val, s_val, original_mean, original_sd))
     }
   }
 
@@ -675,7 +685,7 @@ NSBM.pure <- function(nsbm_obj,
 
 
   ## K-fold CV (only fam no cp)
-  if(cv.folds > 1) {      #@@@JMB la cv actual usa k-folds random. Deberíamos cosiderar cV espacial bloqueado con blockCV::cv_spatial()??? 
+  if(cv.folds > 1) {      #@@@JMB la cv actual usa k-folds random. Deberíamos cosiderar cpatial block CV??? 
     .info(sprintf("Performing spatial cross-validation (K = %d folds)...", cv.folds))
     if(fam == "cp") {
       .warn("Cross-validation (cv.folds > 1) is not implemented for family = 'cp'. CV results will be NULL.")
