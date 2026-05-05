@@ -10,7 +10,6 @@
 
   stats_all <- terra::global(sp_rast[[var_names]], fun = c("mean", "sd"), na.rm = TRUE)
   
-  # Convertimos a la estructura de lista que espera el resto del paquete
   stats_list <- list()
   for(v in var_names) {
     m_val <- stats_all[v, "mean"]
@@ -18,7 +17,7 @@
     
     stats_list[[v]] <- list(mean = m_val, sd = s_val)
     
-    # Estandarización con blindaje contra varianza cero
+    # standarization
     if(!is.na(s_val) && s_val > 1e-10) {
       sp_rast[[v]] <- (sp_rast[[v]] - m_val) / s_val
     } else {
@@ -271,7 +270,6 @@
   if(needs_feedback) {
     env_cmp <- environment(cmp)
     
-    # P0. dummies for phase 1 to prevent crashes
     assign("bf_mean_int", 0, envir = env_cmp)
     assign("bf_prec_int", 1, envir = env_cmp)
     if(!is.null(vr)) {
@@ -281,23 +279,21 @@
       }
     }
 
-    # P1. fit global model using ONLY the global likelihood
+    # fit global model using ONLY the global likelihood
     message("\nℹ️  Sequential bayesian feedback - Fitting global model to extract posteriors...")
     fit_glo <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[1]]), list(options = bru_opts)))
 
-    # P2. extract moments and inject them into the current environment
+    # extract moments and inject them into the current environment
     message("    Updating regional priors by moments and fitting joint model...\n")
 
-    # helper: safe precision with floor to avoid Inf or near-0 variance
-    # floor at 1e-4 precision (sd ~ 100) prevents degenerate flat priors
-    # ceiling at 1e6 precision (sd ~ 0.001) prevents point-mass priors
+    # safe precision with floor to avoid Inf or near-0 variance
     .safe_prec <- function(sd_val, floor_prec = 1e-4, ceil_prec = 1e6) {
       prec <- 1 / (sd_val^2)
       prec <- pmax(floor_prec, pmin(ceil_prec, prec))
       prec
     }
 
-    # helper: warn if global marginal is strongly skewed (moment matching unreliable)
+    # warn if global marginal is strongly skewed (moment matching unreliable)
     .check_skewness <- function(marginal, label) {
       if(is.null(marginal)) return(invisible(NULL))
       sm <- try(INLA::inla.smarginal(marginal), silent = TRUE)
@@ -338,7 +334,7 @@
       }
     }
     
-    # final fit using ONLY regional likelihood
+    # fit using ONLY regional likelihood
     fit <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[length(lik_list)]]), list(options = bru_opts)))
     return(fit)
     
@@ -411,7 +407,7 @@
          "   For linear effects use 'linear'; to exclude use 'drop'.\n\n")
   }
 
-  #unsupported type
+  # unsupported type
   stop("❌  Unsupported type in `", path_label, "`.\n",
        "   Must be string ('linear'|'drop') or list(model='rw2', u=..., alpha=...).\n\n")
 }
@@ -522,8 +518,7 @@
 #' random distribution of data in k-folds
 #' @noRd
 .make_stratified_kfolds <- function(y, K) {
-  # y: vector de 1/0
-  # K: número de folds
+  # K= nomber of folds
   idx1 <- which(y == 1)
   idx0 <- which(y == 0)
   f <- integer(length(y))
@@ -555,7 +550,7 @@
   has_Sloc <- "Sloc" %in% names(fit$summary.random)
   has_Sshared <- "Sshared" %in% names(fit$summary.random)
 
-  # Model fit metrics
+  # model fit metrics
   dic_val <- if(!is.null(fit$dic$dic) && !is.na(fit$dic$dic)) round(fit$dic$dic, 2) else NA_real_
   waic_val <- if(!is.null(fit$waic$waic) && !is.na(fit$waic$waic)) round(fit$waic$waic, 2) else NA_real_
   mlik_val <- if(!is.null(fit$mlik) && !is.na(fit$mlik[1,1])) round(fit$mlik[1, 1], 2) else NA_real_
@@ -618,7 +613,7 @@
   iGlobal <- mean_sd_str(fit$summary.random$IGlobal)
   iRegional <- mean_sd_str(fit$summary.random$IRegional)
 
-  # Significant vars
+  # significant vars
   sig_vars <- .signif_vars(fit, scale_params = scale_params)
 
   if (fam == "cp") {
@@ -727,7 +722,6 @@
                  sigma_Sshared = ci_ratio("Stdev for Sshared"))
 
   # credibility interval ratios (CI/median)
-  # High values indicate weak identifiability or non-informative priors.
   max_CIratio <- if(any(is.finite(ci_ratios))) max(ci_ratios, na.rm = TRUE) else NA_real_
 
   # posterior ≈ prior
@@ -1261,10 +1255,10 @@
       base_var <- gsub("GL$|RE$|RE_oh$|GL_ls$|RE_ss$", "", coef_name)
       if(base_var %in% names(scale_params) && scale_params[[base_var]]$sd > 0) {
         sd_x <- scale_params[[base_var]]$sd
-        sf[i, "mean"]       <- sf[i, "mean"]       / sd_x
-        sf[i, "sd"]         <- sf[i, "sd"]          / sd_x
-        sf[i, "0.025quant"] <- sf[i, "0.025quant"]  / sd_x
-        sf[i, "0.975quant"] <- sf[i, "0.975quant"]  / sd_x
+        sf[i, "mean"] <- sf[i, "mean"] / sd_x
+        sf[i, "sd"] <- sf[i, "sd"] / sd_x
+        sf[i, "0.025quant"] <- sf[i, "0.025quant"] / sd_x
+        sf[i, "0.975quant"] <- sf[i, "0.975quant"] / sd_x
       }
     }
   }
@@ -1280,7 +1274,7 @@
     }
   }
 
-  # 95% CI no cruza 0
+  # 95% CI no corss 0
   signif95 <- sf[,"0.025quant"] * sf[,"0.975quant"] > 0
   
   stars <- ifelse(signif95, "***", "")
@@ -1344,11 +1338,6 @@
   } else {
     base_name
   }
-  #model_type <- paste0("NSBM",
-  # if(has_Sloc) " + Sloc" else "",
-  # if(has_Sshared) " + Sshared" else "",
-  # if(has_covariates) " + covariates" else ""
-  #)
 
   cp_int <- if(is.null(coupling.intercept)) "NULL" else coupling.intercept
   cp_pred <- if(is.list(coupling.predictors)) "custom list" else if(is.null(coupling.predictors)) "NULL" else coupling.predictors
@@ -1389,8 +1378,8 @@
   if(has_Sloc) {
     params <- c(
       params,
-      "Sloc local field – Range (posterior mean ± SD)",
-      "Sloc local field – Sigma (posterior mean ± SD)"
+      "Sloc field – Range (posterior mean ± SD)",
+      "Sloc field – Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1401,8 +1390,8 @@
   if(has_Sshared) {
     params <- c(
       params,
-      "Sshared global field – Range (posterior mean ± SD)",
-      "Sshared global field – Sigma (posterior mean ± SD)"
+      "Sshared field – Range (posterior mean ± SD)",
+      "Sshared field – Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1457,7 +1446,6 @@
   if(is.null(tbl_fixed) || !nrow(tbl_fixed)) {
     tbl_fixed <- data.frame(Term = "No significant covariates detected")
   } else {
-    # var name
     base_vars <- gsub("GL$|RE$", "", tbl_fixed$coef)
     
     # which coupling?
