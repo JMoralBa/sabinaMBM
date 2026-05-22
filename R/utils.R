@@ -105,15 +105,16 @@
       if((xi - out[length(out)]) / r >= min_ratio) { 
         out <- c(out, xi)
       }
-    }
-    if(length(out) < 3L) {
-      out <- seq(min(x), max(x), length.out = min(max(5L, length(x)), 50L))
+    } 
+    #@@@JMB!! thin_knots con min_ratio=1e-3 colapsa a <3 knots en covariables con distribución sesgada (ej. bio1) cuando n_pts es pequeño o cuando Sshared=NULL reduce pp_reg_sf. ¿es min_ratio=1e-3 muy agresivo? ¿Debería ser adaptativo en funció de n o del rango del covariate? ¿Qué dice INLA como spacing minimo entre support values de rw2? No encuentro nada al respecto
+    if(length(out) < 3L) {  
+      out <- seq(min(x), max(x), length.out = min(max(10L, length(x)), 50L))
     }
     unique(out)
   }
 
   #rw2 defaults (inla recommends quantile grouping and K = 150-300 (balance stability and flexibility)
-  rw2_K <- 300L              #@@@JMB pensar si dejamos esto por defecto
+  rw2_K <- 300L              #@@@JMB!! pensar si dejamos esto por defecto
   rw2_method <- "quantile" 
 
   .build_rw2_values <- function(rast_layer, coords, K = rw2_K, method = rw2_method) {
@@ -128,7 +129,7 @@
     v <- sort(unique(as.numeric(levels(g))))
     v <- thin_knots(v)
     if(length(v) < 3L) {
-      stop("❌  RW2 requires ≥ 3 distinct support values.\n", #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
+      stop("❌  RW2 requires ≥ 3 distinct support values after knot thinning.\n", #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
            "   Consider reducing smoothing or check covariate variability.\n\n")
     }
     v
@@ -211,7 +212,7 @@
 
     # ordered_hierarchical: soft constraint beta_RE ~ N(1, 0.5^2)
     # mean.linear=1 with standardized covariates encourages regional effect to mirror global scale.
-    #@@@JMB PENDIENTE consultar con Virgilio: La version A con prior fijo N(1, 0.5^2) funciona pero es soft constraint????, no jerarquía real. 
+    #@@@JMB!! PENDIENTE consultar con Virgilio: La version A con prior fijo N(1, 0.5^2) funciona pero es soft constraint????, no jerarquía real. 
        # La versión B hace copy sobre componente lineal global es jerarquía real beta_RE|beta_GL~N(beta_GL,tau) pero se rompe. Pendiente verificar si es por strategy eb o por linear effects o q????
     else if(cp_mode == "ordered_hierarchical") {
       cmpregional <- c(cmpregional,
@@ -660,7 +661,7 @@
       range_res_mean
     } else if(has_Sshared) {
       range_lat_mean
-    } else {               #@@@JMB sin Sre ni Sshared usa 1/4 de la diagonal???
+    } else {               #@@@JMB!! sin Sre ni Sshared usa 1/4 de la diagonal???
       bb <- apply(xy, 2, range, na.rm = TRUE)
       sqrt(sum((bb[2,] - bb[1,])^2)) / 4
     }   
@@ -727,7 +728,7 @@
   max_CIratio <- if(any(is.finite(ci_ratios))) max(ci_ratios, na.rm = TRUE) else NA_real_
 
   # posterior ≈ prior
-  close_rel <- function(post_med, prior_u, tol = 0.15) {  #@@@JMB rev threshold = 15% difference en Bakka et al. 2018)
+  close_rel <- function(post_med, prior_u, tol = 0.15) {  #@@@JMB!! rev threshold = 15% difference en Bakka et al. 2018)
     if(!is.finite(post_med) || is.null(prior_u) || length(prior_u) < 1 ||
        !is.finite(prior_u[1]) || prior_u[1] == 0) return(FALSE)
     abs(post_med - prior_u[1]) / abs(prior_u[1]) < tol
@@ -831,14 +832,14 @@
     .warn(paste0(
       "Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").\n",
       "   Model missing local spatial structure.\n",
-      "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates."  #@@@JMB no estoy segura
+      "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates."  #@@@JMB!! no estoy segura
     ))
   }
   # posterior ≈ prior (weak data information)
   if(any(unlist(prior_close))) {
     .warn(paste0(
       "Posterior close to PC-prior mode: weak data information relative to prior strength.\n",
-      "   Recommended: relax priors or increase data resolution."    #@@@JMB rev recommendation??
+      "   Recommended: relax priors or increase data resolution."    #@@@JMB!! revisar recommendation??
     ))
   }    
   # cpo
@@ -847,7 +848,7 @@
     total_obs <- length(fit$cpo$cpo)
     if(cpo_failures > 0) {
       perc_failures <- (cpo_failures / total_obs) * 100
-      if(perc_failures > 1) {     #@@@JMB 1% of observations????
+      if(perc_failures > 1) {     #@@@JMB!! 1% of observations????
         .warn(paste0(
           "CPO failures detected (", round(perc_failures, 2), "% of observations).\n",
           "   Model severely struggles to predict these points (CPO ≈ 0).\n",

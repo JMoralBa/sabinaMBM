@@ -489,7 +489,7 @@ NSBM.pure <- function(nsbm_obj,
     pp_reg <- pp_reg[stats::complete.cases(ext_reg), ]
   }
 
-  ## Background weights
+  ## Background weights   #@@@JMB!! "area_weighted" sigue Warton & Shepherd 2010/Renner etal 2015 pero esta gente no contemplan dos escalas. Con area global >> area reg los pesos hay que equilibrarlos o algo así? ¿como hacemos esto para dos escalas?
   w_glo <- NULL
   w_reg <- NULL
   if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") {
@@ -570,7 +570,7 @@ NSBM.pure <- function(nsbm_obj,
   ## Nested intercept
   # prior for intercepts iid. param = c(1, 0.01) -> P(σ > 1) = 0.01
   IID_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
-  # prior for beta_copy (regional deviation). beta_regional ~ Normal(mean = 1, sd = 0.5). INLA uses precisión, so sd = 0.5 -> tau = 1/(0.5^2) = 4
+  #@@@JMB!! prior for beta_copy (regional deviation). beta_regional ~ Normal(mean = 1, sd = 0.5). INLA uses precisión, so sd = 0.5 -> tau = 1/(0.5^2) = 4  ¿está bien??
   COPY_BETA_PRIOR <- "hyper = list(beta = list(prior = 'normal', param = c(1, 4)))"
 
   if(is.null(coupling.intercept)) {
@@ -611,8 +611,8 @@ NSBM.pure <- function(nsbm_obj,
   # component formula (intercept + spataial + Sshared + fcovs
   cmp <- c(
     base_intercepts,
-    if(has_Sre) "Sre(geometry, model = matern_loc)" else NULL, # local residual field (regional only)
-    if(has_Sshared) "Sshared(main = geometry, model = matern_shared)" else NULL, # shared broad-scale field (both likelihoods)
+    if(has_Sre) "Sre(geometry, model = matern_loc)" else NULL,
+    if(has_Sshared) "Sshared(main = geometry, model = matern_shared)" else NULL,
     cmp_cov$cmp   # bio1GL(), bio1RE(),...
   )
   cmp <- paste(cmp[!is.na(cmp) & nzchar(cmp)], collapse = " + ")
@@ -686,7 +686,7 @@ NSBM.pure <- function(nsbm_obj,
 
 
   ## K-fold CV (only fam no cp)
-  if(cv.folds > 1) {      #@@@JMB la cv actual usa k-folds random. Deberíamos cosiderar cpatial block CV??? 
+  if(cv.folds > 1) {      #@@@JMB!! la cv actual usa k-folds random. Deberíamos cosiderar spatial block CV??? 
     .info(sprintf("Performing spatial cross-validation (K = %d folds)...", cv.folds))
     if(fam == "cp") {
       .warn("Cross-validation (cv.folds > 1) is not implemented for family = 'cp'. CV results will be NULL.")
@@ -966,7 +966,7 @@ NSBM.pure <- function(nsbm_obj,
       Metric = c("WAIC", "DIC", "MLik", "LCPO (sum log-CPO)"),
       Value = c(fit$waic$waic, fit$dic$dic, fit$mlik[1], diag_block$bayes_fit$lcpo_val))
     write.csv(eval_metrics, file = file.path(values_path, paste0(species, "_evaluation.csv")), row.names = FALSE)
-    # CPO values (one per observation)   #@@@JMB useful for leave-one-out diagnostics or model comparison??
+    # CPO values (one per observation)   #@@@JMB!! useful for leave-one-out diagnostics or model comparison??
     write.csv(data.frame(CPO = fit$cpo$cpo), file = file.path(values_path, paste0(species, "_pointwise_CPO.csv")), row.names = FALSE)
     # full model object (fit)
     saveRDS(fit, file = file.path(values_path, paste0(species, "_model_fit.rds")))
