@@ -1,14 +1,18 @@
-Package: sabinaNSBM
-Title: Nested Spatial Bayesian Models for Species Distribution
-Version: 0.0.0.9000
+Package: sabinaJMBM
+Title: Joint Multiscale Bayesian species distribution modelling using INLA
+Version: 0.1.0
 Authors@R: 
     person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),
            comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: Fits nested species distribution models (NSDMs) using hierarchical 
-    Bayesian modeling with spatial structure via INLA and inlabru. Allows 
-    integration of global and regional scales with multiple coupling structures 
-    for intercepts and predictors (unpooled, ordered hierarchical, 
-    scale-decomposed, and Bayesian feedback).
+Description: Bayesian implementation of nested species distribution models 
+    (NSDMs) integrating global and regional data through hierarchical
+    coupling in INLA via 'inlabru'. Accepts NSDM objects and implements
+    joint spatial Bayesian models with stochastic partial differential
+    equation (SPDE) random effects. Provides multiple coupling architectures
+    (unpooled, ordered hierarchical, scale-decomposed, Bayesian feedback)
+    for distinguishing scale-dependent niche dimensions and addressing niche
+    truncation. Improves predictive stability in non-analogous future climates
+    when regional training data lack geographic breadth of species' true ranges.
 License: MIT + file LICENSE
 LazyData: true
 Encoding: UTF-8
@@ -36,7 +40,10 @@ Imports:
     dplyr,
     fs,
     scales,
-    patchwork
+    patchwork,
+    parallel,
+    furrr,
+    stats
 Suggests:
     devtools,
     testthat (>= 3.0.0)

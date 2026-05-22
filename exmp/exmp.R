@@ -14,7 +14,7 @@ library(ggplot2)
 library(inlabru)
 library(INLA)
 library(sabinaNSDM)
-library(sabinaNSBM)   # devtools::load_all(...)
+library(sabinaJMBM)   # devtools::load_all(...)
  
  
 # -----------------------------------------------------------------------------
@@ -22,23 +22,21 @@ library(sabinaNSBM)   # devtools::load_all(...)
 # -----------------------------------------------------------------------------
  
 # Species name
-SpeciesName <- "Fagus.sylvatica"
+SpeciesName <- "Quercus.petraea"
  
 # Occurrence records
-data(Fagus.sylvatica.xy.global, package = "sabinaNSDM")
-data(Fagus.sylvatica.xy.regional, package = "sabinaNSDM")
+data(Quercus.petraea.xy.global, package = "sabinaNSDM")
+data(Quercus.petraea.xy.regional, package = "sabinaNSDM")
  
-# Environmental rasters — current climate
+# Environmental rasters (current)
 data(expl.var.global, package = "sabinaNSDM")
 data(expl.var.regional, package = "sabinaNSDM")
 expl.var.global <- terra::unwrap(expl.var.global)
 expl.var.regional <- terra::unwrap(expl.var.regional)
-expl.var.regional <- expl.var.regional[[-3]]
  
-# Environmental rasters — new scenario
+# Environmental rasters (new scenario)
 data(new.env, package = "sabinaNSDM")
 new.env <- terra::unwrap(new.env)
-new.env <- new.env[[-3]]
  
  
 # -----------------------------------------------------------------------------
@@ -48,16 +46,12 @@ new.env <- new.env[[-3]]
 # Input object
 myInput <- sabinaNSDM::NSDM.InputData(
   SpeciesName        = SpeciesName,
-  spp.data.global    = Fagus.sylvatica.xy.global,
-  spp.data.regional  = Fagus.sylvatica.xy.regional,
+  spp.data.global    = Quercus.petraea.xy.global,
+  spp.data.regional  = Quercus.petraea.xy.regional,
   expl.var.global    = expl.var.global,
   expl.var.regional  = expl.var.regional,
   new.env            = list(new.env),
-  new.env.names      = "scenario1",
-  Background.Global  = NULL,
-  Background.Regional = NULL,
-  Absences.Global    = NULL,
-  Absences.Regional  = NULL)
+  new.env.names      = "scenario1")
  
 # Formatting
 myFormatting <- sabinaNSDM::NSDM.FormattingData(
@@ -84,12 +78,12 @@ mySelvars <- sabinaNSDM::NSDM.SelectCovariates(
  
 myMesh <- create_mesh(
   nsdm_obj         = mySelvars,
-  edge             = c(0.5, 1),  # max triangle size c(inner, outer), in CRS units (here degrees)
-  offset           = c(0.25, 2), # domain extension c(inner, outer)
+  edge             = c(2, 10),  # max triangle size c(inner, outer), in CRS units (here degrees)
+  offset           = c(1, 5),   # domain extension c(inner, outer)
   buffer           = 0,
   boundary.method  = "raster_mask",
   remove_holes     = FALSE,
-  proj.new.env     = FALSE,
+  proj.new.env     = TRUE,
   plot             = TRUE)       # set FALSE to skip the mesh plot
  
  
@@ -110,18 +104,18 @@ myModel <- NSBM.pure(
   nsbm_obj            = mySelvars,
   family              = binomial(link = "logit"),
   spde.mesh           = myMesh,
-  local.pcprior.range  = c(2, 0.95),   # Sloc range prior
-  local.pcprior.sigma  = c(1, 0.01),    # Sloc variance prior
-  shared.pcprior.range = NULL,         # NULL = no shared SPDE
-  shared.pcprior.sigma = NULL,
+  regional.pcprior.range  = c(1.5, 0.05),   # S_loc range prior
+  regional.pcprior.sigma  = c(1.5, 0.01),   # S_loc variance prior
+  shared.pcprior.range = c(15, 0.05),    # S_shared range prior
+  shared.pcprior.sigma = c(0.3, 0.01),   # S_shared variance prior
   coupling.intercept  = "ordered_hierarchical",
   coupling.predictors = "ordered_hierarchical",
   covariate.effects   = NULL,           # NULL = all covariates linear // cve 
-  background.weights   = NULL,
+  background.weights  = NULL,
   proj.new.env        = TRUE,
   cv.folds            = 1,               # 1 = no cross-validation
   n.threads           = 2,
-  inla.int.strategy    = "eb",           # "ccd" for publication results
+  inla.int.strategy   = "eb",           # "ccd" for publication results
   seed                = 123,
   save.output         = FALSE)
  
@@ -150,6 +144,9 @@ plot(myModel, which = "pred", layer = "sd")
  
 # Residual spatial fields (if SPDE was fitted)
 plot(myModel, which = "pred_local", layer = "mean")
+
+# Broad-scale spatial field (Sshared)
+plot(myModel, which = "pred_shared", layer = "mean")
  
 # Future / alternative scenario
 plot(myModel, which = "scenario1", layer = "mean")

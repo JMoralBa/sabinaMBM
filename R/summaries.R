@@ -58,14 +58,14 @@ summary.nsbm.inlabru <- function(object, ...) {
     paste0(round(mean, digits), " ± ", round(sd, digits))
   }
 
-  Sloc_local <- "Sloc" %in% names(fit$summary.random)
+  Sre_local <- "Sre" %in% names(fit$summary.random)
   Sshared_global <- "Sshared" %in% names(fit$summary.random)
   has_covariates <- nrow(fit$summary.fixed) > 0
 
   # metadata
   species_name <- gsub("\\.", " ", species)
   model_type <- paste0("NSBM",
-   if(Sloc_local) " + Sloc" else "",
+   if(Sre_local) " + Sre" else "",
    if(Sshared_global) " + Sshared" else "",
    if(has_covariates) " + covariates" else ""
   )
@@ -106,11 +106,11 @@ summary.nsbm.inlabru <- function(object, ...) {
   params <- character(0)
   values <- character(0)
 
-  if(Sloc_local) {
+  if(Sre_local) {
     params <- c(
       params,
-      "Sloc field: Range (posterior mean ± SD)",
-      "Sloc field: Sigma (posterior mean ± SD)"
+      "Sre field: Range (posterior mean ± SD)",
+      "Sre field: Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -222,18 +222,24 @@ summary.nsbm.inlabru <- function(object, ...) {
   # diagnostics
   tbl_diag <- data.frame(
     Metric = c(
-      "Residual Moran's I (obs - fitted mean)",
+      "Residual Moran's I",
       "Max CI/median ratio (hyperparameters)",
-      "Scale-separation ratio (range_Sshared / range_Sloc)",
-      "Variance ratio (sigma_Sshared / sigma_Sloc)",
-      "Sshared–Sloc field correlation (r)"
+      "Scale-separation ratio (range_Sshared / range_Sre)",
+      "Variance ratio (sigma_Sshared / sigma_Sre)",
+      "Sshared–Sre field correlation (r)",
+      "Variance explained by Sre (%)",
+      "Scale separation Index (SSI) [0–1]",
+      "Spatial redundancy Index (SRI) [0–1]"
     ),
     Value = c(
       fmt_val(diag_block$diagnostics$moran_I),
       fmt_val(diag_block$diagnostics$max_CIratio),
       fmt_val(diag_block$diagnostics$range_ratio),
       fmt_val(diag_block$diagnostics$sigma_ratio),
-      fmt_val(diag_block$diagnostics$field_correlation)
+      fmt_val(diag_block$diagnostics$field_correlation),
+      if(is.numeric(diag_block$diagnostics$var_explained_Sre)) 
+        fmt_val(diag_block$diagnostics$var_explained_Sre * 100) else "—",      fmt_val(diag_block$diagnostics$ssi),
+      fmt_val(diag_block$diagnostics$sri)
     ),
     stringsAsFactors = FALSE
   )
