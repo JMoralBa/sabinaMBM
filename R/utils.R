@@ -78,15 +78,15 @@
 
 #' Components GL/RE for covariates
 #' @noRd
-.fcov <- function(obj, 
-                 spobjglo, 
+.fcov <- function(obj,
+                 spobjglo,
                  spobjreg,
                  sp_covglo,
                  sp_covreg,
                  covariate.effects = NULL,
                  coupling.predictors = NULL,
                  pp_glo_sf = NULL,
-                 pp_reg_sf= NULL) {
+                 pp_reg_sf = NULL) {
 
   # selected vars
   vg <- obj$Selected.Variables.Global
@@ -198,15 +198,15 @@
     if(cp_mode == "scale_decomposed") {
       if(specX$model == "linear") {
         cmpregional <- c(cmpregional,
-          paste0(X, "GL_ls(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_ls']]), model = 'linear')"),
-          paste0(X, "RE_ss(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_ss']]), model = 'linear')"))
+          paste0(X, "GL_glo_res(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_glo_res']]), model = 'linear')"),
+          paste0(X, "RE_reg_anom(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_reg_anom']]), model = 'linear')"))
       } else if(specX$model == "rw2") {
-        vals <- .build_rw2_values(sp_covreg[[paste0(X, "_ss")]], coords_r)
+        vals <- .build_rw2_values(sp_covreg[[paste0(X, "_reg_anom")]], coords_r)
         cmpregional <- c(cmpregional,
-          paste0(X, "GL_ls(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_ls']]), model = 'linear')"),
-          paste0(X, "RE_ss(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_ss']]), model='rw2', scale.model=TRUE, values = ", fmt_vals(vals), ", hyper = list(prec=list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
+          paste0(X, "GL_glo_res(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_glo_res']]), model = 'linear')"),
+          paste0(X, "RE_reg_anom(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_reg_anom']]), model='rw2', scale.model=TRUE, values = ", fmt_vals(vals), ", hyper = list(prec=list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
       }
-      fregional <- c(fregional, paste0(X, "GL_ls"), paste0(X, "RE_ss"))
+      fregional <- c(fregional, paste0(X, "GL_glo_res"), paste0(X, "RE_reg_anom"))
     }
 
     # ordered_hierarchical: soft constraint beta_RE ~ N(1, 0.5^2)
@@ -547,7 +547,7 @@
   .warn <- function(msg) warning("⚠️  ", msg, call. = FALSE, immediate. = TRUE)
   .stop <- function(msg) stop("❌ ", msg, call. = FALSE)
 
-  has_Sloc <- "Sloc" %in% names(fit$summary.random)
+  has_Sre <- "Sre" %in% names(fit$summary.random)
   has_Sshared <- "Sshared" %in% names(fit$summary.random)
 
   # model fit metrics
@@ -569,17 +569,17 @@
   }
 
   # hyperparameters spde
-  range_res_mean <- if(has_Sloc) hyper["Range for Sloc", "mean"] else "—"
-  sigma_res_mean <- if(has_Sloc) hyper["Stdev for Sloc", "mean"] else "—"
+  range_res_mean <- if(has_Sre) hyper["Range for Sre", "mean"] else "—"
+  sigma_res_mean <- if(has_Sre) hyper["Stdev for Sre", "mean"] else "—"
   range_lat_mean <- if(has_Sshared) hyper["Range for Sshared", "mean"] else "—"
   sigma_lat_mean <- if(has_Sshared) hyper["Stdev for Sshared", "mean"] else "—"
-  range_res_sd <- if(has_Sloc) hyper["Range for Sloc", "sd"] else "—"
-  sigma_res_sd <- if(has_Sloc) hyper["Stdev for Sloc", "sd"] else "—"
+  range_res_sd <- if(has_Sre) hyper["Range for Sre", "sd"] else "—"
+  sigma_res_sd <- if(has_Sre) hyper["Stdev for Sre", "sd"] else "—"
   range_lat_sd <- if(has_Sshared) hyper["Range for Sshared", "sd"] else "—"
   sigma_lat_sd <- if(has_Sshared) hyper["Stdev for Sshared", "sd"] else "—"
 
-  range_res <- if(has_Sloc) paste0(round(range_res_mean, 2), " ± ", round(range_res_sd, 2)) else "—"
-  sigma_res <- if(has_Sloc) paste0(round(sigma_res_mean, 2), " ± ", round(sigma_res_sd, 2)) else "—"
+  range_res <- if(has_Sre) paste0(round(range_res_mean, 2), " ± ", round(range_res_sd, 2)) else "—"
+  sigma_res <- if(has_Sre) paste0(round(sigma_res_mean, 2), " ± ", round(sigma_res_sd, 2)) else "—"
   range_lat <- if(has_Sshared) paste0(round(range_lat_mean, 2), " ± ", round(range_lat_sd, 2)) else "—"
   sigma_lat <- if(has_Sshared) paste0(round(sigma_lat_mean, 2), " ± ", round(sigma_lat_sd, 2)) else "—"
   format_hyper <- function(param) {
@@ -599,7 +599,7 @@
     } else NULL
   } else NULL
 
-  # Sloc and Sshared overlap?
+  # Sre and Sshared overlap?
   if(is.finite(range_res_mean) && is.finite(range_lat_mean)) {
     ratio <- range_lat_mean / range_res_mean
   }
@@ -653,12 +653,14 @@
     # Moran’s I residual autocorrelation
     moran_I <- NA_real_
     rs <- y_obs - y_pred
-    xy <- as.matrix(data_used[, c("x", "y")])
-    maxdist <- if(has_Sloc) {
+    valid_idx <- is.finite(rs)
+    rs <- rs[valid_idx]
+    xy <- as.matrix(data_used[valid_idx, c("x", "y")])
+    maxdist <- if(has_Sre) {
       range_res_mean
     } else if(has_Sshared) {
       range_lat_mean
-    } else {               #@@@JMB sin Sloc ni Sshared usa 1/4 de la diagonal???
+    } else {               #@@@JMB sin Sre ni Sshared usa 1/4 de la diagonal???
       bb <- apply(xy, 2, range, na.rm = TRUE)
       sqrt(sum((bb[2,] - bb[1,])^2)) / 4
     }   
@@ -716,9 +718,9 @@
   }
 
   # CI/median ratios
-  ci_ratios <- c(range_Sloc = ci_ratio("Range for Sloc"),
+  ci_ratios <- c(range_Sre = ci_ratio("Range for Sre"),
                  range_Sshared = ci_ratio("Range for Sshared"),
-                 sigma_Sloc = ci_ratio("Stdev for Sloc"),
+                 sigma_Sre = ci_ratio("Stdev for Sre"),
                  sigma_Sshared = ci_ratio("Stdev for Sshared"))
 
   # credibility interval ratios (CI/median)
@@ -732,10 +734,10 @@
   }
 
   prior_close <- list(
-    range_Sloc = if(!is.null(priors$local.pcprior.range))
-    close_rel(range_res_mean, priors$local.pcprior.range) else FALSE,
-  sigma_Sloc = if(!is.null(priors$local.pcprior.sigma))
-    close_rel(sigma_res_mean, priors$local.pcprior.sigma) else FALSE,
+    range_Sre = if(!is.null(priors$regional.pcprior.range))
+    close_rel(range_res_mean, priors$regional.pcprior.range) else FALSE,
+  sigma_Sre = if(!is.null(priors$regional.pcprior.sigma))
+    close_rel(sigma_res_mean, priors$regional.pcprior.sigma) else FALSE,
   range_Sshared = if(!is.null(priors$shared.pcprior.range))
     close_rel(range_lat_mean, priors$shared.pcprior.range) else FALSE,
   sigma_Sshared = if(!is.null(priors$shared.pcprior.sigma))
@@ -743,23 +745,23 @@
   )
 
   # variance and range ratios
-  # sigma Sshared mean / sigma Sloc mean > 1.5 ==> Sshared field dominates (Blangiardo & Cameletti 2015)
-  sigma_ratio <- if(has_Sloc && has_Sshared && is.finite(sigma_lat_mean) && is.finite(sigma_res_mean) && sigma_res_mean > 0)
+  # sigma Sshared mean / sigma Sre mean > 1.5 ==> Sshared field dominates (Blangiardo & Cameletti 2015)
+  sigma_ratio <- if(has_Sre && has_Sshared && is.finite(sigma_lat_mean) && is.finite(sigma_res_mean) && sigma_res_mean > 0)
     sigma_lat_mean / sigma_res_mean else "—"
-  # 0.5 < range_Sshared / range_Sloc < 2 ==> poor scale separation (Bakka et al. 2018)
-  range_ratio <- if(has_Sloc && has_Sshared && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
+  # 0.5 < range_Sshared / range_Sre < 2 ==> poor scale separation (Bakka et al. 2018)
+  range_ratio <- if(has_Sre && has_Sshared && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
     range_lat_mean / range_res_mean else "—"
 
-  var_explained_sloc <- "—"
+  var_explained_Sre <- "—"
   ssi <- NA_real_
   sri <- "—"
 
-  if(has_Sloc && has_Sshared) {
+  if(has_Sre && has_Sshared) {
     
-    if(!is.null(marginals$`Stdev for Sloc`) && !is.null(marginals$`Stdev for Sshared`)) {
-      var_sloc_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sloc`)
-      var_sshared_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sshared`)
-      var_explained_sloc <- var_sloc_contrib / (var_sloc_contrib + var_sshared_contrib)
+    if(!is.null(marginals$`Stdev for Sre`) && !is.null(marginals$`Stdev for Sshared`)) {
+      var_Sre_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sre`)
+      var_Sshared_contrib <- INLA::inla.emarginal(function(x) x^2, marginals$`Stdev for Sshared`)
+      var_explained_Sre <- var_Sre_contrib / (var_Sre_contrib + var_Sshared_contrib)
     }
 
     # SSI (scale separation index)
@@ -770,32 +772,32 @@
     }
 
     # SRI (spatial redundancy index)
-    resid_sloc <- fit$summary.random$Sloc$mean
-    resid_sshared <- fit$summary.random$Sshared$mean
-    if(!is.null(resid_sloc) && !is.null(resid_sshared)) {
-      n_min <- min(length(resid_sloc), length(resid_sshared))
-      cor_fields <- stats::cor(resid_sloc[1:n_min], resid_sshared[1:n_min], use = "complete.obs")
+    resid_Sre <- fit$summary.random$Sre$mean
+    resid_Sshared <- fit$summary.random$Sshared$mean
+    if(!is.null(resid_Sre) && !is.null(resid_Sshared)) {
+      n_min <- min(length(resid_Sre), length(resid_Sshared))
+      cor_fields <- stats::cor(resid_Sre[1:n_min], resid_Sshared[1:n_min], use = "complete.obs")
       sri <- cor_fields^2
     }
   }
 
-  # correlation Sloc–Sshared fields
+  # correlation Sre–Sshared fields
   # r > 0.7 00> high correlation
   field_correlation <- "—"
-  if(has_Sloc && has_Sshared) {
-    f_sp <- fit$summary.random$Sloc$mean
+  if(has_Sre && has_Sshared) {
+    f_sp <- fit$summary.random$Sre$mean
     f_lat <- fit$summary.random$Sshared$mean
     n <- min(length(f_sp), length(f_lat))
     field_correlation <- stats::cor(f_sp[seq_len(n)], f_lat[seq_len(n)], use = "pairwise.complete.obs")
   } 
 
   # warnings
-  # overlap Sshared vs Sloc
-  if(has_Sloc && has_Sshared && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 3) {
+  # overlap Sshared vs Sre
+  if(has_Sre && has_Sshared && is.finite(range_ratio) && range_ratio > 0.5 && range_ratio < 3) {
     .warn(paste0(
-      "Insufficient Sloc scale separation: Sshared/Sloc range ratio = ",round(range_ratio, 2), ").\n",
+      "Insufficient Sre scale separation: Sshared/Sre range ratio = ",round(range_ratio, 2), ").\n",
       "   Scales are overlapping (ideal: ratio > 3–5).\n",
-      "   Recomended actions: (1) Tighten local.pcprior.range[1] (e.g., 2 → 1.5),\n",
+      "   Recomended actions: (1) Tighten regional.pcprior.range[1] (e.g., 2 → 1.5),\n",
       "   (2) Increase shared.pcprior.range[1] (e.g., 50 → 100),\n",
       "   (3) Run prior sensitivity analysis,\n",
       "   (4) Evaluate if study domain truly supports two scales.\n"
@@ -809,17 +811,17 @@
     ))
   }
   # Sshared field dominating variance
-  if(has_Sshared && has_Sloc && is.finite(sigma_ratio) && sigma_ratio > 1.5) {
+  if(has_Sshared && has_Sre && is.finite(sigma_ratio) && sigma_ratio > 1.5) {
     .warn(paste0(
-      "Variance imbalance between Sshared and Sloc SPDE. Variance ratio (sigma Sshared / sigma Sloc) = ", round(sigma_ratio, 2), ".\n",
-      "   The Sshared field dominates the Sloc variability, making the Sloc SPDE redundant.\n",
-      "   Recommended: reduce shared.pcprior.sigma or increase local.pcprior.sigma."
+      "Variance imbalance between Sshared and Sre SPDE. Variance ratio (sigma Sshared / sigma Sre) = ", round(sigma_ratio, 2), ".\n",
+      "   The Sshared field dominates the Sre variability, making the Sre SPDE redundant.\n",
+      "   Recommended: reduce shared.pcprior.sigma or increase regional.pcprior.sigma."
     ))
   }
-  # high correlation between Sshared and Sloc
-  if(has_Sloc && has_Sshared && is.finite(field_correlation) && field_correlation > 0.7) {
+  # high correlation between Sshared and Sre
+  if(has_Sre && has_Sshared && is.finite(field_correlation) && field_correlation > 0.7) {
     .warn(paste0(
-      "High correlation between Sshared and Sloc fields (r = ", round(field_correlation, 2), ").\n",
+      "High correlation between Sshared and Sre fields (r = ", round(field_correlation, 2), ").\n",
       "   Possible redundancy: both SPDE components capture the same spatial pattern.\n",
       "   Recommended: strengthen priors to separate scales, or remove one SPDE fields."
     ))
@@ -871,8 +873,8 @@
   if(nrow(post_df) == 0) post_df <- NULL
   # Create prior reference ticks for vertical lines
   prior_ticks <- do.call(rbind, Filter(Negate(is.null), list(
-    if(!is.null(priors$local.pcprior.range)) data.frame(x = priors$local.pcprior.range[1], par = "Range for Sloc"),
-    if(!is.null(priors$local.pcprior.sigma)) data.frame(x = priors$local.pcprior.sigma[1], par = "Stdev for Sloc"),
+    if(!is.null(priors$regional.pcprior.range)) data.frame(x = priors$regional.pcprior.range[1], par = "Range for Sre"),
+    if(!is.null(priors$regional.pcprior.sigma)) data.frame(x = priors$regional.pcprior.sigma[1], par = "Stdev for Sre"),
     if(!is.null(priors$shared.pcprior.range)) data.frame(x = priors$shared.pcprior.range[1], par = "Range for Sshared"),
     if(!is.null(priors$shared.pcprior.sigma)) data.frame(x = priors$shared.pcprior.sigma[1], par = "Stdev for Sshared")
   )))
@@ -907,7 +909,7 @@
       panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
     )
 
-  # pB Sloc vs Sshared fields
+  # pB Sre vs Sshared fields
   ras_to_df <- function(r, nm) {
     rr <- terra::unwrap(r)[["mean"]]
     df <- terra::as.data.frame(rr, xy = TRUE, na.rm = FALSE)
@@ -916,7 +918,7 @@
     df
   }
   maps_df <- data.frame()
-  if(!is.null(pred_local)) maps_df <- rbind(maps_df, ras_to_df(pred_local, "Sloc field"))
+  if(!is.null(pred_local)) maps_df <- rbind(maps_df, ras_to_df(pred_local, "Sre field"))
   if(!is.null(pred_shared)) maps_df <- rbind(maps_df, ras_to_df(pred_shared, "Sshared field"))
 
   ordered_hierarchical <- any(grepl("copy", rownames(fit$summary.hyperpar), ignore.case = TRUE)) ||
@@ -944,7 +946,7 @@
       ggplot2::coord_equal(expand = FALSE) +
       ggplot2::facet_wrap(~which, ncol = 2, scales = "fixed") +
       ggplot2::labs(
-        title = "B) Sloc fields (posterior mean)",
+        title = "B) Sre fields (posterior mean)",
         subtitle = if(has_copy_structure)
           "Red = below global mean, Blue = above global mean (centered at model mean)"
         else
@@ -973,8 +975,8 @@
   } else {
     pB <- ggplot2::ggplot() +
       ggplot2::labs(
-        title = "B) Sloc fields (posterior mean)",
-        subtitle = "No Sloc or Sshared fields present in the model"
+        title = "B) Sre fields (posterior mean)",
+        subtitle = "No Sre or Sshared fields present in the model"
       ) +
       ggplot2::theme_void() +
       ggplot2::theme(
@@ -1016,7 +1018,7 @@
       subtitle = if(is.finite(range_eff))
         paste0("Model range ≈ ", round(range_eff, 3), " (map units)\n(distance where correlation vanishes)")
       else
-        "No Sloc/Sshared field: full extent shown",
+        "No Sre/Sshared field: full extent shown",
       x = "Distance (map units)",
       y = "Residual correlation"
     ) +
@@ -1110,8 +1112,8 @@
 
   # pE semivariaogram
   coords <- as.matrix(data_used[, c("x", "y")])
-  if(has_Sloc) {
-    sp_vals <- fit$summary.random$Sloc$mean
+  if(has_Sre) {
+    sp_vals <- fit$summary.random$Sre$mean
     sp_vals <- sp_vals[seq_len(nrow(data_used))]
   } else {
     sp_vals <- 0
@@ -1164,10 +1166,10 @@
       panel.grid.minor = ggplot2::element_blank(),
       panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
     )
-  if(has_Sloc) {
+  if(has_Sre) {
     pE <- pE + ggplot2::geom_vline(xintercept = range_res_mean, linetype = "dashed", color = "#c0392b", linewidth = 0.5) +
       ggplot2::geom_text(
-        data = data.frame(x = range_res_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sloc range"),
+        data = data.frame(x = range_res_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sre range"),
         ggplot2::aes(x = x, y = y, label = label), 
         color = "#c0392b", angle = 90, hjust = 1, vjust = -0.5, size = 3)
   }
@@ -1223,11 +1225,11 @@
                        range_ratio = range_ratio, # scale separation ratio
                        sigma_ratio = sigma_ratio, # variance ratio
                        field_correlation = field_correlation, # prior influence
-                       var_explained_sloc = var_explained_sloc,
+                       var_explained_Sre = var_explained_Sre,
                        ssi = ssi,
                        sri = sri), 
     plots = list(hyperparams = pA,
-                 Slocfields = pB,
+                 Srefields = pB,
                  correlogram = pC,
                  hist = pD1,
                  qq = pD2,
@@ -1251,8 +1253,8 @@
   if(!is.null(scale_params) && nrow(sf) > 0) {
     for(i in seq_len(nrow(sf))) {
       coef_name <- rownames(sf)[i]
-      # extract base variable name (remove GL, RE, RE_oh, GL_ls, RE_ss suffixes)
-      base_var <- gsub("GL$|RE$|RE_oh$|GL_ls$|RE_ss$", "", coef_name)
+      # extract base variable name (remove GL, RE, RE_oh, GL_glo_res, RE_reg_anom suffixes)
+      base_var <- gsub("GL$|RE$|RE_oh$|GL_glo_res$|RE_reg_anom$", "", coef_name)
       if(base_var %in% names(scale_params) && scale_params[[base_var]]$sd > 0) {
         sd_x <- scale_params[[base_var]]$sd
         sf[i, "mean"] <- sf[i, "mean"] / sd_x
@@ -1321,7 +1323,7 @@
     paste0(round(mean, digits), " ± ", round(sd, digits))
   }
 
-  has_Sloc <- "Sloc" %in% names(fit$summary.random)
+  has_Sre <- "Sre" %in% names(fit$summary.random)
   has_Sshared <- "Sshared" %in% names(fit$summary.random)
   has_covariates <- nrow(fit$summary.fixed) > 0
 
@@ -1329,7 +1331,7 @@
   species_name <- gsub("\\.", " ", species)
   base_name <- if (!has_spatial) "Non-spatial baseline" else "NSBM"
   suf <- c()
-  if(has_Sloc) suf <- c(suf, "Sloc")
+  if(has_Sre) suf <- c(suf, "Sre")
   if(has_Sshared) suf <- c(suf, "Sshared")
   if(has_covariates) suf <- c(suf, "covariates")
 
@@ -1375,11 +1377,11 @@
   params <- character(0)
   values <- character(0)
 
-  if(has_Sloc) {
+  if(has_Sre) {
     params <- c(
       params,
-      "Sloc field – Range (posterior mean ± SD)",
-      "Sloc field – Sigma (posterior mean ± SD)"
+      "Sre field – Range (posterior mean ± SD)",
+      "Sre field – Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1500,10 +1502,10 @@
     Metric = c(
       "Residual Moran's I",
       "Max CI/median ratio (hyperparameters)",
-      "Scale-separation ratio (range_Sshared / range_Sloc)",
-      "Variance ratio (sigma_Sshared / sigma_Sloc)",
-      "Sshared–Sloc field correlation (r)",
-      "Variance explained by Sloc (%)",
+      "Scale-separation ratio (range_Sshared / range_Sre)",
+      "Variance ratio (sigma_Sshared / sigma_Sre)",
+      "Sshared–Sre field correlation (r)",
+      "Variance explained by Sre (%)",
       "Scale separation Index (SSI) [0–1]",
       "Spatial redundancy Index (SRI) [0–1]"
     ),
@@ -1513,8 +1515,8 @@
       fmt_val(diag_block$diagnostics$range_ratio),
       fmt_val(diag_block$diagnostics$sigma_ratio),
       fmt_val(diag_block$diagnostics$field_correlation),
-      if(is.numeric(diag_block$diagnostics$var_explained_sloc)) 
-        fmt_val(diag_block$diagnostics$var_explained_sloc * 100) else "—",
+      if(is.numeric(diag_block$diagnostics$var_explained_Sre)) 
+        fmt_val(diag_block$diagnostics$var_explained_Sre * 100) else "—",
       fmt_val(diag_block$diagnostics$ssi),
       fmt_val(diag_block$diagnostics$sri)
     ),

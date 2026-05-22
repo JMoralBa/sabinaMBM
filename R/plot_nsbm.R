@@ -8,7 +8,7 @@
 #' @param which Component to plot. One of:
 #'   \itemize{
 #'     \item \code{"pred"}: current suitability prediction (default).
-#'     \item \code{"pred_local"}: Sloc field (requires SPDE).
+#'     \item \code{"pred_local"}: Sre field (requires SPDE).
 #'     \item \code{"pred_shared"}: Sshared field (requires SPDE).
 #'     \item \code{"hyperparams"}: posterior marginals of SPDE hyperparameters with PC-priors overlaid.
 #'     \item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
@@ -27,7 +27,7 @@
 #' # Default: current prediction (mean layer)
 #' plot(myPred.pure)
 #'
-#' ## Sloc field
+#' ## Sre field
 #' # plot(myPred.pure, which = "pred_local", layer = "sd")
 #'
 #' ## Scenario by index or name
@@ -57,8 +57,8 @@ plot.nsbm.inlabru <- function(x,
 
   } else if(identical(which, "pred_local")) {
     r <- x$current.projections$pred_local
-    if(is.null(r)) stop("❌ No Sloc field ('pred_local') in this model. Refit with `local.pcprior.range` and `local.pcprior.sigma`.\n")
-    scope_label <- "Sloc field"
+    if(is.null(r)) stop("❌ No Sre field ('pred_local') in this model. Refit with `local.pcprior.range` and `local.pcprior.sigma`.\n")
+    scope_label <- "Sre field"
 
   } else if(identical(which, "pred_shared")) {
     r <- x$current.projections$pred_shared
@@ -71,8 +71,8 @@ plot.nsbm.inlabru <- function(x,
       stop("❌ No hyperparameter marginals in this model. Refit with SPDE priors.\n")
     species <- gsub("\\.", " ", x$Species.Name)
     param_labels <- c(
-      "Range for Sloc" = "Sloc field: Range",
-      "Stdev for Sloc" = "Sloc field: Sigma",
+      "Range for Sre" = "Sre field: Range",
+      "Stdev for Sre" = "Sre field: Sigma",
       "Range for GLspde" = "Sshared field: Range",
       "Stdev for GLspde" = "Sshared field: Sigma",
       "Precision for IGlobal" = "IGlobal: Precision",
@@ -190,14 +190,14 @@ plot.nsbm.inlabru <- function(x,
   } else if(identical(which, "correlogram")) {
     p <- x$diagnostic_plots$correlogram
     if(is.null(p))
-      stop("❌ No correlogram available. Refit with Sloc or Sshared SPDE.\n")
+      stop("❌ No correlogram available. Refit with Sre or Sshared SPDE.\n")
     if(!is.null(title)) p <- p + ggplot2::labs(title = title)
     return(p)
 
   } else if(identical(which, "semivariogram")) {
     p <- x$diagnostic_plots$semivariogram
     if(is.null(p))
-      stop("❌ No semivariogram available. Refit with Sloc or Sshared SPDE.\n")
+      stop("❌ No semivariogram available. Refit with Sre or Sshared SPDE.\n")
     if(!is.null(title)) p <- p + ggplot2::labs(title = title)
     return(p)
 
@@ -311,7 +311,7 @@ plot.nsbm.inlabru <- function(x,
     "mean.mc_std_err"="MC SE of mean (λ)",
     "Intensity (λ)")
 
-  auto_legend <- if(scope_label %in% c("Sloc field", "Sshared field")) {
+  auto_legend <- if(scope_label %in% c("Sre field", "Sshared field")) {
     legend_eta(ln)
   } else if(grepl("binomial", fam)) {
     legend_prob(ln)
