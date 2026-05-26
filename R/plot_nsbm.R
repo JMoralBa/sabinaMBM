@@ -8,8 +8,8 @@
 #' @param which Component to plot. One of:
 #'   \itemize{
 #'     \item \code{"pred"}: current suitability prediction (default).
-#'     \item \code{"pred_local"}: Sre field (requires SPDE).
-#'     \item \code{"pred_shared"}: Sshared field (requires SPDE).
+#'     \item \code{"pred_Sre"}: Sre field (requires SPDE).
+#'     \item \code{"pred_Sshared"}: Sshared field (requires SPDE).
 #'     \item \code{"hyperparams"}: posterior marginals of SPDE hyperparameters with PC-priors overlaid.
 #'     \item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
 #'     \item \code{"fixed"}: posterior marginals of all fixed effect coefficients, back-transformed to original covariate scale.
@@ -28,7 +28,7 @@
 #' plot(myPred.pure)
 #'
 #' ## Sre field
-#' # plot(myPred.pure, which = "pred_local", layer = "sd")
+#' # plot(myPred.pure, which = "pred_Sre", layer = "sd")
 #'
 #' ## Scenario by index or name
 #' # plot(myPred.pure, which = "new.projections[[1]]")
@@ -55,20 +55,20 @@ plot.nsbm.inlabru <- function(x,
     r <- x$current.projections$pred
     scope_label <- "Current"
 
-  } else if(identical(which, "pred_local")) {
-    r <- x$current.projections$pred_local
-    if(is.null(r)) stop("❌ No Sre field ('pred_local') in this model. Refit with `local.pcprior.range` and `local.pcprior.sigma`.\n")
+  } else if(identical(which, "pred_Sre")) {
+    r <- x$current.projections$pred_Sre
+    if(is.null(r)) .stop("No Sre field ('pred_Sre') in this model. Refit with `local.pcprior.range` and `local.pcprior.sigma`.")
     scope_label <- "Sre field"
 
-  } else if(identical(which, "pred_shared")) {
-    r <- x$current.projections$pred_shared
-    if(is.null(r)) stop("❌ No Sshared field ('pred_shared') in this model. Refit with `shared.pcprior.range` and `shared.pcprior.sigma`.\n")
+  } else if(identical(which, "pred_Sshared")) {
+    r <- x$current.projections$pred_Sshared
+    if(is.null(r)) .stop("No Sshared field ('pred_Sshared') in this model. Refit with `shared.pcprior.range` and `shared.pcprior.sigma`.")
     scope_label <- "Sshared field"
 
   } else if(identical(which, "hyperparams")) {
     marg <- x$marginals$hyperpar
     if(is.null(marg) || length(marg) == 0)
-      stop("❌ No hyperparameter marginals in this model. Refit with SPDE priors.\n")
+      .stop("No hyperparameter marginals in this model. Refit with SPDE priors.")
     species <- gsub("\\.", " ", x$Species.Name)
     param_labels <- c(
       "Range for Sre" = "Sre field: Range",
@@ -97,12 +97,12 @@ plot.nsbm.inlabru <- function(x,
   } else if(identical(which, "intercepts")) {
     marg_r <- x$marginals$random
     if(is.null(marg_r) || length(marg_r) == 0)
-      stop("❌ No intercept marginals in this model.\n")
+      .stop("No intercept marginals in this model.")
     species <- gsub("\\.", " ", x$Species.Name)
     coupling_label <- if(!is.null(x$args$coupling.intercept)) x$args$coupling.intercept else "regional only"
     int_names <- intersect(c("IGlobal", "IRegional"), names(marg_r))
     if(length(int_names) == 0)
-      stop("❌ IGlobal/IRegional not found in marginals$random.\n")
+      .stop("IGlobal/IRegional not found in marginals$random.")
     df_list <- lapply(int_names, function(nm) {
       m <- marg_r[[nm]][[1]]  # iid has one level
       sm <- INLA::inla.smarginal(m)
@@ -132,7 +132,7 @@ plot.nsbm.inlabru <- function(x,
     marg_f <- x$marginals$fixed
     sp     <- x$scale_params
     if(is.null(marg_f) || length(marg_f) == 0)
-      stop("❌ No fixed effect marginals in this model.\n")
+      .stop("No fixed effect marginals in this model.")
     species <- gsub("\\.", " ", x$Species.Name)
     cp_label <- if(!is.null(x$args$coupling.predictors)) x$args$coupling.predictors else "NULL"
     # back-transform marginals to original covariate scale
@@ -190,21 +190,21 @@ plot.nsbm.inlabru <- function(x,
   } else if(identical(which, "correlogram")) {
     p <- x$diagnostic_plots$correlogram
     if(is.null(p))
-      stop("❌ No correlogram available. Refit with Sre or Sshared SPDE.\n")
+      .stop("No correlogram available. Refit with Sre or Sshared SPDE.")
     if(!is.null(title)) p <- p + ggplot2::labs(title = title)
     return(p)
 
   } else if(identical(which, "semivariogram")) {
     p <- x$diagnostic_plots$semivariogram
     if(is.null(p))
-      stop("❌ No semivariogram available. Refit with Sre or Sshared SPDE.\n")
+      .stop("No semivariogram available. Refit with Sre or Sshared SPDE.")
     if(!is.null(title)) p <- p + ggplot2::labs(title = title)
     return(p)
 
   } else if(identical(which, "pit")) {
     pit <- x$pit_values
     if(is.null(pit) || length(pit) == 0)
-      stop("❌ No PIT values in this model. Refit with control.compute = list(cpo = TRUE).\n")
+      .stop("No PIT values in this model. Refit with control.compute = list(cpo = TRUE).")
     species <- gsub("\\.", " ", x$Species.Name)
     ks_p <- tryCatch(
       suppressWarnings(ks.test(pit, "punif")$p.value),
@@ -229,7 +229,7 @@ plot.nsbm.inlabru <- function(x,
     # new.projections
     np <- x$new.projections
     if(is.null(np) || !length(np)) {
-      stop("No 'new.projections' in the object.")
+      .stop("No 'new.projections' in the object.")
     }
 
     get_np_by <- function(id) {
@@ -237,12 +237,12 @@ plot.nsbm.inlabru <- function(x,
       if(is.numeric(id)) {
         id <- as.integer(id)
         if(id < 1 || id > length(np)) {
-          stop("Index out of range in new.projections.")
+          .stop("Index out of range in new.projections.")
         }
         list(obj = np[[id]], name = nms[id])
       } else {
         if(!(id %in% nms)) {
-          stop(sprintf("Scenario '%s' not found in new.projections.", id))
+          .stop(sprintf("Scenario '%s' not found in new.projections.", id))
         }
         list(obj = np[[id]], name = id)
       }
@@ -258,7 +258,7 @@ plot.nsbm.inlabru <- function(x,
     } else if(which %in% names(np)) {
       pick <- get_np_by(which)
     } else {
-      stop("`which` must be 'pred', 'pred_local', 'new.projections', 'new.projections[[...]]', or an exact scenario name in new.projections.")
+      stop("`which` must be 'pred', 'pred_Sre', 'new.projections', 'new.projections[[...]]', or an exact scenario name in new.projections.")
     }
 
     r <- pick$obj
@@ -269,7 +269,7 @@ plot.nsbm.inlabru <- function(x,
   stopifnot(inherits(rr, "SpatRaster"))
 
   if(!layer %in% names(rr)) {
-    stop(paste0("Layer '", layer, "' does not exist. Available layers: ",
+    .stop(paste0("Layer '", layer, "' does not exist. Available layers: ",
                 paste(names(rr), collapse = ", ")))
   }
   r_show <- rr[[layer]]

@@ -46,7 +46,7 @@
 #' \item{args}{List of arguments used in the model fitting.}
 #' \item{Selected.Variables.Global}{Names of selected global-scale covariates.}
 #' \item{Selected.Variables.Regional}{Names of selected regional-scale covariates.}
-#' \item{current.projections}{List with: current prediction (\code{pred}), local residual spatial field (\code{pred_local}, if S_re was specified), and shared broad-scale spatial field (\code{pred_shared}, if S_shared was specified).}
+#' \item{current.projections}{List with: current prediction (\code{pred}), local residual spatial field (\code{pred_Sre}, if S_re was specified), and shared broad-scale spatial field (\code{pred_Sshared}, if S_shared was specified).}
 #' \item{marginals}{List with posterior marginals: \code{hyperpar} (SPDE hyperparameters), \code{random} (IGlobal, IRegional intercepts), \code{fixed} (covariate coefficients). Use with \code{plot(x, which = "hyperparams")} or \code{plot(x, which = "intercepts")}.}
 #' \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
@@ -176,12 +176,6 @@ NSBM.pure <- function(nsbm_obj,
   has_Sre <- !is.null(spde.mesh) && !is.null(regional.pcprior.range)  && !is.null(regional.pcprior.sigma)
   has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
 
-  # Logs
-  .info <- function(msg) if(verbose) message("ℹ ", msg)
-  .check <- function(msg) if(verbose) message("  ✓ ", msg)
-  .item <- function(msg) if(verbose) message("    - ", msg)
-  .warn <- function(msg) warning("⚠️  ", msg, call. = FALSE)
-  .stop <- function(msg) stop("❌ ", msg, call. = FALSE)
 
   .info("sabinaJMBM: Joint Multiscale Species Distribution Model")
 
@@ -796,10 +790,10 @@ NSBM.pure <- function(nsbm_obj,
 
   pred_combined <- predict(fit, pred_sf, pred_formula)
   pred <- .pred_as_tif(pred_combined, sp_covreg)
-  pred_local <- if(has_Sre) {
+  pred_Sre <- if(has_Sre) {
     .pred_as_tif(predict(fit, pred_sf, ~ Sre), sp_covreg)
   } else NULL
-  pred_shared <- if(has_Sshared) {
+  pred_Sshared <- if(has_Sshared) {
     .pred_as_tif(predict(fit, pred_sf, ~ Sshared), sp_covreg)
   } else NULL
 
@@ -933,8 +927,8 @@ NSBM.pure <- function(nsbm_obj,
                                 regional.pcprior.sigma = regional.pcprior.sigma,
                                 shared.pcprior.range = shared.pcprior.range,
                                 shared.pcprior.sigma = shared.pcprior.sigma),
-                  pred_local = if(has_Sre) pred_local else NULL,
-                  pred_shared = if(has_Sshared) pred_shared else NULL,
+                  pred_Sre = if(has_Sre) pred_Sre else NULL,
+                  pred_Sshared = if(has_Sshared) pred_Sshared else NULL,
                   coupling.intercept = coupling.intercept,
                   scale_params = scale_params)
 
@@ -976,14 +970,14 @@ NSBM.pure <- function(nsbm_obj,
       terra::writeRaster(terra::unwrap(pred), file_path, overwrite = TRUE)   
     }
     # pred_sf
-    if(!is.null(pred_local)) {
+    if(!is.null(pred_Sre)) {
       file_path <- file.path(projections_path, paste0(species, "_Current_Sre.tif"))
-      terra::writeRaster(terra::unwrap(pred_local), file_path, overwrite = TRUE)
+      terra::writeRaster(terra::unwrap(pred_Sre), file_path, overwrite = TRUE)
     }
     # Sshared contribution
-    if(!is.null(pred_shared)) {
+    if(!is.null(pred_Sshared)) {
       file_path <- file.path(projections_path, paste0(species, "_Current_Sshared.tif"))
-      terra::writeRaster(terra::unwrap(pred_shared), file_path, overwrite = TRUE)
+      terra::writeRaster(terra::unwrap(pred_Sshared), file_path, overwrite = TRUE)
     }
     # new scenarios
     if(length(proj_list) > 0 && !is.null(nsbm_obj$Scenarios)) {
@@ -1078,8 +1072,8 @@ NSBM.pure <- function(nsbm_obj,
     Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
     current.projections = list(
       pred = terra::wrap(pred),
-      pred_local = if(!is.null(pred_local)) terra::wrap(pred_local) else NULL,
-      pred_shared = if(!is.null(pred_shared)) terra::wrap(pred_shared) else NULL
+      pred_Sre = if(!is.null(pred_Sre)) terra::wrap(pred_Sre) else NULL,
+      pred_Sshared = if(!is.null(pred_Sshared)) terra::wrap(pred_Sshared) else NULL
     ),
     new.projections = if(length(proj_list) > 0) lapply(proj_list, terra::wrap) else list(),
     marginals = list(
