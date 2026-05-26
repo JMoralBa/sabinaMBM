@@ -1,5 +1,5 @@
 Package: sabinaJMBM
-Title: Joint Multiscale Bayesian species distribution modelling using INLA
+Title: Joint Multiscale Bayesian Modelling using INLA
 Version: 0.1.0
 Authors@R: 
     person("First", "Last", , "first.last@example.com", role = c("aut", "cre"),

@@ -1,10 +1,10 @@
-#' @name NSBM.pure
+#' @name JMBM.Modelling
 #'
 #' @title Nested species distribution modeling (Hierarchical Bayesian approach)
 #'
 #' @description Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling with spatial structure via \code{INLA} and \code{inlabru}. It allows the integration of global and regional scales with rigorous mathematical coupling structures.
 #'
-#' @param nsbm_obj An object of class \code{nsdm.vinput}, resulting from \code{sabinaNSDM::NSDM.SelectCovariates()}.
+#' @param jmbm_obj An object of class \code{nsdm.vinput}, resulting from \code{sabinaNSDM::NSDM.SelectCovariates()}.
 #' @param family A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity). 
 #' @param spde.mesh An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_re) is used. If \code{NULL} (default), the model runs without spatial structure.#' @param regional.pcprior.range Numeric vector length 2. PC-prior on the range of the local residual field S_re (e.g., \code{c(2, 0.01)}). If \code{NULL} and \code{shared.pcprior.range} is also \code{NULL}, no spatial fields are used.
 #' @param shared.pcprior.range Numeric vector of length 2. PC-prior for the range of the shared spatial field S_shared, e.g. \code{c(10, 0.01)} means P(range < 10) = 0.01. Must be substantially larger than \code{regional.pcprior.range} to ensure scale separation (Bakka et al., 2018). If \code{NULL} (and \code{regional.pcprior.range} is also \code{NULL}), no spatial fields are used.
@@ -41,7 +41,7 @@
 #' @param seed Optional integer to set the random seed for reproducibility.
 #' @param save.output Logical. If \code{TRUE}, saves key model outputs to disk.
 #'
-#' @return A named list of class `nsbm.inlabru` with the following elements:
+#' @return A named list of class `jmbm.inlabru` with the following elements:
 #' \item{Species.Name}{Species name}
 #' \item{args}{List of arguments used in the model fitting.}
 #' \item{Selected.Variables.Global}{Names of selected global-scale covariates.}
@@ -134,7 +134,7 @@
 #' \code{coupling.predictors = "ordered_hierarchical"} (soft constraint) or
 #' \code{coupling.predictors = "scale_decomposed"} (macro/micro decomposition) instead.
 #'
-#' @seealso \code{\link{create_mesh}}, \code{\link{plot.nsbm.inlabru}}, \code{\link{summary.nsbm.inlabru}}
+#' @seealso \code{\link{create_mesh}}, \code{\link{plot.jmbm.inlabru}}, \code{\link{summary.jmbm.inlabru}}
 #'
 #' @references
 #' Cressie, N. & Wikle, C.K. (2011). \emph{Statistics for Spatio-Temporal Data}. Wiley.
@@ -151,7 +151,7 @@
 #' \emph{The Annals of Applied Statistics}, 4(3), 1383--1402.
 #'
 #' @export
-NSBM.pure <- function(nsbm_obj, 
+JMBM.Modelling <- function(jmbm_obj, 
                       family = binomial(link = "logit"), # family object binomial(), poisson(), etc., o "cp" para intensity (procesos puntuales)
                       covariate.effects = NULL,
                       coupling.intercept = "unpooled",
@@ -170,8 +170,8 @@ NSBM.pure <- function(nsbm_obj,
                       save.output = FALSE,
                       verbose = TRUE) {
 
-  vg <- nsbm_obj$Selected.Variables.Global
-  vr <- nsbm_obj$Selected.Variables.Regional
+  vg <- jmbm_obj$Selected.Variables.Global
+  vr <- jmbm_obj$Selected.Variables.Regional
 
   has_Sre <- !is.null(spde.mesh) && !is.null(regional.pcprior.range)  && !is.null(regional.pcprior.sigma)
   has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
@@ -180,8 +180,8 @@ NSBM.pure <- function(nsbm_obj,
   .info("sabinaJMBM: Joint Multiscale Species Distribution Model")
 
   ## Checks
-  if(!inherits(nsbm_obj, "nsdm.vinput")) {
-    .stop("The 'nsbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
+  if(!inherits(jmbm_obj, "nsdm.vinput")) {
+    .stop("The 'jmbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
   }
   #
   if(inherits(family, "family")) {
@@ -191,7 +191,7 @@ NSBM.pure <- function(nsbm_obj,
     fam <- "cp"
     lnk <- NULL
   } else {
-    .stop("`family` must be either a standard family() object or the string 'cp'.")  #@@@JMB poner permitidos o enviar a ?NSBM.pure details?
+    .stop("`family` must be either a standard family() object or the string 'cp'.")  #@@@JMB poner permitidos o enviar a ?JMBM.Modelling details?
   }
   valid_links <- list(binomial = c("logit", "cloglog"),
                       poisson = "log", nbinomial = "log",
@@ -384,8 +384,8 @@ NSBM.pure <- function(nsbm_obj,
 
 
   ## Data preparation
-  sp_covglo <- terra::unwrap(nsbm_obj$IndVar.Global.Selected)
-  sp_covreg <- terra::unwrap(nsbm_obj$IndVar.Regional.Selected)
+  sp_covglo <- terra::unwrap(jmbm_obj$IndVar.Global.Selected)
+  sp_covreg <- terra::unwrap(jmbm_obj$IndVar.Regional.Selected)
   crs <- sf::st_crs(sp_covglo)
 
   all_model_vars <- unique(c(names(sp_covglo), names(sp_covreg)))
@@ -454,12 +454,12 @@ NSBM.pure <- function(nsbm_obj,
 
   #
   pp_glo <- rbind(
-    cbind(nsbm_obj$SpeciesData.XY.Global, resp = if(!is.null(nsbm_obj$Response.Global)) nsbm_obj$Response.Global else 1L),  #@@@JMB nsbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
-    cbind(nsbm_obj$Background.XY.Global, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
+    cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),  #@@@JMB jmbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
+    cbind(jmbm_obj$Background.XY.Global, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
   )
   pp_reg <- rbind(
-    cbind(nsbm_obj$SpeciesData.XY.Regional, resp = if(!is.null(nsbm_obj$Response.Regional)) nsbm_obj$Response.Regional else 1L),  
-    cbind(nsbm_obj$Background.XY.Regional, resp = 0L)          
+    cbind(jmbm_obj$SpeciesData.XY.Regional, resp = if(!is.null(jmbm_obj$Response.Regional)) jmbm_obj$Response.Regional else 1L),  
+    cbind(jmbm_obj$Background.XY.Regional, resp = 0L)          
   )
 
   pp_glo <- sf::st_as_sf(pp_glo, coords = c("x","y"), crs = crs)
@@ -588,11 +588,11 @@ NSBM.pure <- function(nsbm_obj,
 
 
   ## Model components
-  nsbm_obj_fcov <- nsbm_obj
+  jmbm_obj_fcov <- jmbm_obj
   if(is.null(coupling.intercept)) {
-    nsbm_obj_fcov$Selected.Variables.Global <- character(0)
+    jmbm_obj_fcov$Selected.Variables.Global <- character(0)
   }
-  cmp_cov <- .fcov(obj = nsbm_obj_fcov,
+  cmp_cov <- .fcov(obj = jmbm_obj_fcov,
                   spobjglo = "sp_covglo",
                   spobjreg = "sp_covreg",
                   sp_covglo = sp_covglo,
@@ -666,7 +666,7 @@ NSBM.pure <- function(nsbm_obj,
   
   .info(sprintf("Fitting Bayesian model (Integration strategy: '%s')...", inla.int.strategy))
 
-  fit <- .fit_nsbm(
+  fit <- .fit_jmbm(
     cmp = cmp, 
     lik_list = lik_list, 
     coupling.intercept = coupling.intercept, 
@@ -732,7 +732,7 @@ NSBM.pure <- function(nsbm_obj,
         lik_list_k <- Filter(Negate(is.null), list(liks_k$lik_glo, liks_k$lik_reg))
 
         # fit fold k
-        fit_k <- .fit_nsbm(
+        fit_k <- .fit_jmbm(
           cmp = cmp,
           lik_list = lik_list_k,
           coupling.intercept = coupling.intercept,
@@ -803,14 +803,14 @@ NSBM.pure <- function(nsbm_obj,
 
   ## New scenarios
   proj_list <- list()
-  if(proj.new.env && !is.null(nsbm_obj$Scenarios)) {
-    .check(sprintf("Projecting to new scenarios: %s", paste(names(nsbm_obj$Scenarios), collapse = ", ")))
+  if(proj.new.env && !is.null(jmbm_obj$Scenarios)) {
+    .check(sprintf("Projecting to new scenarios: %s", paste(names(jmbm_obj$Scenarios), collapse = ", ")))
 
     sp_covglo_curr <- sp_covglo
     sp_covreg_curr <- sp_covreg
    
-    for(sc in names(nsbm_obj$Scenarios)) {
-      scen_rast <- terra::unwrap(nsbm_obj$Scenarios[[sc]])
+    for(sc in names(jmbm_obj$Scenarios)) {
+      scen_rast <- terra::unwrap(jmbm_obj$Scenarios[[sc]])
            
       if(!identical(sf::st_crs(crs), terra::crs(scen_rast))) {
         scen_rast <- terra::project(scen_rast, terra::crs(sp_covreg_curr))
@@ -918,7 +918,7 @@ NSBM.pure <- function(nsbm_obj,
 
   coords_reg <- sf::st_coordinates(pp_reg)
   data_used  <- data.frame(x = coords_reg[,1], y = coords_reg[,2], resp = pp_reg$resp)
-  diag_block <- .nsbm_diagnostics(
+  diag_block <- .jmbm_diagnostics(
                   fit,
                   fam,  
                   data_used,
@@ -934,7 +934,7 @@ NSBM.pure <- function(nsbm_obj,
 
 
   ## Save outputs
-  species <- nsbm_obj$Species.Name
+  species <- jmbm_obj$Species.Name
   if(save.output) {
     # directories
     values_path <- file.path("Results", "NSBM_pure", "Values")
@@ -980,7 +980,7 @@ NSBM.pure <- function(nsbm_obj,
       terra::writeRaster(terra::unwrap(pred_Sshared), file_path, overwrite = TRUE)
     }
     # new scenarios
-    if(length(proj_list) > 0 && !is.null(nsbm_obj$Scenarios)) {
+    if(length(proj_list) > 0 && !is.null(jmbm_obj$Scenarios)) {
       for(i in seq_along(proj_list)) {
         sc_name <- names(proj_list)[i]
         file_path <- file.path(projections_path, paste0(species, "_", sc_name, ".tif"))
@@ -1031,7 +1031,7 @@ NSBM.pure <- function(nsbm_obj,
 
 
   # summary          #@@@JMB pendiente revisar/completar...
-  summary_df <- .nsbm_generate_summary(
+  summary_df <- .jmbm_generate_summary(
     fit = fit, 
     species = species, 
     fam = fam, 
@@ -1068,8 +1068,8 @@ NSBM.pure <- function(nsbm_obj,
       inla.int.strategy = inla.int.strategy,
       seed = seed
     ),
-    Selected.Variables.Global = nsbm_obj$Selected.Variables.Global,
-    Selected.Variables.Regional = nsbm_obj$Selected.Variables.Regional,
+    Selected.Variables.Global = jmbm_obj$Selected.Variables.Global,
+    Selected.Variables.Regional = jmbm_obj$Selected.Variables.Regional,
     current.projections = list(
       pred = terra::wrap(pred),
       pred_Sre = if(!is.null(pred_Sre)) terra::wrap(pred_Sre) else NULL,
@@ -1090,7 +1090,7 @@ NSBM.pure <- function(nsbm_obj,
     Summary = summary_df
   )
  
-  attr(sabina, "class") <- "nsbm.inlabru"
+  attr(sabina, "class") <- "jmbm.inlabru"
 
   if(verbose) message("\n  ✓ Model fitted successfully. Check 'summary()' for evaluation metrics.\n")
 

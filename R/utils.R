@@ -1,3 +1,15 @@
+#' Logs
+#' @noRd
+.info <- function(msg, verbose = TRUE) if(verbose) message("ℹ ", msg)
+.check <- function(msg, verbose = TRUE) if(verbose) message("  ✓ ", msg)
+.item <- function(msg, verbose = TRUE) if(verbose) message("    - ", msg)
+.warn <- function(msg, verbose = TRUE) warning("⚠️  ", msg, call. = FALSE)
+.stop <- function(msg, verbose = TRUE) stop("❌ ", msg, call. = FALSE)
+
+
+# -----------------------------
+
+
 #' Fast standardization of SpatRaster stack
 #' @noRd
 .standardize_rasters <- function(sp_rast, var_names = NULL, n_cores = 1) {
@@ -21,7 +33,7 @@
     if(!is.na(s_val) && s_val > 1e-10) {
       sp_rast[[v]] <- (sp_rast[[v]] - m_val) / s_val
     } else {
-      warning("⚠️ Variable '", v, "' has near-zero variance. Centering only.")
+      .warn(paste0("Variable '", v, "' has near-zero variance. Centering only."))
       sp_rast[[v]] <- sp_rast[[v]] - m_val
     }
   }
@@ -122,15 +134,13 @@
     vals <- vals[is.finite(vals)] 
     rng <- range(vals)
     if(diff(rng) == 0) {
-      stop("❌  RW2 requires variability (covariate range = 0).\n",
-           "   Use 'linear' instead for this covariate or check the raster values.\n\n")
+      .stop("RW2 requires variability (covariate range = 0).\n   Use 'linear' instead for this covariate or check the raster values.")
     }  
     g <- INLA::inla.group(vals, n = K, method = method)
     v <- sort(unique(as.numeric(levels(g))))
     v <- thin_knots(v)
     if(length(v) < 3L) {
-      stop("❌  RW2 requires ≥ 3 distinct support values after knot thinning.\n", #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
-           "   Consider reducing smoothing or check covariate variability.\n\n")
+      .stop("RW2 requires ≥ 3 distinct support values after knot thinning.\n   Consider reducing smoothing or check covariate variability.") #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
     }
     v
   }
@@ -256,7 +266,7 @@
 
 #' Fit NSBM sequentially or jointly
 #' @noRd
-.fit_nsbm <- function(cmp, lik_list, coupling.intercept, 
+.fit_jmbm <- function(cmp, lik_list, coupling.intercept, 
                       coupling.predictors, needs_feedback, 
                       vr = NULL, n.threads = 1, seed = NULL, 
                       int.strategy = "eb") {
@@ -281,11 +291,11 @@
     }
 
     # fit global model using ONLY the global likelihood
-    message("\nℹ️  Sequential bayesian feedback - Fitting global model to extract posteriors...")
+    .info("Sequential bayesian feedback — Fitting global model to extract posteriors...")
     fit_glo <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[1]]), list(options = bru_opts)))
 
     # extract moments and inject them into the current environment
-    message("    Updating regional priors by moments and fitting joint model...\n")
+    .item("Updating regional priors by moments and fitting joint model...")
 
     # safe precision with floor to avoid Inf or near-0 variance
     .safe_prec <- function(sd_val, floor_prec = 1e-4, ceil_prec = 1e6) {
@@ -304,17 +314,17 @@
       m3 <- INLA::inla.emarginal(function(x) (x-m)^3, marginal)
       skew <- m3 / (m2^(3/2))
       if(abs(skew) > 1) {
-        warning("⚠️ Bayesian feedback: global posterior for '", label,
-                "' has skewness = ", round(skew, 2),
-                " — moment matching (mean/sd) may be a poor approximation.\n",
-                "   Consider using `coupling.intercept = 'ordered_hierarchical'` instead.\n\n")
+        .warn(paste0("Bayesian feedback: global posterior for '", label,
+                                     "' has skewness = ", round(skew, 2),
+                                              " — moment matching (mean/sd) may be a poor approximation.",
+                                              " Consider using `coupling.intercept = 'ordered_hierarchical'` instead."))
       }
     }
 
     if(!is.null(coupling.intercept) && coupling.intercept == "bayesian_feedback") {
       int_random <- fit_glo$summary.random$IGlobal
       if(is.null(int_random) || nrow(int_random) != 1L) {
-        stop("❌ bayesian_feedback: could not extract IGlobal posterior (unexpected structure).\n\n")
+        .stop("bayesian_feedback: could not extract IGlobal posterior (unexpected structure).")
       }
       bf_mean_int <- int_random$mean
       bf_sd_int   <- int_random$sd
@@ -380,37 +390,37 @@
       return(list(model = "drop", u = NA, alpha = NA))
     } 
     if(spec == "rw2") {
-      stop("❌  Invalid RW2 specification in `", path_label, "`.\n",
-           "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
-           "   For linear effects use 'linear'; to exclude use 'drop'.\n\n")
+      .stop(paste0("Invalid RW2 specification in `", path_label, "`.\n",
+                                            "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
+                                            "   For linear effects use 'linear'; to exclude use 'drop'."))
     } 
-    stop("❌ Invalid keyword '", spec, "' in `", path_label, "`.\n",
-         "   Valid options: 'linear', 'drop', or list(model='rw2', u=..., alpha=...) (smoothed RW2 effect).\n\n")
+    .stop(paste0("Invalid keyword '", spec, "' in `", path_label, "`.\n",
+                                       "   Valid options: 'linear', 'drop', or list(model='rw2', u=..., alpha=...)."))
   }
 
   # if spec is a list, only rw2 admited 
   if(is.list(spec)) {
     if(is.null(spec$model)) {
-      stop("❌  Invalid list specification in `", path_label, "`.\n",
-           "   Lists are only allowed for RW2 effects. Use: list(model='rw2', u=..., alpha=...).\n",
-           "   For linear effects use 'linear'; to exclude use 'drop'.\n\n")
+      .stop(paste0("Invalid list specification in `", path_label, "`.\n",
+                                            "   Lists are only allowed for RW2 effects. Use: list(model='rw2', u=..., alpha=...).\n",
+                                            "   For linear effects use 'linear'; to exclude use 'drop'."))
     }
     if(identical(spec$model, "rw2")) {
       # RW2 reequires u alpha
       if(is.null(spec$u) || is.null(spec$alpha)) {
-        stop("❌  Incomplete RW2 specification in `", path_label, "`.\n",
-             "   Provide both `u` and `alpha`..\n\n")
+        .stop(paste0("Incomplete RW2 specification in `", path_label, "`.\n",
+                                                 "   Provide both `u` and `alpha`."))
       }
       return(list(model = "rw2", u = spec$u, alpha = spec$alpha))
     }
-    stop("❌  Invalid `model` in `", path_label, "`.\n",
-         "   When using a list, only model='rw2' is permitted.\n",
-         "   For linear effects use 'linear'; to exclude use 'drop'.\n\n")
+    .stop(paste0("Invalid `model` in `", path_label, "`.\n",
+                                       "   When using a list, only model='rw2' is permitted.\n",
+                                       "   For linear effects use 'linear'; to exclude use 'drop'."))
   }
 
   # unsupported type
-  stop("❌  Unsupported type in `", path_label, "`.\n",
-       "   Must be string ('linear'|'drop') or list(model='rw2', u=..., alpha=...).\n\n")
+  .stop(paste0("Unsupported type in `", path_label, "`.\n",
+                                  "   Must be string ('linear'|'drop') or list(model='rw2', u=..., alpha=...)."))
 }
 
 
@@ -534,19 +544,15 @@
 
 #' diagnostics
 #' @noRd
-.nsbm_diagnostics <- function(fit,
+.jmbm_diagnostics <- function(fit,
                              fam,
                              data_used,
                              n_glo = 0L,
                              priors = NULL,
-                             pred_local = NULL,
-                             pred_shared = NULL,
+                             pred_Sre = NULL,
+                             pred_Sshared = NULL,
                              coupling.intercept,
                              scale_params = NULL) {
-
-  .info <- function(msg) message("ℹ ", msg)
-  .warn <- function(msg) warning("⚠️  ", msg, call. = FALSE, immediate. = TRUE)
-  .stop <- function(msg) stop("❌ ", msg, call. = FALSE)
 
   has_Sre <- "Sre" %in% names(fit$summary.random)
   has_Sshared <- "Sshared" %in% names(fit$summary.random)
@@ -919,8 +925,8 @@
     df
   }
   maps_df <- data.frame()
-  if(!is.null(pred_local)) maps_df <- rbind(maps_df, ras_to_df(pred_local, "Sre field"))
-  if(!is.null(pred_shared)) maps_df <- rbind(maps_df, ras_to_df(pred_shared, "Sshared field"))
+  if(!is.null(pred_Sre)) maps_df <- rbind(maps_df, ras_to_df(pred_Sre, "Sre field"))
+  if(!is.null(pred_Sshared)) maps_df <- rbind(maps_df, ras_to_df(pred_Sshared, "Sshared field"))
 
   ordered_hierarchical <- any(grepl("copy", rownames(fit$summary.hyperpar), ignore.case = TRUE)) ||
                    "IGlobal" %in% names(fit$summary.random)
@@ -1191,7 +1197,7 @@
   }  
 
   # pH covariates importance
-  #pH <- .nsbm_vars_importance(fit)
+  #pH <- .jmbm_vars_importance(fit)
 
 
   # 
@@ -1310,7 +1316,7 @@
 
 #' prepare summary
 #' @noRd
-.nsbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL, scale_params=NULL, has_spatial=FALSE) {
+.jmbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL, scale_params=NULL, has_spatial=FALSE) {
   
   fmt_val <- function(x, digits = 3) {
     if(is.null(x) || length(x) == 0) return("—")
@@ -1572,7 +1578,7 @@
 
 #' plot covariates importance
 #' @noRd
-.nsbm_vars_importance <- function(fit) {
+.jmbm_vars_importance <- function(fit) {
 
   df <- fit$summary.fixed
   df$var <- rownames(df)

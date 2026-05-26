@@ -1,12 +1,12 @@
-#' @title Summary for nsbm.inlabru Objects
-#' @description Provides a summary for objects of class \code{nsbm.inlabru}.
-#' @param object An object of class \code{nsbm.inlabru}.
+#' @title Summary for jmbm.inlabru Objects
+#' @description Provides a summary for objects of class \code{jmbm.inlabru}.
+#' @param object An object of class \code{jmbm.inlabru}.
 #' @param ... Additional arguments (not used).
 #' @return A summary in data frame format.
 #' @seealso \code{\link{NSBM.inlabru}}
 #' @export
-#' @method summary nsbm.inlabru
-summary.nsbm.inlabru <- function(object, ...) {
+#' @method summary jmbm.inlabru
+summary.jmbm.inlabru <- function(object, ...) {
 
   S <- object$Summary
 
@@ -44,7 +44,7 @@ summary.nsbm.inlabru <- function(object, ...) {
 
 #' prepare summary
 #' @noRd
-.nsbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL) {
+.jmbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL) {
   
   fmt_val <- function(x, digits = 3) {
     if(is.null(x) || length(x) == 0) return("—")
