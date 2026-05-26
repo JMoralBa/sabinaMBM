@@ -36,7 +36,7 @@ create_mesh(
 \item{plot}{Logical. If TRUE, plots the mesh for inspection (default: FALSE).}
 }
 \value{
-An \code{fm_mesh_2d} object (class \code{inla.mesh}) suitable for use with \code{INLA} and \code{inlabru} SPDE components. Pass directly to \code{NSBM.pure(spde.mesh = ...)}. #@@JMB pensar si ponemos clase propia a este objeto (inla.mesh??)
+An \code{fm_mesh_2d} object (class \code{inla.mesh}) suitable for use with \code{INLA} and \code{inlabru} SPDE components. Pass directly to \code{JMBM.Moelling(spde.mesh = ...)}. #@@JMB pensar si ponemos clase propia a este objeto (inla.mesh??)
 }
 \description{
 Generates a 2D mesh object using the convex hull, concave_hull, or raster_mask of the species presences/absences (plus optional new scenario rasters), from a processed \code{nsdm.vinput} object (output of \code{\link{NSDM.SelectCovariates}}).
@@ -47,5 +47,5 @@ and Gaussian Markov random fields: the stochastic partial differential equation 
 \emph{Journal of the Royal Statistical Society B}, 73, 423–498.
 }
 \seealso{
-\code{\link{NSBM.pure}}
+\code{\link{JMBM.Moelling}}
 }

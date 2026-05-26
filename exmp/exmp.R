@@ -1,6 +1,6 @@
 # =============================================================================
 #
-# sabinaNSBM — Worked example
+# sabinaJMBM — Worked example
 #
 # =============================================================================
  
@@ -88,7 +88,7 @@ myMesh <- create_mesh(
  
  
 # -----------------------------------------------------------------------------
-# NSBM MODEL FITTING
+# JMBM MODEL FITTING
 # -----------------------------------------------------------------------------
 # coupling.intercept = how the regional intercept relates to the global one ("unpooled", "ordered_hierarchical", "bayesian_feedback")
 # coupling.predictors = how shared covariates relate across scales ("unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback")
@@ -100,12 +100,12 @@ myMesh <- create_mesh(
 #             regional = list(bio1="linear", bio12="drop"), 
 #             default="linear")
  
-myModel <- NSBM.pure(
-  nsbm_obj            = mySelvars,
+myModel <- JMBM.Modelling(
+  jmbm_obj            = mySelvars,
   family              = binomial(link = "logit"),
   spde.mesh           = myMesh,
-  regional.pcprior.range  = c(1.5, 0.05),   # S_loc range prior
-  regional.pcprior.sigma  = c(1.5, 0.01),   # S_loc variance prior
+  regional.pcprior.range  = c(1.5, 0.05),   # S_re range prior
+  regional.pcprior.sigma  = c(1.5, 0.01),   # S_re variance prior
   shared.pcprior.range = c(15, 0.05),    # S_shared range prior
   shared.pcprior.sigma = c(0.3, 0.01),   # S_shared variance prior
   coupling.intercept  = "ordered_hierarchical",
@@ -143,10 +143,10 @@ p_current + ggplot2::geom_sf(data = pts_reg, colour = "black", size = 1.5, alpha
 plot(myModel, which = "pred", layer = "sd")
  
 # Residual spatial fields (if SPDE was fitted)
-plot(myModel, which = "pred_local", layer = "mean")
+plot(myModel, which = "pred_Sre", layer = "mean")
 
 # Broad-scale spatial field (Sshared)
-plot(myModel, which = "pred_shared", layer = "mean")
+plot(myModel, which = "pred_Sshared", layer = "mean")
  
 # Future / alternative scenario
 plot(myModel, which = "scenario1", layer = "mean")

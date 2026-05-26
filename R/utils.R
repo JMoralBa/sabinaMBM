@@ -266,7 +266,7 @@
 
 #' Fit NSBM sequentially or jointly
 #' @noRd
-.fit_nsbm <- function(cmp, lik_list, coupling.intercept, 
+.fit_jmbm <- function(cmp, lik_list, coupling.intercept, 
                       coupling.predictors, needs_feedback, 
                       vr = NULL, n.threads = 1, seed = NULL, 
                       int.strategy = "eb") {
@@ -544,7 +544,7 @@
 
 #' diagnostics
 #' @noRd
-.nsbm_diagnostics <- function(fit,
+.jmbm_diagnostics <- function(fit,
                              fam,
                              data_used,
                              n_glo = 0L,
@@ -1197,7 +1197,7 @@
   }  
 
   # pH covariates importance
-  #pH <- .nsbm_vars_importance(fit)
+  #pH <- .jmbm_vars_importance(fit)
 
 
   # 
@@ -1316,7 +1316,7 @@
 
 #' prepare summary
 #' @noRd
-.nsbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL, scale_params=NULL, has_spatial=FALSE) {
+.jmbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL, scale_params=NULL, has_spatial=FALSE) {
   
   fmt_val <- function(x, digits = 3) {
     if(is.null(x) || length(x) == 0) return("—")
@@ -1578,7 +1578,7 @@
 
 #' plot covariates importance
 #' @noRd
-.nsbm_vars_importance <- function(fit) {
+.jmbm_vars_importance <- function(fit) {
 
   df <- fit$summary.fixed
   df$var <- rownames(df)

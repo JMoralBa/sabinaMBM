@@ -1,10 +1,10 @@
-#' @name plot.nsbm.inlabru
+#' @name plot.jmbm.inlabru
 #'
 #' @title Plot predictions and spatial fields from a fitted NSBM model
 #'
-#' @description Prints a structured summary for objects of class \code{nsbm.inlabru}, including model metadata, Bayesian fit criteria, hyperparameters, intercepts, fixed effects, predictive performance, calibration, and diagnostics. Returns the summary list invisibly.
+#' @description Prints a structured summary for objects of class \code{jmbm.inlabru}, including model metadata, Bayesian fit criteria, hyperparameters, intercepts, fixed effects, predictive performance, calibration, and diagnostics. Returns the summary list invisibly.
 #'
-#' @param x An object of class "nsbm.inlabru".
+#' @param x An object of class "jmbm.inlabru".
 #' @param which Component to plot. One of:
 #'   \itemize{
 #'     \item \code{"pred"}: current suitability prediction (default).
@@ -34,18 +34,18 @@
 #' # plot(myPred.pure, which = "new.projections[[1]]")
 #' # plot(myPred.pure, which = "scenario1", layer = "q0.975")
 #'
-#' @seealso \code{\link{NSBM.pure}}, \code{\link{summary.nsbm.inlabru}}
+#' @seealso \code{\link{JMBM.Moelling}}, \code{\link{summary.jmbm.inlabru}}
 #'
 #' @export
-#' @method plot nsbm.inlabru
-plot.nsbm.inlabru <- function(x,
+#' @method plot jmbm.inlabru
+plot.jmbm.inlabru <- function(x,
                               which = "pred",
                               layer = "mean",
                               palette = "Spectral",
                               title = NULL,
                               legend_title = NULL) {
 
-  stopifnot(inherits(x, "nsbm.inlabru"))
+  stopifnot(inherits(x, "jmbm.inlabru"))
 
   scope_label <- NULL
   r <- NULL
