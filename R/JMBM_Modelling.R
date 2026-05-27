@@ -170,8 +170,10 @@ JMBM.Modelling <- function(jmbm_obj,
                       save.output = FALSE,
                       verbose = TRUE) {
 
-  vg <- jmbm_obj$Selected.Variables.Global
-  vr <- jmbm_obj$Selected.Variables.Regional
+  vg <- sort(jmbm_obj$Selected.Variables.Global)
+  shared_vr   <- intersect(vg, jmbm_obj$Selected.Variables.Regional)
+  exclusive_vr <- setdiff(jmbm_obj$Selected.Variables.Regional, vg)
+  vr <- c(shared_vr, sort(exclusive_vr))
 
   has_Sre <- !is.null(spde.mesh) && !is.null(regional.pcprior.range)  && !is.null(regional.pcprior.sigma)
   has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
@@ -389,11 +391,11 @@ JMBM.Modelling <- function(jmbm_obj,
   crs <- sf::st_crs(sp_covglo)
 
   all_model_vars <- unique(c(names(sp_covglo), names(sp_covreg)))
-  scale_params <- list()
+  scale_params_glo <- list()
+  scale_params_reg <- list()
 
   # scale decomposed pre-processing
-  shared_vars <- intersect(vg, vr)
-  sd_vars <- shared_vars[vapply(shared_vars, function(X) .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed", logical(1))]
+  sd_vars <- shared_vr[vapply(shared_vr, function(X) .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed", logical(1))]
   if(length(sd_vars) > 0) {
     glo_resampled_stack <- terra::resample(sp_covglo[[sd_vars]], sp_covreg[[sd_vars[1]]])
     for(X in sd_vars) {
@@ -414,15 +416,20 @@ JMBM.Modelling <- function(jmbm_obj,
   if (!is.null(coupling.intercept) && length(names(sp_covglo)) > 0) {
     result_glo <- .standardize_rasters(sp_covglo, n_cores = n.threads)
     sp_covglo <- result_glo$rast
-    scale_params <- c(scale_params, result_glo$params)
+    scale_params_glo <- result_glo$params
   }
 
   # regional standarization
   if (length(names(sp_covreg)) > 0) {
     result_reg <- .standardize_rasters(sp_covreg, n_cores = n_cores_std)
     sp_covreg <- result_reg$rast
-    scale_params <- c(scale_params, result_reg$params)
+    scale_params_reg <- result_reg$params
   }
+
+  scale_params <- c(
+    scale_params_glo,
+    scale_params_reg[setdiff(names(scale_params_reg), names(scale_params_glo))]
+  )
 
   # log stats
   if (length(names(sp_covreg)) > 0 && verbose) {
@@ -432,8 +439,8 @@ JMBM.Modelling <- function(jmbm_obj,
       m_val <- terra::global(sp_covreg[[v]], "mean", na.rm = TRUE)[1, 1]
       s_val <- terra::global(sp_covreg[[v]], "sd", na.rm = TRUE)[1, 1]
       # original values
-      original_mean <- scale_params[[v]][["mean"]]
-      original_sd <- scale_params[[v]][["sd"]]
+      original_mean <- scale_params_reg[[v]][["mean"]]
+      original_sd <- scale_params_reg[[v]][["sd"]]
       .item(sprintf("%s (regional): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f", 
                     v, m_val, s_val, original_mean, original_sd))
     }
@@ -445,8 +452,8 @@ JMBM.Modelling <- function(jmbm_obj,
       m_val <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
       s_val <- terra::global(sp_covglo[[v]], "sd", na.rm = TRUE)[1, 1]
       # original values
-      original_mean <- scale_params[[v]][["mean"]]
-      original_sd   <- scale_params[[v]][["sd"]]
+      original_mean <- scale_params_glo[[v]][["mean"]]
+      original_sd   <- scale_params_glo[[v]][["sd"]]
       .item(sprintf("%s (global): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f", 
                     v, m_val, s_val, original_mean, original_sd))
     }
@@ -1043,6 +1050,8 @@ JMBM.Modelling <- function(jmbm_obj,
     vg = vg,
     vr = vr,
     scale_params = scale_params,
+    scale_params_glo = scale_params_glo,
+    scale_params_reg = scale_params_reg,
     has_spatial = !is.null(spde.mesh)
   )
 

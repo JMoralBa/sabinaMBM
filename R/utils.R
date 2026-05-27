@@ -1253,7 +1253,7 @@
 
 #' prepare significant covariates
 #' @noRd
-.signif_vars <- function(fit, scale_params = NULL) {
+.signif_vars <- function(fit, scale_params_glo = NULL, scale_params_reg = NULL) {
   sf <- fit$summary.fixed
 
   # back-transform coef to original scale if vars were standardized
@@ -1262,8 +1262,11 @@
       coef_name <- rownames(sf)[i]
       # extract base variable name (remove GL, RE, RE_oh, GL_glo_res, RE_reg_anom suffixes)
       base_var <- gsub("GL$|RE$|RE_oh$|GL_glo_res$|RE_reg_anom$", "", coef_name)
-      if(base_var %in% names(scale_params) && scale_params[[base_var]]$sd > 0) {
-        sd_x <- scale_params[[base_var]]$sd
+  is_global  <- grepl("GL$|GL_glo_res$", coef_name)
+  params     <- if(is_global) scale_params_glo else scale_params_reg
+
+      if(!is.null(params) && base_var %in% names(scale_params) && scale_params[[base_var]]$sd > 0) {
+        sd_x <- params[[base_var]]$sd
         sf[i, "mean"] <- sf[i, "mean"] / sd_x
         sf[i, "sd"] <- sf[i, "sd"] / sd_x
         sf[i, "0.025quant"] <- sf[i, "0.025quant"] / sd_x
@@ -1387,8 +1390,8 @@
   if(has_Sre) {
     params <- c(
       params,
-      "Sre field – Range (posterior mean ± SD)",
-      "Sre field – Sigma (posterior mean ± SD)"
+      "Sre field: Range (posterior mean ± SD)",
+      "Sre field: Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1399,8 +1402,8 @@
   if(has_Sshared) {
     params <- c(
       params,
-      "Sshared field – Range (posterior mean ± SD)",
-      "Sshared field – Sigma (posterior mean ± SD)"
+      "Sshared field: Range (posterior mean ± SD)",
+      "Sshared field: Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1474,10 +1477,12 @@
   # predictive performance
   tbl_pred <- data.frame(
     Metric = c("AUC (full model)", 
+                                     "Tjur R\u00b2 (discrimination coefficient)",
                "Brier score", 
                "RMSE", 
                "Observed-predicted correlation (r)"),
     Value  = c(diag_block$predictive$auc_full,
+                                     fmt_val(diag_block$predictive$tjur_r2),
                fmt_val(diag_block$predictive$brier),
                fmt_val(diag_block$predictive$rmse),
                fmt_val(diag_block$predictive$corr_obs_pred)),
