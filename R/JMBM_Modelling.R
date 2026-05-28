@@ -11,7 +11,7 @@
 #' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01. For multi-scale separation, set \code{shared.pcprior.sigma[1]} substantially higher than \code{regional.pcprior.sigma[1]} (e.g., c(1, 0.01) vs c(0.5, 0.01)).
 #' @param regional.pcprior.range Numeric vector of length 2. PC-prior for the range of the local residual field S_re (regional predictor only). If \code{NULL} (and \code{shared.pcprior.range} is also \code{NULL}), no spatial fields are used. Providing \code{shared.pcprior.range} without \code{regional.pcprior.range} raises an error.
 #' @param regional.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_re.
-#' @param covariate.effects Optional named list to control the functional form of covariates (e.g., \code{"linear"} for linear, or \code{"rw2"} for non-linear splines)(see details). If \code{NULL} (default), all covariate effects remain constant (linear).
+#' @param covariate.effects Optional named list controlling the functional form of covariate effects. If \code{NULL} (default), all effects are linear. Accepts entries \code{"global"}, \code{"regional"}, and/or \code{"default"}, each set to \code{"linear"}, \code{"drop"}, \code{"rw2"} (non-linear RW2 with default PC prior \code{u = 5}, \code{alpha = 0.01}), or \code{list(model = "rw2", u = ..., alpha = ...)} for custom PC prior parameters.
 #' @param coupling.intercept Character. Controls how the regional intercept inherits information from the global intercept. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent intercepts (no borrowing of strength).
@@ -170,10 +170,16 @@ JMBM.Modelling <- function(jmbm_obj,
                       save.output = FALSE,
                       verbose = TRUE) {
 
+if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Variables.Global) > 0) {
   vg <- sort(jmbm_obj$Selected.Variables.Global)
-  shared_vr   <- intersect(vg, jmbm_obj$Selected.Variables.Regional)
+  shared_vr <- intersect(vg, jmbm_obj$Selected.Variables.Regional)
   exclusive_vr <- setdiff(jmbm_obj$Selected.Variables.Regional, vg)
   vr <- c(shared_vr, sort(exclusive_vr))
+} else {
+  vg <- character(0)
+  shared_vr <- character(0)
+  vr <- sort(jmbm_obj$Selected.Variables.Regional)
+}
 
   has_Sre <- !is.null(spde.mesh) && !is.null(regional.pcprior.range)  && !is.null(regional.pcprior.sigma)
   has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
@@ -937,7 +943,8 @@ JMBM.Modelling <- function(jmbm_obj,
                   pred_Sre = if(has_Sre) pred_Sre else NULL,
                   pred_Sshared = if(has_Sshared) pred_Sshared else NULL,
                   coupling.intercept = coupling.intercept,
-                  scale_params = scale_params)
+                  scale_params_glo = scale_params_glo,
+                  scale_params_reg = scale_params_reg)
 
 
   ## Save outputs
