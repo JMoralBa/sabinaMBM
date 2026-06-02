@@ -11,7 +11,7 @@
 #' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01. For multi-scale separation, set \code{shared.pcprior.sigma[1]} substantially higher than \code{regional.pcprior.sigma[1]} (e.g., c(1, 0.01) vs c(0.5, 0.01)).
 #' @param regional.pcprior.range Numeric vector of length 2. PC-prior for the range of the local residual field S_re (regional predictor only). If \code{NULL} (and \code{shared.pcprior.range} is also \code{NULL}), no spatial fields are used. Providing \code{shared.pcprior.range} without \code{regional.pcprior.range} raises an error.
 #' @param regional.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_re.
-#' @param covariate.effects Optional named list to control the functional form of covariates (e.g., \code{"linear"} for linear, or \code{"rw2"} for non-linear splines)(see details). If \code{NULL} (default), all covariate effects remain constant (linear).
+#' @param covariate.effects Optional named list controlling the functional form of covariate effects. If \code{NULL} (default), all effects are linear. Accepts entries \code{"global"}, \code{"regional"}, and/or \code{"default"}, each set to \code{"linear"}, \code{"drop"}, \code{"rw2"} (non-linear RW2 with default PC prior \code{u = 5}, \code{alpha = 0.01}), or \code{list(model = "rw2", u = ..., alpha = ...)} for custom PC prior parameters.
 #' @param coupling.intercept Character. Controls how the regional intercept inherits information from the global intercept. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent intercepts (no borrowing of strength).
@@ -170,8 +170,16 @@ JMBM.Modelling <- function(jmbm_obj,
                       save.output = FALSE,
                       verbose = TRUE) {
 
-  vg <- jmbm_obj$Selected.Variables.Global
-  vr <- jmbm_obj$Selected.Variables.Regional
+if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Variables.Global) > 0) {
+  vg <- sort(jmbm_obj$Selected.Variables.Global)
+  shared_vr <- intersect(vg, jmbm_obj$Selected.Variables.Regional)
+  exclusive_vr <- setdiff(jmbm_obj$Selected.Variables.Regional, vg)
+  vr <- c(shared_vr, sort(exclusive_vr))
+} else {
+  vg <- character(0)
+  shared_vr <- character(0)
+  vr <- sort(jmbm_obj$Selected.Variables.Regional)
+}
 
   has_Sre <- !is.null(spde.mesh) && !is.null(regional.pcprior.range)  && !is.null(regional.pcprior.sigma)
   has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
@@ -389,11 +397,11 @@ JMBM.Modelling <- function(jmbm_obj,
   crs <- sf::st_crs(sp_covglo)
 
   all_model_vars <- unique(c(names(sp_covglo), names(sp_covreg)))
-  scale_params <- list()
+  scale_params_glo <- list()
+  scale_params_reg <- list()
 
   # scale decomposed pre-processing
-  shared_vars <- intersect(vg, vr)
-  sd_vars <- shared_vars[vapply(shared_vars, function(X) .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed", logical(1))]
+  sd_vars <- shared_vr[vapply(shared_vr, function(X) .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed", logical(1))]
   if(length(sd_vars) > 0) {
     glo_resampled_stack <- terra::resample(sp_covglo[[sd_vars]], sp_covreg[[sd_vars[1]]])
     for(X in sd_vars) {
@@ -414,15 +422,20 @@ JMBM.Modelling <- function(jmbm_obj,
   if (!is.null(coupling.intercept) && length(names(sp_covglo)) > 0) {
     result_glo <- .standardize_rasters(sp_covglo, n_cores = n.threads)
     sp_covglo <- result_glo$rast
-    scale_params <- c(scale_params, result_glo$params)
+    scale_params_glo <- result_glo$params
   }
 
   # regional standarization
   if (length(names(sp_covreg)) > 0) {
     result_reg <- .standardize_rasters(sp_covreg, n_cores = n_cores_std)
     sp_covreg <- result_reg$rast
-    scale_params <- c(scale_params, result_reg$params)
+    scale_params_reg <- result_reg$params
   }
+
+  scale_params <- c(
+    scale_params_glo,
+    scale_params_reg[setdiff(names(scale_params_reg), names(scale_params_glo))]
+  )
 
   # log stats
   if (length(names(sp_covreg)) > 0 && verbose) {
@@ -432,8 +445,8 @@ JMBM.Modelling <- function(jmbm_obj,
       m_val <- terra::global(sp_covreg[[v]], "mean", na.rm = TRUE)[1, 1]
       s_val <- terra::global(sp_covreg[[v]], "sd", na.rm = TRUE)[1, 1]
       # original values
-      original_mean <- scale_params[[v]][["mean"]]
-      original_sd <- scale_params[[v]][["sd"]]
+      original_mean <- scale_params_reg[[v]][["mean"]]
+      original_sd <- scale_params_reg[[v]][["sd"]]
       .item(sprintf("%s (regional): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f", 
                     v, m_val, s_val, original_mean, original_sd))
     }
@@ -445,8 +458,8 @@ JMBM.Modelling <- function(jmbm_obj,
       m_val <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
       s_val <- terra::global(sp_covglo[[v]], "sd", na.rm = TRUE)[1, 1]
       # original values
-      original_mean <- scale_params[[v]][["mean"]]
-      original_sd   <- scale_params[[v]][["sd"]]
+      original_mean <- scale_params_glo[[v]][["mean"]]
+      original_sd   <- scale_params_glo[[v]][["sd"]]
       .item(sprintf("%s (global): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f", 
                     v, m_val, s_val, original_mean, original_sd))
     }
@@ -930,15 +943,16 @@ JMBM.Modelling <- function(jmbm_obj,
                   pred_Sre = if(has_Sre) pred_Sre else NULL,
                   pred_Sshared = if(has_Sshared) pred_Sshared else NULL,
                   coupling.intercept = coupling.intercept,
-                  scale_params = scale_params)
+                  scale_params_glo = scale_params_glo,
+                  scale_params_reg = scale_params_reg)
 
 
   ## Save outputs
   species <- jmbm_obj$Species.Name
   if(save.output) {
     # directories
-    values_path <- file.path("Results", "NSBM_pure", "Values")
-    projections_path <- file.path("Results", "NSBM_pure", "Projections")
+    values_path <- file.path("Results", "MBM", "Values")
+    projections_path <- file.path("Results", "MBM", "Projections")
     fs::dir_create(values_path, recurse = TRUE)
     fs::dir_create(projections_path, recurse = TRUE)
     # fixed effects
@@ -1043,6 +1057,8 @@ JMBM.Modelling <- function(jmbm_obj,
     vg = vg,
     vr = vr,
     scale_params = scale_params,
+    scale_params_glo = scale_params_glo,
+    scale_params_reg = scale_params_reg,
     has_spatial = !is.null(spde.mesh)
   )
 

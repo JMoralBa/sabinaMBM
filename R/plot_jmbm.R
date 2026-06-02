@@ -130,14 +130,17 @@ plot.jmbm.inlabru <- function(x,
 
   } else if(identical(which, "fixed")) {
     marg_f <- x$marginals$fixed
-    sp     <- x$scale_params
+    sp_glo <- x$scale_params_glo
+    sp_reg <- x$scale_params_reg
     if(is.null(marg_f) || length(marg_f) == 0)
       .stop("No fixed effect marginals in this model.")
     species <- gsub("\\.", " ", x$Species.Name)
     cp_label <- if(!is.null(x$args$coupling.predictors)) x$args$coupling.predictors else "NULL"
     # back-transform marginals to original covariate scale
     df_list <- lapply(names(marg_f), function(nm) {
-      base_var <- gsub("GL$|RE$|RE_oh$|GL_ls$|RE_ss$", "", nm)
+      base_var <- gsub("GL$|RE$|RE_oh$|GL_glo_res$|RE_reg_anom$", "", nm)
+      is_global <- grepl("GL$|GL_glo_res$", nm)
+      sp <- if(is_global) sp_glo else sp_reg
       m <- marg_f[[nm]]
       if(!is.null(sp) && base_var %in% names(sp) && sp[[base_var]]$sd > 0) {
         sd_x <- sp[[base_var]]$sd
@@ -149,7 +152,9 @@ plot.jmbm.inlabru <- function(x,
     df <- do.call(rbind, df_list)
     # significance: CI do not cross 0
     signif_coefs <- names(marg_f)[vapply(names(marg_f), function(nm) {
-      base_var <- gsub("GL$|RE$|RE_oh$|GL_ls$|RE_ss$", "", nm)
+      base_var <- gsub("GL$|RE$|RE_oh$|GL_glo_res$|RE_reg_anom$", "", nm)
+      is_global <- grepl("GL$|GL_glo_res$", nm)
+      sp <- if(is_global) sp_glo else sp_reg
       m <- marg_f[[nm]]
       if(!is.null(sp) && base_var %in% names(sp) && sp[[base_var]]$sd > 0)
         m <- INLA::inla.tmarginal(function(x) x / sp[[base_var]]$sd, m)

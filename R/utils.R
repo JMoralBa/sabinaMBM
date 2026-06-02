@@ -222,8 +222,8 @@
 
     # ordered_hierarchical: soft constraint beta_RE ~ N(1, 0.5^2)
     # mean.linear=1 with standardized covariates encourages regional effect to mirror global scale.
-    #@@@JMB!! PENDIENTE consultar con Virgilio: La version A con prior fijo N(1, 0.5^2) funciona pero es soft constraint????, no jerarquía real. 
-       # La versión B hace copy sobre componente lineal global es jerarquía real beta_RE|beta_GL~N(beta_GL,tau) pero se rompe. Pendiente verificar si es por strategy eb o por linear effects o q????
+    #@@@JMB!! PENDIENTE consultar con Virgilio: La version A (actual) con prior fijo N(1, 0.5^2) funciona pero es soft constraint, no jerarquía real (beta_RE no copia beta_GL). 
+       # La versión B (copy real sobre efecto lineal) en teoría permite copiar efectos lineales (beta_RE|beta_GL~N(beta_GL,tau) usando el truco idd de un solo grupo de Krainski et al 2008 sec 1.6.2, poniendo f(id_var, covariate_values, model = "iid", copy = "XGL", fixed = FALSE). Eso haría un beta_copy por variable igual que para el intercepto. jerarquia real. El problema es que se me rompe. Pendiente verificar si es por strategy eb o por linear effects o q????
     else if(cp_mode == "ordered_hierarchical") {
       cmpregional <- c(cmpregional,
         paste0(X, "RE_oh(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'linear', mean.linear = 1, prec.linear = 4)"))
@@ -389,11 +389,15 @@
     if(spec == "drop") { 
       return(list(model = "drop", u = NA, alpha = NA))
     } 
+    #if(spec == "rw2") {
+    #  .stop(paste0("Invalid RW2 specification in `", path_label, "`.\n",
+    #                                        "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
+    #                                        "   For linear effects use 'linear'; to exclude use 'drop'."))
+    #} 
     if(spec == "rw2") {
-      .stop(paste0("Invalid RW2 specification in `", path_label, "`.\n",
-                                            "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
-                                            "   For linear effects use 'linear'; to exclude use 'drop'."))
-    } 
+      # defaults (u=5, alpha=0.01)    #@@@JMB default o customizable?
+      return(list(model = "rw2", u = 5, alpha = 0.01))
+    }
     .stop(paste0("Invalid keyword '", spec, "' in `", path_label, "`.\n",
                                        "   Valid options: 'linear', 'drop', or list(model='rw2', u=..., alpha=...)."))
   }
@@ -407,11 +411,14 @@
     }
     if(identical(spec$model, "rw2")) {
       # RW2 reequires u alpha
-      if(is.null(spec$u) || is.null(spec$alpha)) {
-        .stop(paste0("Incomplete RW2 specification in `", path_label, "`.\n",
-                                                 "   Provide both `u` and `alpha`."))
-      }
-      return(list(model = "rw2", u = spec$u, alpha = spec$alpha))
+      #if(is.null(spec$u) || is.null(spec$alpha)) {
+      #  .stop(paste0("Incomplete RW2 specification in `", path_label, "`.\n",
+      #                                           "   Provide both `u` and `alpha`."))
+      #}
+      #return(list(model = "rw2", u = spec$u, alpha = spec$alpha))
+               u_val  <- if(is.null(spec$u))  5 else spec$u  #@@@JMB default o cusomizable?
+               alpha_val <- if(is.null(spec$alpha)) 0.01 else spec$alpha
+              return(list(model = "rw2", u = u_val, alpha = alpha_val))
     }
     .stop(paste0("Invalid `model` in `", path_label, "`.\n",
                                        "   When using a list, only model='rw2' is permitted.\n",
@@ -552,7 +559,8 @@
                              pred_Sre = NULL,
                              pred_Sshared = NULL,
                              coupling.intercept,
-                             scale_params = NULL) {
+                                                                        scale_params_glo = NULL,
+                                                                        scale_params_reg = NULL) {
 
   has_Sre <- "Sre" %in% names(fit$summary.random)
   has_Sshared <- "Sshared" %in% names(fit$summary.random)
@@ -621,7 +629,7 @@
   iRegional <- mean_sd_str(fit$summary.random$IRegional)
 
   # significant vars
-  sig_vars <- .signif_vars(fit, scale_params = scale_params)
+  sig_vars <- .signif_vars(fit,  scale_params_glo = scale_params_glo,  scale_params_reg = scale_params_reg)
 
   if (fam == "cp") {
     auc_full <- "—"; tjur_r2 <- "—"; brier <- "—"; rmse <- "—"; pred_cor <- "—"
@@ -1253,17 +1261,21 @@
 
 #' prepare significant covariates
 #' @noRd
-.signif_vars <- function(fit, scale_params = NULL) {
+.signif_vars <- function(fit, scale_params_glo = NULL, scale_params_reg = NULL) {
   sf <- fit$summary.fixed
+   has_params <- !is.null(scale_params_glo) || !is.null(scale_params_reg)
 
   # back-transform coef to original scale if vars were standardized
-  if(!is.null(scale_params) && nrow(sf) > 0) {
+  if(has_params && nrow(sf) > 0) {
     for(i in seq_len(nrow(sf))) {
       coef_name <- rownames(sf)[i]
       # extract base variable name (remove GL, RE, RE_oh, GL_glo_res, RE_reg_anom suffixes)
       base_var <- gsub("GL$|RE$|RE_oh$|GL_glo_res$|RE_reg_anom$", "", coef_name)
-      if(base_var %in% names(scale_params) && scale_params[[base_var]]$sd > 0) {
-        sd_x <- scale_params[[base_var]]$sd
+               is_global  <- grepl("GL$|GL_glo_res$", coef_name)
+               params     <- if(is_global) scale_params_glo else scale_params_reg
+
+      if(!is.null(params) && base_var %in% names(params) && params[[base_var]]$sd > 0) {
+        sd_x <- params[[base_var]]$sd
         sf[i, "mean"] <- sf[i, "mean"] / sd_x
         sf[i, "sd"] <- sf[i, "sd"] / sd_x
         sf[i, "0.025quant"] <- sf[i, "0.025quant"] / sd_x
@@ -1316,7 +1328,7 @@
 
 #' prepare summary
 #' @noRd
-.jmbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL, scale_params=NULL, has_spatial=FALSE) {
+.jmbm_generate_summary <- function(fit, species, fam, lnk, coupling.intercept, coupling.predictors, diag_block, cv_res=NULL, vg=NULL, vr=NULL, scale_params=NULL, scale_params_glo=NULL, scale_params_reg=NULL, has_spatial=FALSE) {
   
   fmt_val <- function(x, digits = 3) {
     if(is.null(x) || length(x) == 0) return("—")
@@ -1387,8 +1399,8 @@
   if(has_Sre) {
     params <- c(
       params,
-      "Sre field – Range (posterior mean ± SD)",
-      "Sre field – Sigma (posterior mean ± SD)"
+      "Sre field: Range (posterior mean ± SD)",
+      "Sre field: Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1399,8 +1411,8 @@
   if(has_Sshared) {
     params <- c(
       params,
-      "Sshared field – Range (posterior mean ± SD)",
-      "Sshared field – Sigma (posterior mean ± SD)"
+      "Sshared field: Range (posterior mean ± SD)",
+      "Sshared field: Sigma (posterior mean ± SD)"
     )
     values <- c(
       values,
@@ -1474,10 +1486,12 @@
   # predictive performance
   tbl_pred <- data.frame(
     Metric = c("AUC (full model)", 
+                                     "Tjur R\u00b2 (discrimination coefficient)",
                "Brier score", 
                "RMSE", 
                "Observed-predicted correlation (r)"),
     Value  = c(diag_block$predictive$auc_full,
+                                     fmt_val(diag_block$predictive$tjur_r2),
                fmt_val(diag_block$predictive$brier),
                fmt_val(diag_block$predictive$rmse),
                fmt_val(diag_block$predictive$corr_obs_pred)),
