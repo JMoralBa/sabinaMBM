@@ -951,8 +951,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   species <- jmbm_obj$Species.Name
   if(save.output) {
     # directories
-    values_path <- file.path("Results", "NSBM_pure", "Values")
-    projections_path <- file.path("Results", "NSBM_pure", "Projections")
+    values_path <- file.path("Results", "MBM", "Values")
+    projections_path <- file.path("Results", "MBM", "Projections")
     fs::dir_create(values_path, recurse = TRUE)
     fs::dir_create(projections_path, recurse = TRUE)
     # fixed effects

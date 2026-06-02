@@ -222,8 +222,8 @@
 
     # ordered_hierarchical: soft constraint beta_RE ~ N(1, 0.5^2)
     # mean.linear=1 with standardized covariates encourages regional effect to mirror global scale.
-    #@@@JMB!! PENDIENTE consultar con Virgilio: La version A con prior fijo N(1, 0.5^2) funciona pero es soft constraint????, no jerarquía real. 
-       # La versión B hace copy sobre componente lineal global es jerarquía real beta_RE|beta_GL~N(beta_GL,tau) pero se rompe. Pendiente verificar si es por strategy eb o por linear effects o q????
+    #@@@JMB!! PENDIENTE consultar con Virgilio: La version A (actual) con prior fijo N(1, 0.5^2) funciona pero es soft constraint, no jerarquía real (beta_RE no copia beta_GL). 
+       # La versión B (copy real sobre efecto lineal) en teoría permite copiar efectos lineales (beta_RE|beta_GL~N(beta_GL,tau) usando el truco idd de un solo grupo de Krainski et al 2008 sec 1.6.2, poniendo f(id_var, covariate_values, model = "iid", copy = "XGL", fixed = FALSE). Eso haría un beta_copy por variable igual que para el intercepto. jerarquia real. El problema es que se me rompe. Pendiente verificar si es por strategy eb o por linear effects o q????
     else if(cp_mode == "ordered_hierarchical") {
       cmpregional <- c(cmpregional,
         paste0(X, "RE_oh(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'linear', mean.linear = 1, prec.linear = 4)"))
