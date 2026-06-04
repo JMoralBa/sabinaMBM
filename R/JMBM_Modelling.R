@@ -466,13 +466,16 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   }
 
   #
+  bg_or_abs_glo <- if(is.null(jmbm_obj$Absences.XY.Global)) jmbm_obj$Background.XY.Global else jmbm_obj$Absences.XY.Global
+  bg_or_abs_reg <- if(is.null(jmbm_obj$Absences.XY.Regional)) jmbm_obj$Background.XY.Regional else jmbm_obj$Absences.XY.Regional
+
   pp_glo <- rbind(
     cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),  #@@@JMB jmbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
-    cbind(jmbm_obj$Background.XY.Global, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
+    cbind(jmbm_obj$bg_or_abs_glo, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
   )
   pp_reg <- rbind(
     cbind(jmbm_obj$SpeciesData.XY.Regional, resp = if(!is.null(jmbm_obj$Response.Regional)) jmbm_obj$Response.Regional else 1L),  
-    cbind(jmbm_obj$Background.XY.Regional, resp = 0L)          
+    cbind(jmbm_obj$bg_or_abs_reg, resp = 0L)          
   )
 
   pp_glo <- sf::st_as_sf(pp_glo, coords = c("x","y"), crs = crs)
