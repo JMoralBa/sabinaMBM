@@ -466,7 +466,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   }
 
   #
-  bg_or_abs_glo <- if(is.null(jmbm_obj$Absences.XY.Global)) jmbm_obj$Background.XY.Global else jmbm_obj$Absences.XY.Global
+  bg_or_abs_glo <- if(is.null(jmbm_obj$Absences.XY.Global)) jmbm_obj$Background.XY.Global else jmbm_obj$Absences.XY.Global   #@@@JMB si no quitamos arg bg.w, hay que saltar la pondercion si entran ausencias reales
   bg_or_abs_reg <- if(is.null(jmbm_obj$Absences.XY.Regional)) jmbm_obj$Background.XY.Regional else jmbm_obj$Absences.XY.Regional
 
   pp_glo <- rbind(
