@@ -1,4 +1,4 @@
-Package: sabinaJMBM
+Package: sabinaMBM
 Title: An R package for Multiscale Bayesian Modelling using INLA
 Version: 0.1.0
 Authors@R: 
