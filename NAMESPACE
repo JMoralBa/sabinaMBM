@@ -2,5 +2,6 @@
 
 S3method(plot,jmbm.inlabru)
 S3method(summary,jmbm.inlabru)
-export(JMBM.Modelling)
+export(MBM.Modelling)
+export(MBM.SuggestParams)
 export(create_mesh)

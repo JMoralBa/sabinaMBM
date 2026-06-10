@@ -55,5 +55,5 @@ plot(myPred.pure)
 
 }
 \seealso{
-\code{\link{MBM.Moelling}}, \code{\link{summary.jmbm.inlabru}}
+\code{\link{MBM.Modelling}}, \code{\link{summary.jmbm.inlabru}}
 }
