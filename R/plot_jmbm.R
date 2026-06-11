@@ -2,7 +2,7 @@
 #'
 #' @title Plot predictions and spatial fields from a fitted NSBM model
 #'
-#' @description Prints a structured summary for objects of class \code{jmbm.inlabru}, including model metadata, Bayesian fit criteria, hyperparameters, intercepts, fixed effects, predictive performance, calibration, and diagnostics. Returns the summary list invisibly.
+#' @description Generates diagnostic plots and spatial prediction maps for objects of class \code{jmbm.inlabru}. Supports current and future suitability maps, spatial field visualizations, posterior marginals, and calibration diagnostics.
 #'
 #' @param x An object of class "jmbm.inlabru".
 #' @param which Component to plot. One of:
@@ -14,7 +14,7 @@
 #'     \item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
 #'     \item \code{"fixed"}: posterior marginals of all fixed effect coefficients, back-transformed to original covariate scale.
 #'     \item \code{"pit"}: histogram of Probability Integral Transform values. A uniform distribution indicates good calibration.
-#'     \item \code{"new.projections"}, \code{"new.projections[[1]]"}, or scenario name: future/alternative scenario.
+#'     \item \code{"new.projections"}(first scenario), or scenario name as string (e.g. \code{"MRI_ESM2_0_2070_SSP585"}): future/alternative scenario prediction.
 #'   }
 #' @param layer Raster layer to display (default = "mean"). Available: "mean", "sd", "q0.025", "q0.5", "q0.975", "median", "sd.mc_std_err", "mean.mc_std_err".
 #' @param palette Color palette passed to ggplot2::scale_fill_distiller(). Default = "Spectral".
@@ -25,14 +25,14 @@
 #'
 #' @examples
 #' # Default: current prediction (mean layer)
-#' plot(myPred.pure)
+#' plot(myModel)
 #'
 #' ## Sre field
-#' # plot(myPred.pure, which = "pred_Sre", layer = "sd")
+#' # plot(myModel, which = "pred_Sre", layer = "sd")
 #'
 #' ## Scenario by index or name
-#' # plot(myPred.pure, which = "new.projections[[1]]")
-#' # plot(myPred.pure, which = "scenario1", layer = "q0.975")
+#' # plot(myModel, which = "new.projections[[1]]")
+#' # plot(myModel, which = "scenario1", layer = "q0.975")
 #'
 #' @seealso \code{\link{MBM.Modelling}}, \code{\link{summary.jmbm.inlabru}}
 #'
