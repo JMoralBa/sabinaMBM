@@ -89,7 +89,7 @@ create_mesh <- function(nsdm_obj,
   sf::st_crs(pp_sf) <- crs
   if(!is.null(ap_sf)) sf::st_crs(ap_sf) <- crs
 
-  points_sf <- dplyr::bind_rows(ap_sf, pp_sf)
+  points_sf <- rbind(ap_sf, pp_sf)
 
   # boundary method
   boundary <- switch(boundary.method,

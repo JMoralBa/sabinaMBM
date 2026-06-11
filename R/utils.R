@@ -769,7 +769,7 @@
 
   var_explained_Sre <- "—"
   ssi <- NA_real_
-  sri <- "—"
+  r2_fields <- "—"
 
   if(has_Sre && has_Sshared) {
     
@@ -786,13 +786,14 @@
       ssi <- range_penalty * sigma_penalty
     }
 
-    # SRI (spatial redundancy index)
+    # Posterior field redundancy r^2(S_RE, S_shared). Squared Pearson correlation between posterior mean nodal values of S_RE and S_shared
+          # High values (> 0.5) indicate both fields capture the same spatial pattern (redundancy).       #@@@JMB bien?
     resid_Sre <- fit$summary.random$Sre$mean
     resid_Sshared <- fit$summary.random$Sshared$mean
     if(!is.null(resid_Sre) && !is.null(resid_Sshared)) {
       n_min <- min(length(resid_Sre), length(resid_Sshared))
       cor_fields <- stats::cor(resid_Sre[1:n_min], resid_Sshared[1:n_min], use = "complete.obs")
-      sri <- cor_fields^2
+      r2_fields <- cor_fields^2
     }
   }
 
@@ -1242,7 +1243,7 @@
                        field_correlation = field_correlation, # prior influence
                        var_explained_Sre = var_explained_Sre,
                        ssi = ssi,
-                       sri = sri), 
+                       r2_fields = r2_fields), 
     plots = list(hyperparams = pA,
                  Srefields = pB,
                  correlogram = pC,
@@ -1263,7 +1264,7 @@
 #' @noRd
 .signif_vars <- function(fit, scale_params_glo = NULL, scale_params_reg = NULL) {
   sf <- fit$summary.fixed
-   has_params <- !is.null(scale_params_glo) || !is.null(scale_params_reg)
+  has_params <- !is.null(scale_params_glo) || !is.null(scale_params_reg)
 
   # back-transform coef to original scale if vars were standardized
   if(has_params && nrow(sf) > 0) {
@@ -1481,6 +1482,20 @@
     cols_order <- c("coef", "coupling", "estimate", "sd", "2.5%", "97.5%", "signif", "tail_p")
     cols_order <- intersect(cols_order, names(tbl_fixed))
     tbl_fixed <- tbl_fixed[, cols_order]
+
+    is_gl  <- grepl("GL$|GL_glo_res$", tbl_fixed$coef)
+    base_n <- gsub("GL$|GL_glo_res$|RE$|RE_oh$|RE_reg_anom$", "", tbl_fixed$coef)
+    idx_gl <- which( is_gl)[order(base_n[ is_gl])]
+    idx_re <- which(!is_gl)[order(base_n[!is_gl])]
+      if (length(idx_gl) > 0 && length(idx_re) > 0) {
+        blank     <- tbl_fixed[1, ]; blank[, ] <- NA; blank$coef <- ""
+        tbl_fixed <- rbind(tbl_fixed[idx_gl, ], blank, tbl_fixed[idx_re, ])
+      } else if (length(idx_gl) > 0) {
+        tbl_fixed <- tbl_fixed[idx_gl, ]
+      } else {
+        tbl_fixed <- tbl_fixed[idx_re, ]
+      }
+      rownames(tbl_fixed) <- NULL
   }
 
   # predictive performance
@@ -1528,7 +1543,7 @@
       "Sshared–Sre field correlation (r)",
       "Variance explained by Sre (%)",
       "Scale separation Index (SSI) [0–1]",
-      "Spatial redundancy Index (SRI) [0–1]"
+      "Posterior field redundancy r\u00b2(S_RE, S_shared) [0–1]"
     ),
     Value = c(
       fmt_val(diag_block$diagnostics$moran_I),
@@ -1539,7 +1554,7 @@
       if(is.numeric(diag_block$diagnostics$var_explained_Sre)) 
         fmt_val(diag_block$diagnostics$var_explained_Sre * 100) else "—",
       fmt_val(diag_block$diagnostics$ssi),
-      fmt_val(diag_block$diagnostics$sri)
+      fmt_val(diag_block$diagnostics$r2_fields)
     ),
     stringsAsFactors = FALSE
   )

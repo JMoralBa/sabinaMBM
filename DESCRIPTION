@@ -1,4 +1,4 @@
-Package: sabinaJMBM
+Package: sabinaMBM
 Title: An R package for Multiscale Bayesian Modelling using INLA
 Version: 0.1.0
 Authors@R: 
@@ -33,20 +33,15 @@ Imports:
     tidyterra,
     ggtext,
     rnaturalearth,
-    rnaturalearthdata,
     concaveman,
     pROC,
     spdep,
-    dplyr,
     fs,
     scales,
-    patchwork,
     parallel,
     furrr,
     stats
 Suggests:
-    devtools,
-    testthat (>= 3.0.0)
 Remotes:
     geoSABINA/sabinaNSDM,
     r-inla-org/r-inla

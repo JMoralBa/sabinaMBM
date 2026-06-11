@@ -1,4 +1,4 @@
-#' @name JMBM.Modelling
+#' @name MBM.Modelling
 #'
 #' @title Nested species distribution modeling (Hierarchical Bayesian approach)
 #'
@@ -151,7 +151,7 @@
 #' \emph{The Annals of Applied Statistics}, 4(3), 1383--1402.
 #'
 #' @export
-JMBM.Modelling <- function(jmbm_obj, 
+MBM.Modelling <- function(jmbm_obj, 
                       family = binomial(link = "logit"), # family object binomial(), poisson(), etc., o "cp" para intensity (procesos puntuales)
                       covariate.effects = NULL,
                       coupling.intercept = "unpooled",
@@ -185,7 +185,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   has_Sshared <- !is.null(spde.mesh) && !is.null(shared.pcprior.range) && !is.null(shared.pcprior.sigma)
 
 
-  .info("sabinaJMBM: Joint Multiscale Species Distribution Model")
+  .info("sabinaMBM: Multiscale Species Distribution Model")
 
   ## Checks
   if(!inherits(jmbm_obj, "nsdm.vinput")) {
@@ -199,7 +199,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     fam <- "cp"
     lnk <- NULL
   } else {
-    .stop("`family` must be either a standard family() object or the string 'cp'.")  #@@@JMB poner permitidos o enviar a ?JMBM.Modelling details?
+    .stop("`family` must be either a standard family() object or the string 'cp'.")  #@@@JMB poner permitidos o enviar a ?MBM.Modelling details?
   }
   valid_links <- list(binomial = c("logit", "cloglog"),
                       poisson = "log", nbinomial = "log",
@@ -466,13 +466,16 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   }
 
   #
+  bg_or_abs_glo <- if(is.null(jmbm_obj$Absences.XY.Global)) jmbm_obj$Background.XY.Global else jmbm_obj$Absences.XY.Global   #@@@JMB si no quitamos arg bg.w, hay que saltar la pondercion si entran ausencias reales
+  bg_or_abs_reg <- if(is.null(jmbm_obj$Absences.XY.Regional)) jmbm_obj$Background.XY.Regional else jmbm_obj$Absences.XY.Regional
+
   pp_glo <- rbind(
     cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),  #@@@JMB jmbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
-    cbind(jmbm_obj$Background.XY.Global, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
+    cbind(bg_or_abs_glo, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
   )
   pp_reg <- rbind(
     cbind(jmbm_obj$SpeciesData.XY.Regional, resp = if(!is.null(jmbm_obj$Response.Regional)) jmbm_obj$Response.Regional else 1L),  
-    cbind(jmbm_obj$Background.XY.Regional, resp = 0L)          
+    cbind(bg_or_abs_reg, resp = 0L)          
   )
 
   pp_glo <- sf::st_as_sf(pp_glo, coords = c("x","y"), crs = crs)
@@ -762,6 +765,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
         test_r2 <- test_r[keep_k, ]
 
         if(nrow(test_r2) > 0) {
+          test_r2 <- sf::st_transform(test_r2, terra::crs(sp_covreg))
           pk <- predict(fit_k, test_r2, pred_formula)
           if(fam %in% c("binomial", "beta")) {
             if(length(unique(test_r2$resp)) > 1) {

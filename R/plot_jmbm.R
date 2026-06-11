@@ -34,7 +34,7 @@
 #' # plot(myPred.pure, which = "new.projections[[1]]")
 #' # plot(myPred.pure, which = "scenario1", layer = "q0.975")
 #'
-#' @seealso \code{\link{JMBM.Moelling}}, \code{\link{summary.jmbm.inlabru}}
+#' @seealso \code{\link{MBM.Modelling}}, \code{\link{summary.jmbm.inlabru}}
 #'
 #' @export
 #' @method plot jmbm.inlabru

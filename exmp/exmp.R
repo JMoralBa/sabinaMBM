@@ -1,6 +1,6 @@
 # =============================================================================
 #
-# sabinaJMBM — Worked example
+# sabinaMBM — Worked example
 #
 # =============================================================================
  
@@ -14,7 +14,7 @@ library(ggplot2)
 library(inlabru)
 library(INLA)
 library(sabinaNSDM)
-library(sabinaJMBM)   # devtools::load_all(...)
+library(sabinaMBM)   # devtools::load_all(...)
  
  
 # -----------------------------------------------------------------------------
@@ -88,7 +88,7 @@ myMesh <- create_mesh(
  
  
 # -----------------------------------------------------------------------------
-# JMBM MODEL FITTING
+# MBM MODEL FITTING
 # -----------------------------------------------------------------------------
 # coupling.intercept = how the regional intercept relates to the global one ("unpooled", "ordered_hierarchical", "bayesian_feedback")
 # coupling.predictors = how shared covariates relate across scales ("unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback")
@@ -100,7 +100,7 @@ myMesh <- create_mesh(
 #             regional = list(bio1="linear", bio12="drop"), 
 #             default="linear")
  
-myModel <- JMBM.Modelling(
+myModel <- MBM.Modelling(
   jmbm_obj            = mySelvars,
   family              = binomial(link = "logit"),
   spde.mesh           = myMesh,
