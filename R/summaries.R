@@ -1,9 +1,9 @@
-#' @title Summary for jmbm.inlabru Objects
-#' @description Provides a summary for objects of class \code{jmbm.inlabru}.
+#' @title Summary for jmbm.inlabru objects
+#' @description Prints a structured summary for objects of class \code{jmbm.inlabru}, including model metadata, Bayesian fit criteria, hyperparameters, intercepts, fixed effects, predictive performance, and spatial diagnostics.
 #' @param object An object of class \code{jmbm.inlabru}.
 #' @param ... Additional arguments (not used).
 #' @return A summary in data frame format.
-#' @seealso \code{\link{NSBM.inlabru}}
+#' @seealso \code{\link{MBM.Modelling}}, \code{\link{plot.jmbm.inlabru}}
 #' @export
 #' @method summary jmbm.inlabru
 summary.jmbm.inlabru <- function(object, ...) {

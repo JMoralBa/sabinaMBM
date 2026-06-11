@@ -1,12 +1,12 @@
 #' @name MBM.Modelling
 #'
-#' @title Nested species distribution modeling (Hierarchical Bayesian approach)
+#' @title Joint multiscale Bayesian species distribution modelling
 #'
-#' @description Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling with spatial structure via \code{INLA} and \code{inlabru}. It allows the integration of global and regional scales with rigorous mathematical coupling structures.
+#' @description Fits a joint multiscale Bayesian species distribution model using spatial random fields via \code{INLA} and \code{inlabru}. Integrates global and regional scales through flexible coupling architectures with formal uncertainty propagation..
 #'
 #' @param jmbm_obj An object of class \code{nsdm.vinput}, resulting from \code{sabinaNSDM::NSDM.SelectCovariates()}.
 #' @param family A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity). 
-#' @param spde.mesh An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_re) is used. If \code{NULL} (default), the model runs without spatial structure.#' @param regional.pcprior.range Numeric vector length 2. PC-prior on the range of the local residual field S_re (e.g., \code{c(2, 0.01)}). If \code{NULL} and \code{shared.pcprior.range} is also \code{NULL}, no spatial fields are used.
+#' @param spde.mesh An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_re) is used. If \code{NULL} (default), the model runs without spatial structure.
 #' @param shared.pcprior.range Numeric vector of length 2. PC-prior for the range of the shared spatial field S_shared, e.g. \code{c(10, 0.01)} means P(range < 10) = 0.01. Must be substantially larger than \code{regional.pcprior.range} to ensure scale separation (Bakka et al., 2018). If \code{NULL} (and \code{regional.pcprior.range} is also \code{NULL}), no spatial fields are used.
 #' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01. For multi-scale separation, set \code{shared.pcprior.sigma[1]} substantially higher than \code{regional.pcprior.sigma[1]} (e.g., c(1, 0.01) vs c(0.5, 0.01)).
 #' @param regional.pcprior.range Numeric vector of length 2. PC-prior for the range of the local residual field S_re (regional predictor only). If \code{NULL} (and \code{shared.pcprior.range} is also \code{NULL}), no spatial fields are used. Providing \code{shared.pcprior.range} without \code{regional.pcprior.range} raises an error.
@@ -15,17 +15,17 @@
 #' @param coupling.intercept Character. Controls how the regional intercept inherits information from the global intercept. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent intercepts (no borrowing of strength).
-#'     \item \code{"ordered_hierarchical"}: Regional intercept borrows strength from the global (Zhou & Bradley, 2023).
+#'     \item \code{"ordered_hierarchical"}: Regional intercept borrows strength from the global (Zhou & Bradley, 2024).
 #'     \item \code{"bayesian_feedback"}: Sequential updating using global posterior as regional prior via moment matching (mean and precision). A warning is issued if the global posterior is strongly skewed (|skewness| > 1), as moment matching may be unreliable in that case. See Figueira et al. (2024).
 #'     \item \code{NULL}: Regional-only model (no global component).
 #'   }
 #' @param coupling.predictors Character or list. Controls how global and regional covariate effects are related. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients.
-#'     \item \code{"ordered_hierarchical"}: Regional coefficient is modelled as a scaled copy of the global coefficient (\code{beta_RE | beta_GL ~ N(beta_GL, 0.5^2)}), implementing true hierarchical borrowing of strength via INLA \code{copy} (Zhou & Bradley, 2024). Requires the variable to be present at both scales.
+#'     \item \code{"ordered_hierarchical"}: Regional coefficient is modelled as a scaled copy of the global coefficient (\code{beta_RE | beta_GL ~ N(beta_GL, 0.5^2)}), implementing true hierarchical borrowing of strength via INLA \code{copy} (Zhou & Bradley, 2024). Requires the variable to be present at both scales.   #@@@JMB!! idea inicial, pero ahora "Regional coefficient has an independent prior centred at unity (\code{beta_RE ~ N(1, 0.5^2)}), implementing a Bayesian soft constraint that encourages — but does not force — the regional response to mirror the global one (Zhou & Bradley, 2024). Note: this is a prior-based soft constraint, not a true hierarchical copy."
 #'     \item \code{"scale_decomposed"}: Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), following Cressie & Wikle (2011) and Zhou & Bradley (2024). In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
 #'     \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors.
-#'     \item \code{NULL}: No coupling; effects are estimated independently.
+#'     \item \code{NULL}: Regional-only covariate effects; global covariates are excluded from the regional predictor entirely. No shared spatial fields (S_shared).
 #'   }
 #' @param background.weights Controls how background points are weighted in the likelihood. Options:
 #'   \itemize{
@@ -50,7 +50,7 @@
 #' \item{marginals}{List with posterior marginals: \code{hyperpar} (SPDE hyperparameters), \code{random} (IGlobal, IRegional intercepts), \code{fixed} (covariate coefficients). Use with \code{plot(x, which = "hyperparams")} or \code{plot(x, which = "intercepts")}.}
 #' \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
-#' \item{Summary}{Named list of \code{data.frame}s summarizing model metadata, model fit, hyperparameters, intercepts, fixed effects, predictive performance, calibration, and diagnostics.}  #@@@JMB revisar y refinar
+#' \item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@@JMB revisar y refinar
 #'
 #' @details
 #' family/link:
@@ -223,6 +223,9 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     if(length(vg) == 0) {
       .stop(paste0("'coupling.intercept = ", coupling.intercept, "' requires a global component. Use NULL for regional-only."))
     }
+  }
+  if(fam == "cp" && is.null(spde.mesh)) {
+    .stop("family = 'cp' (log-Gaussian Cox process) requires a spatial mesh for numerical integration. Create one with create_mesh().")
   }
   if(is.null(spde.mesh) && (!is.null(regional.pcprior.range) || !is.null(shared.pcprior.range))) {
     .stop("SPDE priors were provided but 'spde.mesh' is NULL. Create a mesh with create_mesh().")
@@ -499,7 +502,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     pp_reg <- pp_reg[stats::complete.cases(ext_reg), ]
   }
 
-  ## Background weights   #@@@JMB!! "area_weighted" sigue Warton & Shepherd 2010/Renner etal 2015 pero esta gente no contemplan dos escalas. Con area global >> area reg los pesos hay que equilibrarlos o algo así? ¿como hacemos esto para dos escalas?
+  ## Background weights   #@@@JMB!! "area_weighted" sigue Warton & Shepherd 2010/Renner etal 2015 pero esta gente no contemplan dos escalas. Con area global >> area reg los pesos hay que equilibrarlos o algo así? ¿como hacemos esto para dos escalas? ¿lo quitamos?
   w_glo <- NULL
   w_reg <- NULL
   if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") {
@@ -580,7 +583,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   ## Nested intercept
   # prior for intercepts iid. param = c(1, 0.01) -> P(σ > 1) = 0.01
   IID_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
-  #@@@JMB!! prior for beta_copy (regional deviation). beta_regional ~ Normal(mean = 1, sd = 0.5). INLA uses precisión, so sd = 0.5 -> tau = 1/(0.5^2) = 4  ¿está bien??
   COPY_BETA_PRIOR <- "hyper = list(beta = list(prior = 'normal', param = c(1, 4)))"
 
   if(is.null(coupling.intercept)) {
@@ -696,7 +698,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
 
   ## K-fold CV (only fam no cp)
-  if(cv.folds > 1) {      #@@@JMB!! la cv actual usa k-folds random. Deberíamos cosiderar spatial block CV??? 
+  if(cv.folds > 1) { 
     .info(sprintf("Performing spatial cross-validation (K = %d folds)...", cv.folds))
     if(fam == "cp") {
       .warn("Cross-validation (cv.folds > 1) is not implemented for family = 'cp'. CV results will be NULL.")
@@ -978,7 +980,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       Metric = c("WAIC", "DIC", "MLik", "LCPO (sum log-CPO)"),
       Value = c(fit$waic$waic, fit$dic$dic, fit$mlik[1], diag_block$bayes_fit$lcpo_val))
     write.csv(eval_metrics, file = file.path(values_path, paste0(species, "_evaluation.csv")), row.names = FALSE)
-    # CPO values (one per observation)   #@@@JMB!! useful for leave-one-out diagnostics or model comparison??
+    # CPO values (one per observation)   #@@@JMB!! useful for leave-one-out diagnostics or model comparison?? rm?
     write.csv(data.frame(CPO = fit$cpo$cpo), file = file.path(values_path, paste0(species, "_pointwise_CPO.csv")), row.names = FALSE)
     # full model object (fit)
     saveRDS(fit, file = file.path(values_path, paste0(species, "_model_fit.rds")))
@@ -1067,7 +1069,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   )
 
 
-  # return
+  # return         #@@@JMB pendiente revisar/adelgazar...
   sabina <- list(
     Species.Name = species,
     args = list(
