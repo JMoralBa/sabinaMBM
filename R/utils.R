@@ -395,7 +395,7 @@
     #                                        "   For linear effects use 'linear'; to exclude use 'drop'."))
     #} 
     if(spec == "rw2") {
-      # defaults (u=5, alpha=0.01)    #@@@JMB default o customizable?
+      # defaults (u=5, alpha=0.01)
       return(list(model = "rw2", u = 5, alpha = 0.01))
     }
     .stop(paste0("Invalid keyword '", spec, "' in `", path_label, "`.\n",

@@ -14,9 +14,9 @@
 #' @param proj.new.env Logical. If TRUE, includes the extent of new scenarios in the mesh domain if they exist in `nsdm_obj$Scenarios` (default: TRUE). Only applies if \code{boundary.method = "raster_mask"}. 
 #' @param plot Logical. If TRUE, plots the mesh for inspection (default: FALSE).
 #'
-#' @return An \code{fm_mesh_2d} object (class \code{inla.mesh}) suitable for use with \code{INLA} and \code{inlabru} SPDE components. Pass directly to \code{JMBM.Moelling(spde.mesh = ...)}. #@@@JMB pensar si ponemos clase propia a este objeto (inla.mesh??)
+#' @return An \code{fm_mesh_2d} object (class \code{jmbm.mesh}) suitable for use with \code{INLA} and \code{inlabru} SPDE components. Pass directly to \code{MBM.Modelling(spde.mesh = ...)}. #@@@JMB pensar si ponemos clase propia a este objeto (jmbm.mesh??)
 #'
-#' @seealso \code{\link{JMBM.Moelling}}
+#' @seealso \code{\link{MBM.Modelling}}
 #'
 #' @references
 #' Lindgren, F., Rue, H. & Lindström, J. (2011). An explicit link between Gaussian fields
