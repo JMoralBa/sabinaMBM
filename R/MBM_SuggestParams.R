@@ -195,7 +195,8 @@ MBM.SuggestParams <- function(jmbm_obj,
     .stop("'prior.range.fraction' must be in (0, 1]. 
           Default 0.20 is the INLA standard assumption.")
   if (!is.numeric(shared.range.ratio) || shared.range.ratio <= 1) 
-    .stop("'shared.range.ratio' must be > 1 to maintain structural scale hierarchy.")
+    .stop("'shared.range.ratio' must be > 1 to maintain structural scale hierarchy.
+          Values below 3 risk double-smoothing and weak scale separation")
   if (shared.range.ratio < 3) 
     .warn("'shared.range.ratio' < 3 risks double-smoothing and weak scale separation (Bakka et al., 2018).")
   if (!is.numeric(shared.sigma.divisor) || shared.sigma.divisor <= 1) 
@@ -270,7 +271,7 @@ MBM.SuggestParams <- function(jmbm_obj,
 
 
   # Sigma prior upper bounds
-  sigma_re <- 1.5
+  sigma_re <- regional.sigma.u
   sigma_shared <- if (has_global) round(sigma_re / shared.sigma.divisor, 2) else NULL
 
 
@@ -285,7 +286,6 @@ MBM.SuggestParams <- function(jmbm_obj,
   # Binomial GAM + thin-plate spline (k=5)   #@@@JMB conservative???
   # rw2 suggested when p < rw2.alpha AND edf > rw2.edf.min.
   # Dual filter avoids large-N spurious significance and negligible curvature
-
   .build_data <- function(xy_pres, xy_bg, rast) {
     coords <- rbind(
       cbind(xy_pres[, c("x", "y")], resp = 1L),
@@ -351,15 +351,6 @@ MBM.SuggestParams <- function(jmbm_obj,
     names(t) <- vars_gl; t
   } else NULL
 
-  cov_effects_re <- lapply(tests_re,
-                           function(x) .rw2_entry(x$suggest, rw2.u, rw2.alpha.pc))
-  cov_effects_gl <- if (has_global)
-    lapply(tests_gl, function(x) .rw2_entry(x$suggest, rw2.u, rw2.alpha.pc)) else NULL
-
-  covariate.effects <- list(regional = cov_effects_re, default = "linear")
-  if (has_global)
-    covariate.effects <- c(list(global = cov_effects_gl), covariate.effects)
-
   rw2_tests_re <- data.frame(
     scale = "regional", variable = vars_re,
     edf = sapply(tests_re, `[[`, "edf"),
@@ -379,13 +370,13 @@ MBM.SuggestParams <- function(jmbm_obj,
   rw2_tests <- rbind(rw2_tests_gl, rw2_tests_re)
   rownames(rw2_tests) <- NULL
 
-  # output
   covariate.effects <- list(
     regional = lapply(tests_re, function(res) .rw2_entry(res$suggest, rw2.u, rw2.alpha.pc)),
     global = if(has_global) lapply(tests_gl, function(res) .rw2_entry(res$suggest, rw2.u, rw2.alpha.pc)) else NULL,
     default  = "linear"
   )
 
+  # output
   out <- list(
     create_mesh = list(
       edge = c(edge_inner, edge_outer),
