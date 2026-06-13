@@ -2,7 +2,7 @@
 % Please edit documentation in R/MBM_Modelling.R
 \name{MBM.Modelling}
 \alias{MBM.Modelling}
-\title{Nested species distribution modeling (Hierarchical Bayesian approach)}
+\title{Joint multiscale Bayesian species distribution modelling}
 \usage{
 MBM.Modelling(
   jmbm_obj,
@@ -35,7 +35,7 @@ MBM.Modelling(
 \item{coupling.intercept}{Character. Controls how the regional intercept inherits information from the global intercept. Options:
 \itemize{
 \item \code{"unpooled"} (default): Independent intercepts (no borrowing of strength).
-\item \code{"ordered_hierarchical"}: Regional intercept borrows strength from the global (Zhou & Bradley, 2023).
+\item \code{"ordered_hierarchical"}: Regional intercept borrows strength from the global (Zhou & Bradley, 2024).
 \item \code{"bayesian_feedback"}: Sequential updating using global posterior as regional prior via moment matching (mean and precision). A warning is issued if the global posterior is strongly skewed (|skewness| > 1), as moment matching may be unreliable in that case. See Figueira et al. (2024).
 \item \code{NULL}: Regional-only model (no global component).
 }}
@@ -43,13 +43,13 @@ MBM.Modelling(
 \item{coupling.predictors}{Character or list. Controls how global and regional covariate effects are related. Options:
 \itemize{
 \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients.
-\item \code{"ordered_hierarchical"}: Regional coefficient is modelled as a scaled copy of the global coefficient (\code{beta_RE | beta_GL ~ N(beta_GL, 0.5^2)}), implementing true hierarchical borrowing of strength via INLA \code{copy} (Zhou & Bradley, 2024). Requires the variable to be present at both scales.
+\item \code{"ordered_hierarchical"}: Bayesian soft constraint where the regional coefficient has a prior centred on unity (\code{beta_RE ~ N(1, 0.5^2)}) in standardized scale, encouraging — but not forcing — non-zero regional response. With per-extent standardization (the default for this option), a coefficient of 1 corresponds to a one-regional-sd effect. True INLA \code{copy} over linear effects is not used here because of identifiability issues when global and regional likelihoods carry asymmetric information; this formulation is a practical regularization rather than a strict hierarchical copy. Requires the variable to be present at both scales.
 \item \code{"scale_decomposed"}: Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), following Cressie & Wikle (2011) and Zhou & Bradley (2024). In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
 \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors.
-\item \code{NULL}: No coupling; effects are estimated independently.
+\item \code{NULL}: Regional-only covariate effects; global covariates are excluded from the regional predictor entirely. No shared spatial fields (S_shared).
 }}
 
-\item{spde.mesh}{An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_re) is used. If \code{NULL} (default), the model runs without spatial structure.#' @param regional.pcprior.range Numeric vector length 2. PC-prior on the range of the local residual field S_re (e.g., \code{c(2, 0.01)}). If \code{NULL} and \code{shared.pcprior.range} is also \code{NULL}, no spatial fields are used.}
+\item{spde.mesh}{An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_re) is used. If \code{NULL} (default), the model runs without spatial structure.}
 
 \item{regional.pcprior.range}{Numeric vector of length 2. PC-prior for the range of the local residual field S_re (regional predictor only). If \code{NULL} (and \code{shared.pcprior.range} is also \code{NULL}), no spatial fields are used. Providing \code{shared.pcprior.range} without \code{regional.pcprior.range} raises an error.}
 
@@ -89,10 +89,10 @@ A named list of class \code{jmbm.inlabru} with the following elements:
 \item{marginals}{List with posterior marginals: \code{hyperpar} (SPDE hyperparameters), \code{random} (IGlobal, IRegional intercepts), \code{fixed} (covariate coefficients). Use with \code{plot(x, which = "hyperparams")} or \code{plot(x, which = "intercepts")}.}
 \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 \item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
-\item{Summary}{Named list of \code{data.frame}s summarizing model metadata, model fit, hyperparameters, intercepts, fixed effects, predictive performance, calibration, and diagnostics.}  #@@JMB revisar y refinar
+\item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@JMB revisar y refinar
 }
 \description{
-Fits a nested species distribution model (NSDM) using hierarchical Bayesian modeling with spatial structure via \code{INLA} and \code{inlabru}. It allows the integration of global and regional scales with rigorous mathematical coupling structures.
+Fits a joint multiscale Bayesian species distribution model using spatial random fields via \code{INLA} and \code{inlabru}. Integrates global and regional scales through flexible coupling architectures with formal uncertainty propagation..
 }
 \details{
 family/link:
@@ -161,21 +161,25 @@ default = "linear")    # default rule if a covariate is not listed
 coupling.predictors: control of cross-scale covariate effects
 This argument defines how each predictor behaves across global and regional scales.
 It is only applied to variables that appear in both global and regional scales.
+Standardization behaviour: variables coupled via \code{"scale_decomposed"} or \code{"bayesian_feedback"} are standardized with unified global statistics (mu_GL, sigma_GL) in both rasters, so that a unit change in Z corresponds to the same physical change at both scales. All other variables (non-shared, or shared with \code{NULL}/\code{"unpooled"}/\code{"ordered_hierarchical"}) keep their native per-extent Z-score.
 \itemize{
 \item Option 1 \code{NULL} (default): no coupling. Global and regional effects are estimated independently unless one is dropped via \code{covariate.effects}.
 \item Option 2 \code{"unpooled"}: global and regional effects enter the linear predictor as two independent components (η = β_GL * X_GL + β_RE * X_RE + …). No information is shared between scales.
-\item Option 3 \code{"ordered_hierarchical"}: implements a Bayesian soft constraint where the regional coefficient has a prior centred on 1 (\code{beta_RE ~ N(1, 0.5^2)}), encouraging — but not forcing — similarity with the global effect. With standardized covariates (applied internally), a coefficient of 1 implies the regional effect mirrors the global scale. True hierarchical copy over linear components is not reliably supported in INLA; this formulation is a practical approximation. Following Zhou & Bradley (2024).
-\item Option 4 named \code{list}: provide a list with entries \code{variables} and \code{default}.        #@@JMB PARA PENSAR EN v2???? considerar permitir meter un SpatRaster de predicciones hechas fuera de aqui como spatial offset en los regional predictor.
+\item Option 3 \code{"ordered_hierarchical"}: Bayesian soft constraint with prior \code{beta_RE ~ N(1, 0.5^2)} in standardized scale, encouraging — but not forcing — non-zero regional response. Practical regularization, not a strict hierarchical copy (INLA \code{copy} on linear effects produces non-identifiable sign reversals when likelihoods carry asymmetric information).
+\item Option 4 \code{"scale_decomposed"}: shared covariates are first projected to the unified global Z-space, then decomposed additively into a resampled global macro-trend (X_glo_res) and a regional anomaly (X_reg_anom = X_RE - X_glo_res). Macro and anomaly coefficients are directly comparable in magnitude. Following Cressie & Wikle (2011). Requires the global raster to be of equal or coarser resolution than the regional one.
+\item Option 5 \code{"bayesian_feedback"}: shared covariates are unified to the global Z-space; the global model is fit first; posterior moments (mean, precision) of beta_GL are injected as the Gaussian prior of beta_RE in a subsequent regional fit. Following Figueira et al. (2024), adapted to multiscale settings (the original protocol assumes co-located covariates without Spatial Change of Support). Information is transferred via the first two moments only.
+\item Option 6 named \code{list}: provide a list with entries \code{variables} and \code{default}.        #@@JMB PARA PENSAR EN v2???? considerar permitir meter un SpatRaster de predicciones hechas fuera de aqui como spatial offset en los regional predictor.
 Structure:
 coupling.predictors = list(
-default   = "unpooled" | "NULL" | "ordered_hierarchical",
+default   = "unpooled" | "NULL" | "ordered_hierarchical" | "scale_decomposed" | "bayesian_feedback",
 variables = list(var1 = "...", var2 = "...", ...)
 )
 Validity rules (automatically checked):
-\item Hierarchical coupling.predictors requires the predictor to exist at both scales.
-\item If \code{covariate.effects} drops the global effect of a variable, hierarchical coupling is not allowed (no parent effect available).
-\item If the regional effect is dropped, hierarchical coupling is also invalid.
-\item Global RW2 smoothing cannot be combined with hierarchical coupling for the same variable (avoids identifiability and double-smoothing issues).
+\item Cross-scale couplings ("ordered_hierarchical", "scale_decomposed", "bayesian_feedback") require the predictor to exist at both scales.
+\item If \code{covariate.effects} drops the global or regional effect of a variable, cross-scale coupling is not allowed.
+\item "ordered_hierarchical" cannot be combined with global RW2 smoothing for the same variable.
+\item "bayesian_feedback" is not compatible with RW2 (a multi-parameter non-Gaussian posterior cannot be summarised as a single Gaussian prior).
+\item "bayesian_feedback" cannot be mixed with "scale_decomposed" or with "ordered_hierarchical" in the same call.
 }
 
 bayesian_feedback for new scenarios:

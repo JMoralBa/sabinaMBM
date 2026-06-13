@@ -45,12 +45,87 @@
 # -----------------------------
 
 
+#' Multiscale Z-standardization with COS correction
+#' @noRd
+.standardize_multiscale <- function(sp_covglo, sp_covreg, unified_vars = character(0),
+                                    standardize_global = TRUE) {
+
+  scale_params_glo <- list()
+  scale_params_reg <- list()
+
+  vars_glo <- if (!is.null(sp_covglo)) names(sp_covglo) else character(0)
+  vars_reg <- if (!is.null(sp_covreg)) names(sp_covreg) else character(0)
+
+  # Phase 1: unified variables (shared + coupled with scale_decomposed or bayesian_feedback)
+  # Use global statistics for BOTH rasters. This places X_GL and X_RE in the
+  # same Z-space, eliminating COS artifacts in cross-scale coefficient transfer.
+  for (v in unified_vars) {
+    if (!(v %in% vars_glo)) {
+      .warn(paste0("Unified standardization requested for '", v,
+                   "' but variable is missing in global raster. Falling back to regional stats."))
+      next
+    }
+    m_glo <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
+    s_glo <- terra::global(sp_covglo[[v]], "sd",   na.rm = TRUE)[1, 1]
+
+
+    if (is.na(s_glo) || s_glo <= 1e-10) {
+      .warn(paste0("Variable '", v, "' has near-zero global variance. Centering only."))
+      if (standardize_global) sp_covglo[[v]] <- sp_covglo[[v]] - m_glo
+      if (v %in% vars_reg)    sp_covreg[[v]] <- sp_covreg[[v]] - m_glo
+      scale_params_glo[[v]] <- list(mean = m_glo, sd = NA_real_)
+      scale_params_reg[[v]] <- list(mean = m_glo, sd = NA_real_, unified = TRUE)
+    } else {
+      if (standardize_global) sp_covglo[[v]] <- (sp_covglo[[v]] - m_glo) / s_glo
+      if (v %in% vars_reg)    sp_covreg[[v]] <- (sp_covreg[[v]] - m_glo) / s_glo
+      scale_params_glo[[v]] <- list(mean = m_glo, sd = s_glo)
+      scale_params_reg[[v]] <- list(mean = m_glo, sd = s_glo, unified = TRUE)
+    }
+  }
+
+  # Phase 2: non-unified variables — independent standardization
+  if (standardize_global) {
+    non_unif_glo <- setdiff(vars_glo, unified_vars)
+    if (length(non_unif_glo) > 0) {
+      res_glo <- .standardize_rasters(sp_covglo, var_names = non_unif_glo)
+      if (!is.null(res_glo$rast)) {
+        sp_covglo <- res_glo$rast
+        for (v in names(res_glo$params)) {
+          scale_params_glo[[v]] <- res_glo$params[[v]]
+        }
+      }
+    }
+  }
+
+  non_unif_reg <- setdiff(vars_reg, unified_vars)
+  if (length(non_unif_reg) > 0) {
+    res_reg <- .standardize_rasters(sp_covreg, var_names = non_unif_reg)
+    if (!is.null(res_reg$rast)) {
+      sp_covreg <- res_reg$rast
+      for (v in names(res_reg$params)) {
+        scale_params_reg[[v]] <- list(mean = res_reg$params[[v]]$mean, 
+                                      sd = res_reg$params[[v]]$sd, 
+                                      unified = FALSE)
+      }
+    }
+  }
+  
+  list(sp_covglo = sp_covglo,
+       sp_covreg = sp_covreg,
+       scale_params_glo = scale_params_glo,
+       scale_params_reg = scale_params_reg)
+}
+
+
+# -----------------------------
+
+
 #' Build inlabru likelihood objects
 #' @noRd
 .build_likelihoods <- function(fam, lnk, rhs_glo, rhs_reg,
-                                pp_glo, pp_reg, bdy_glo, bdy_reg, dom,
-                                coupling.intercept,
-                                w_glo = NULL, w_reg = NULL) {
+                               pp_glo, pp_reg, bdy_glo, bdy_reg, dom,
+                               coupling.intercept,
+                               w_glo = NULL, w_reg = NULL) {
   lik_glo <- NULL
   if(fam == "cp") {
     pres_glo <- if(!is.null(coupling.intercept)) pp_glo[pp_glo$resp != 0L, ] else NULL
@@ -106,57 +181,36 @@
 
   #cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
 
-  # rw2: knots to enforce min relative spacing (INLA check 1e-3) 
-  thin_knots <- function(x, min_ratio = 1e-3) {
-    x <- sort(unique(as.numeric(x)))
-    if(length(x) <= 2) return(x)
-    r <- diff(range(x))
-    if(!is.finite(r) || r == 0) return(unique(x))
-    out <- x[1]
-    for(xi in x[-1]) {
-      if((xi - out[length(out)]) / r >= min_ratio) { 
-        out <- c(out, xi)
-      }
-    } 
-    #@@@JMB!! thin_knots con min_ratio=1e-3 colapsa a <3 knots en covariables con distribución sesgada (ej. bio1) cuando n_pts es pequeño o cuando Sshared=NULL reduce pp_reg_sf. ¿es min_ratio=1e-3 muy agresivo? ¿Debería ser adaptativo en funció de n o del rango del covariate? ¿Qué dice INLA como spacing minimo entre support values de rw2? No encuentro nada al respecto
-    if(length(out) < 3L) {  
-      out <- seq(min(x), max(x), length.out = min(max(10L, length(x)), 50L))
-    }
-    unique(out)
-  }
-
-  #rw2 defaults (inla recommends quantile grouping and K = 150-300 (balance stability and flexibility)
-  rw2_K <- 300L              #@@@JMB!! pensar si dejamos esto por defecto
-  rw2_method <- "quantile" 
-
-  .build_rw2_values <- function(rast_layer, coords, K = rw2_K, method = rw2_method) {
+  # Build rw2 mesh using fmesher::fm_mesh_1d — replaces manual thin_knots + inla.group
+  # fm_mesh_1d handles spacing automatically, avoiding singular matrices
+  # n_knots=100 ensures ≥5-8 obs/knot (stable per Gómez-Rubio 2020). 
+  .build_rw2_values <- function(rast_layer, coords, n_knots = 100L) {
     vals <- suppressWarnings(as.numeric(terra::extract(rast_layer, coords)[, 1]))
-    vals <- vals[is.finite(vals)] 
+    vals <- vals[is.finite(vals)]
     rng <- range(vals)
     if(diff(rng) == 0) {
       .stop("RW2 requires variability (covariate range = 0).\n   Use 'linear' instead for this covariate or check the raster values.")
-    }  
-    g <- INLA::inla.group(vals, n = K, method = method)
-    v <- sort(unique(as.numeric(levels(g))))
-    v <- thin_knots(v)
-    if(length(v) < 3L) {
-      .stop("RW2 requires ≥ 3 distinct support values after knot thinning.\n   Consider reducing smoothing or check covariate variability.") #@@@JMB aquí también se podría ajustar K, pero demasiados args en mi opinión
     }
-    v
+    fmesher::fm_mesh_1d(
+      loc      = seq(rng[1], rng[2], length.out = n_knots),
+      degree   = 2,
+      boundary = c("neumann", "free")
+    )
   }
 
-    spec_glo <- list()
-    if(length(vg) > 0) {
-      spec_glo <- lapply(stats::setNames(vg, vg), function(x) .resolve_covariate_effects(x, "global", covariate.effects))
-    }
+ 
+  spec_glo <- list()
+  if(length(vg) > 0) {
+    spec_glo <- lapply(stats::setNames(vg, vg), function(x) .resolve_covariate_effects(x, "global", covariate.effects))
+  }
   
-    spec_reg <- list()
-    if(length(vr) > 0) {
-      spec_reg <- lapply(stats::setNames(vr, vr), function(x) .resolve_covariate_effects(x, "regional", covariate.effects))
-    }
+  spec_reg <- list()
+  if(length(vr) > 0) {
+    spec_reg <- lapply(stats::setNames(vr, vr), function(x) .resolve_covariate_effects(x, "regional", covariate.effects))
+  }
 
   # detect rw2 needs
-    need_rw2_global <- if(length(spec_glo) > 0) any(vapply(spec_glo, function(s) s$model == "rw2", logical(1))) else FALSE
+  need_rw2_global <- if(length(spec_glo) > 0) any(vapply(spec_glo, function(s) s$model == "rw2", logical(1))) else FALSE
     need_rw2_regional <- if(length(spec_reg) > 0) any(vapply(spec_reg, function(s) s$model == "rw2", logical(1))) else FALSE
 
   coords_all <- if(need_rw2_global) {
@@ -172,10 +226,6 @@
   cmpglobal <- character(0)
   fglobal <- character(0)
 
-  fmt_vals <- function(v) {
-    paste0("c(", paste(format(v, digits = 7), collapse = ","), ")")
-  }
-
   for(X in vg) {
     cp_mode <- .resolve_coupling_predictor(X, coupling.predictors, vg)
     if(cp_mode == "NULL") next
@@ -185,11 +235,11 @@
       cmpglobal <- c(cmpglobal,
                      paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'linear')"))
     } else if(specX$model == "rw2") {
-      vals <- .build_rw2_values(sp_covglo[[X]], coords_all)
-      cmpglobal <- c(cmpglobal,
-                     paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'rw2', scale.model = TRUE, ",
-                            "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))), ",
-                            "values = ", fmt_vals(vals),")"))
+    mesh_1d <- .build_rw2_values(sp_covglo[[X]], coords_all)
+    cmpglobal <- c(cmpglobal,
+                   paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'rw2', scale.model = TRUE, ",
+                   "mapper = mesh_1d, ",
+                   "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
     }
     fglobal <- c(fglobal, paste0(X, "GL"))
   }
@@ -212,10 +262,10 @@
           paste0(X, "GL_glo_res(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_glo_res']]), model = 'linear')"),
           paste0(X, "RE_reg_anom(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_reg_anom']]), model = 'linear')"))
       } else if(specX$model == "rw2") {
-        vals <- .build_rw2_values(sp_covreg[[paste0(X, "_reg_anom")]], coords_r)
+        mesh_1d <- .build_rw2_values(sp_covreg[[paste0(X, "_reg_anom")]], coords_r)
         cmpregional <- c(cmpregional,
           paste0(X, "GL_glo_res(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_glo_res']]), model = 'linear')"),
-          paste0(X, "RE_reg_anom(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_reg_anom']]), model='rw2', scale.model=TRUE, values = ", fmt_vals(vals), ", hyper = list(prec=list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
+          paste0(X, "RE_reg_anom(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_reg_anom']]), model='rw2', scale.model=TRUE, mapper = mesh_1d, hyper = list(prec=list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
       }
       fregional <- c(fregional, paste0(X, "GL_glo_res"), paste0(X, "RE_reg_anom"))
     }
@@ -242,11 +292,11 @@
       if(specX$model == "linear") {
         cmpregional <- c(cmpregional, paste0(X, "RE(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'linear')"))
       } else if(specX$model == "rw2") {
-        vals <- .build_rw2_values(sp_covreg[[X]], coords_r)
+        mesh_1d <- .build_rw2_values(sp_covreg[[X]], coords_r)
         cmpregional <- c(cmpregional,
           paste0(X, "RE(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'rw2', scale.model = TRUE, ",
-                 "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))), ",
-                 "values = ", fmt_vals(vals),")"))
+                 "mapper = mesh_1d, ",
+                 "hyper = list(prec = list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
       }
       fregional <- c(fregional, paste0(X, "RE"))
     }
@@ -309,15 +359,15 @@
       if(is.null(marginal)) return(invisible(NULL))
       sm <- try(INLA::inla.smarginal(marginal), silent = TRUE)
       if(inherits(sm, "try-error")) return(invisible(NULL))
-      m  <- INLA::inla.emarginal(function(x) x,       marginal)
+      m  <- INLA::inla.emarginal(function(x) x, marginal)
       m2 <- INLA::inla.emarginal(function(x) (x-m)^2, marginal)
       m3 <- INLA::inla.emarginal(function(x) (x-m)^3, marginal)
       skew <- m3 / (m2^(3/2))
       if(abs(skew) > 1) {
         .warn(paste0("Bayesian feedback: global posterior for '", label,
-                                     "' has skewness = ", round(skew, 2),
-                                              " — moment matching (mean/sd) may be a poor approximation.",
-                                              " Consider using `coupling.intercept = 'ordered_hierarchical'` instead."))
+                     "' has skewness = ", round(skew, 2),
+                     " — moment matching (mean/sd) may be a poor approximation.",
+                     " Consider using `coupling.intercept = 'ordered_hierarchical'` instead."))
       }
     }
 
@@ -327,10 +377,10 @@
         .stop("bayesian_feedback: could not extract IGlobal posterior (unexpected structure).")
       }
       bf_mean_int <- int_random$mean
-      bf_sd_int   <- int_random$sd
+      bf_sd_int <- int_random$sd
       .check_skewness(fit_glo$marginals.random$IGlobal[[1]], "IGlobal")
-      assign("bf_mean_int", bf_mean_int,              envir = env_cmp)
-      assign("bf_prec_int", .safe_prec(bf_sd_int),    envir = env_cmp)
+      assign("bf_mean_int", bf_mean_int, envir = env_cmp)
+      assign("bf_prec_int", .safe_prec(bf_sd_int), envir = env_cmp)
     }
 
     if(!is.null(fit_glo$summary.fixed)) {
@@ -338,7 +388,7 @@
       gl_effs <- gl_effs[grepl("GL$", gl_effs)]
       for(eff in gl_effs) {
         base_var <- sub("GL$", "", eff)
-        bf_sd_v  <- fit_glo$summary.fixed[eff, "sd"]
+        bf_sd_v <- fit_glo$summary.fixed[eff, "sd"]
         .check_skewness(fit_glo$marginals.fixed[[eff]], eff)
         assign(paste0("bf_mean_", base_var), fit_glo$summary.fixed[eff, "mean"], envir = env_cmp)
         assign(paste0("bf_prec_", base_var), .safe_prec(bf_sd_v),                envir = env_cmp)
@@ -391,23 +441,23 @@
     } 
     #if(spec == "rw2") {
     #  .stop(paste0("Invalid RW2 specification in `", path_label, "`.\n",
-    #                                        "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
-    #                                        "   For linear effects use 'linear'; to exclude use 'drop'."))
+    #               "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
+    #               "   For linear effects use 'linear'; to exclude use 'drop'."))
     #} 
     if(spec == "rw2") {
       # defaults (u=5, alpha=0.01)
       return(list(model = "rw2", u = 5, alpha = 0.01))
     }
     .stop(paste0("Invalid keyword '", spec, "' in `", path_label, "`.\n",
-                                       "   Valid options: 'linear', 'drop', or list(model='rw2', u=..., alpha=...)."))
+                 "   Valid options: 'linear', 'drop', or list(model='rw2', u=..., alpha=...)."))
   }
 
   # if spec is a list, only rw2 admited 
   if(is.list(spec)) {
     if(is.null(spec$model)) {
       .stop(paste0("Invalid list specification in `", path_label, "`.\n",
-                                            "   Lists are only allowed for RW2 effects. Use: list(model='rw2', u=..., alpha=...).\n",
-                                            "   For linear effects use 'linear'; to exclude use 'drop'."))
+                   "   Lists are only allowed for RW2 effects. Use: list(model='rw2', u=..., alpha=...).\n",
+                   "   For linear effects use 'linear'; to exclude use 'drop'."))
     }
     if(identical(spec$model, "rw2")) {
       # RW2 reequires u alpha
@@ -416,18 +466,18 @@
       #                                           "   Provide both `u` and `alpha`."))
       #}
       #return(list(model = "rw2", u = spec$u, alpha = spec$alpha))
-               u_val  <- if(is.null(spec$u))  5 else spec$u  #@@@JMB default o cusomizable?
-               alpha_val <- if(is.null(spec$alpha)) 0.01 else spec$alpha
-              return(list(model = "rw2", u = u_val, alpha = alpha_val))
+      u_val  <- if(is.null(spec$u))  5 else spec$u  #@@@JMB default o cusomizable?
+      alpha_val <- if(is.null(spec$alpha)) 0.01 else spec$alpha
+      return(list(model = "rw2", u = u_val, alpha = alpha_val))
     }
     .stop(paste0("Invalid `model` in `", path_label, "`.\n",
-                                       "   When using a list, only model='rw2' is permitted.\n",
-                                       "   For linear effects use 'linear'; to exclude use 'drop'."))
+                 "   When using a list, only model='rw2' is permitted.\n",
+                 "   For linear effects use 'linear'; to exclude use 'drop'."))
   }
 
   # unsupported type
   .stop(paste0("Unsupported type in `", path_label, "`.\n",
-                                  "   Must be string ('linear'|'drop') or list(model='rw2', u=..., alpha=...)."))
+               "   Must be string ('linear'|'drop') or list(model='rw2', u=..., alpha=...)."))
 }
 
 
@@ -559,8 +609,8 @@
                              pred_Sre = NULL,
                              pred_Sshared = NULL,
                              coupling.intercept,
-                                                                        scale_params_glo = NULL,
-                                                                        scale_params_reg = NULL) {
+                             scale_params_glo = NULL,
+                             scale_params_reg = NULL) {
 
   has_Sre <- "Sre" %in% names(fit$summary.random)
   has_Sshared <- "Sshared" %in% names(fit$summary.random)
@@ -598,19 +648,16 @@
   range_lat <- if(has_Sshared) paste0(round(range_lat_mean, 2), " ± ", round(range_lat_sd, 2)) else "—"
   sigma_lat <- if(has_Sshared) paste0(round(sigma_lat_mean, 2), " ± ", round(sigma_lat_sd, 2)) else "—"
   format_hyper <- function(param) {
-   if(!param %in% rownames(hyper)) return("—")
+    if(!param %in% rownames(hyper)) return("—")
       paste0(round(hyper[param, "mean"], 2), " ± ", round(hyper[param, "sd"], 2))
-  }
+    }
   prec_IGlobal <- if("Precision for IGlobal" %in% rownames(hyper)) format_hyper("Precision for IGlobal") else "—"
   beta_IRegional <- if("Beta for IRegional" %in% rownames(hyper)) format_hyper("Beta for IRegional") else "—"
   # betas from ordered_hierarchical predictor copies: "Beta for bio1RE_oh", etc.
   beta_pred_oh <- if(!is.null(hyper)) {
     oh_rows <- rownames(hyper)[grepl("^Beta for .+RE_oh$", rownames(hyper))]
     if(length(oh_rows) > 0) {
-      stats::setNames(
-        lapply(oh_rows, format_hyper),
-        oh_rows
-      )
+      stats::setNames(lapply(oh_rows, format_hyper),oh_rows)
     } else NULL
   } else NULL
 
@@ -675,7 +722,9 @@
       range_res_mean
     } else if(has_Sshared) {
       range_lat_mean
-    } else {               #@@@JMB!! sin Sre ni Sshared usa 1/4 de la diagonal???
+    } else {
+    # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal.   #@@@JMB bien?
+    # conservative heuristic for spatial structure estimation.
       bb <- apply(xy, 2, range, na.rm = TRUE)
       sqrt(sum((bb[2,] - bb[1,])^2)) / 4
     }   
@@ -715,7 +764,7 @@
       idx_reg <- seq(n_glo + 1L, n_glo + nrow(data_used))
       if(all(c("0.025quant", "0.975quant") %in% colnames(fit$summary.fitted.values))) {
         low95 <- fit$summary.fitted.values[idx_reg, "0.025quant"]
-        up95  <- fit$summary.fitted.values[idx_reg, "0.975quant"]
+        up95 <- fit$summary.fitted.values[idx_reg, "0.975quant"]
         cov95 <- mean(y_obs >= low95 & y_obs <= up95, na.rm = TRUE)
       } else {
         cov95 <- "—"
@@ -724,7 +773,7 @@
       # coverage 50%
       if(all(c("0.25quant", "0.75quant") %in% colnames(fit$summary.fitted.values))) {
         low50 <- fit$summary.fitted.values[idx_reg, "0.25quant"]
-        up50  <- fit$summary.fitted.values[idx_reg, "0.75quant"]
+        up50 <- fit$summary.fitted.values[idx_reg, "0.75quant"]
         cov50 <- mean(y_obs >= low50 & y_obs <= up50, na.rm = TRUE)
       } else {
         cov50 <- "—"
@@ -742,21 +791,19 @@
   max_CIratio <- if(any(is.finite(ci_ratios))) max(ci_ratios, na.rm = TRUE) else NA_real_
 
   # posterior ≈ prior
-  close_rel <- function(post_med, prior_u, tol = 0.15) {  #@@@JMB!! rev threshold = 15% difference en Bakka et al. 2018)
-    if(!is.finite(post_med) || is.null(prior_u) || length(prior_u) < 1 ||
-       !is.finite(prior_u[1]) || prior_u[1] == 0) return(FALSE)
-    abs(post_med - prior_u[1]) / abs(prior_u[1]) < tol
-  }
-
+  # prior sensitivity: contraction = 1 - (SD_post / SD_prior). 
+  # Near 0 = prior dominance; near 1 = strong data update (Gelman et al. 2008).
+  prior_sd_fixed <- 1 / sqrt(0.001)  # INLA default fixed effect prior precision
+  prior_sd_linear <- 1 / sqrt(0.001) # 31.62: inlabru model='linear' default
   prior_close <- list(
-    range_Sre = if(!is.null(priors$regional.pcprior.range))
-    close_rel(range_res_mean, priors$regional.pcprior.range) else FALSE,
-  sigma_Sre = if(!is.null(priors$regional.pcprior.sigma))
-    close_rel(sigma_res_mean, priors$regional.pcprior.sigma) else FALSE,
-  range_Sshared = if(!is.null(priors$shared.pcprior.range))
-    close_rel(range_lat_mean, priors$shared.pcprior.range) else FALSE,
-  sigma_Sshared = if(!is.null(priors$shared.pcprior.sigma))
-    close_rel(sigma_lat_mean, priors$shared.pcprior.sigma) else FALSE
+    fixed_effects = if(!is.null(fit$summary.fixed) && nrow(fit$summary.fixed) > 0) {
+    post_sds    <- fit$summary.fixed[["sd"]]
+    contraction <- 1 - (post_sds / prior_sd_linear)
+    uninformative <- rownames(fit$summary.fixed)[
+      is.finite(contraction) & contraction < 0.1]
+    length(uninformative) > 0
+  } else FALSE,
+  random_effects = FALSE
   )
 
   # variance and range ratios
@@ -853,8 +900,10 @@
   # posterior ≈ prior (weak data information)
   if(any(unlist(prior_close))) {
     .warn(paste0(
-      "Posterior close to PC-prior mode: weak data information relative to prior strength.\n",
-      "   Recommended: relax priors or increase data resolution."    #@@@JMB!! revisar recommendation??
+      "Posterior matches the uninformative prior: data provided little new information.\n",
+      "   Posterior SD is close to prior SD (default N(0, sd=31.6) for linear effects).\n",
+      "   This usually indicates near-constant covariates, very small sample size, or model misspecification.\n",
+      "   Recommended: check covariate variability, increase sample size, or simplify the model."
     ))
   }    
   # cpo
@@ -863,7 +912,7 @@
     total_obs <- length(fit$cpo$cpo)
     if(cpo_failures > 0) {
       perc_failures <- (cpo_failures / total_obs) * 100
-      if(perc_failures > 1) {     #@@@JMB!! 1% of observations????
+      if(perc_failures > 1) {  # 1% threshold  (Held et al. 2010)
         .warn(paste0(
           "CPO failures detected (", round(perc_failures, 2), "% of observations).\n",
           "   Model severely struggles to predict these points (CPO ≈ 0).\n",
@@ -1237,10 +1286,10 @@
     coverage = list(cov50 = cov50,
                     cov95 = cov95),
     diagnostics = list(moran_I = moran_I,
-                       max_CIratio = max_CIratio, # relative uncertainty
-                       range_ratio = range_ratio, # scale separation ratio
-                       sigma_ratio = sigma_ratio, # variance ratio
-                       field_correlation = field_correlation, # prior influence
+                       max_CIratio = max_CIratio,
+                       range_ratio = range_ratio,
+                       sigma_ratio = sigma_ratio,
+                       field_correlation = field_correlation,
                        var_explained_Sre = var_explained_Sre,
                        ssi = ssi,
                        r2_fields = r2_fields), 
@@ -1272,8 +1321,8 @@
       coef_name <- rownames(sf)[i]
       # extract base variable name (remove GL, RE, RE_oh, GL_glo_res, RE_reg_anom suffixes)
       base_var <- gsub("GL$|RE$|RE_oh$|GL_glo_res$|RE_reg_anom$", "", coef_name)
-               is_global  <- grepl("GL$|GL_glo_res$", coef_name)
-               params     <- if(is_global) scale_params_glo else scale_params_reg
+               is_global <- grepl("GL$|GL_glo_res$", coef_name)
+               params <- if(is_global) scale_params_glo else scale_params_reg
 
       if(!is.null(params) && base_var %in% names(params) && params[[base_var]]$sd > 0) {
         sd_x <- params[[base_var]]$sd
@@ -1483,12 +1532,12 @@
     cols_order <- intersect(cols_order, names(tbl_fixed))
     tbl_fixed <- tbl_fixed[, cols_order]
 
-    is_gl  <- grepl("GL$|GL_glo_res$", tbl_fixed$coef)
+    is_gl <- grepl("GL$|GL_glo_res$", tbl_fixed$coef)
     base_n <- gsub("GL$|GL_glo_res$|RE$|RE_oh$|RE_reg_anom$", "", tbl_fixed$coef)
     idx_gl <- which( is_gl)[order(base_n[ is_gl])]
     idx_re <- which(!is_gl)[order(base_n[!is_gl])]
       if (length(idx_gl) > 0 && length(idx_re) > 0) {
-        blank     <- tbl_fixed[1, ]; blank[, ] <- NA; blank$coef <- ""
+        blank <- tbl_fixed[1, ]; blank[, ] <- NA; blank$coef <- ""
         tbl_fixed <- rbind(tbl_fixed[idx_gl, ], blank, tbl_fixed[idx_re, ])
       } else if (length(idx_gl) > 0) {
         tbl_fixed <- tbl_fixed[idx_gl, ]
@@ -1501,12 +1550,12 @@
   # predictive performance
   tbl_pred <- data.frame(
     Metric = c("AUC (full model)", 
-                                     "Tjur R\u00b2 (discrimination coefficient)",
+               "Tjur R\u00b2 (discrimination coefficient)",
                "Brier score", 
                "RMSE", 
                "Observed-predicted correlation (r)"),
     Value  = c(diag_block$predictive$auc_full,
-                                     fmt_val(diag_block$predictive$tjur_r2),
+               fmt_val(diag_block$predictive$tjur_r2),
                fmt_val(diag_block$predictive$brier),
                fmt_val(diag_block$predictive$rmse),
                fmt_val(diag_block$predictive$corr_obs_pred)),
@@ -1621,7 +1670,8 @@
   p <- ggplot2::ggplot(df,
     ggplot2::aes(x = reorder(var, abs(mean)),
                  y = abs(mean),
-                 fill = sign)) +    ggplot2::geom_col(alpha = 0.9) +
+                 fill = sign)) + 
+    ggplot2::geom_col(alpha = 0.9) +
     ggplot2::coord_flip() +
     ggplot2::scale_fill_manual(values = c("Positive" = "#1a5276","Negative" = "#c0392b")) +
     ggplot2::labs(
@@ -1646,8 +1696,5 @@
 
   return(p)
 }
-
-
-###----------------###
 
 

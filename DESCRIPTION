@@ -42,6 +42,7 @@ Imports:
     furrr,
     stats
 Suggests:
+    mgcv
 Remotes:
     geoSABINA/sabinaNSDM,
     r-inla-org/r-inla

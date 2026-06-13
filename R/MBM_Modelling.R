@@ -22,7 +22,7 @@
 #' @param coupling.predictors Character or list. Controls how global and regional covariate effects are related. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients.
-#'     \item \code{"ordered_hierarchical"}: Regional coefficient is modelled as a scaled copy of the global coefficient (\code{beta_RE | beta_GL ~ N(beta_GL, 0.5^2)}), implementing true hierarchical borrowing of strength via INLA \code{copy} (Zhou & Bradley, 2024). Requires the variable to be present at both scales.   #@@@JMB!! idea inicial, pero ahora "Regional coefficient has an independent prior centred at unity (\code{beta_RE ~ N(1, 0.5^2)}), implementing a Bayesian soft constraint that encourages — but does not force — the regional response to mirror the global one (Zhou & Bradley, 2024). Note: this is a prior-based soft constraint, not a true hierarchical copy."
+#'     \item \code{"ordered_hierarchical"}: Bayesian soft constraint where the regional coefficient has a prior centred on unity (\code{beta_RE ~ N(1, 0.5^2)}) in standardized scale, encouraging — but not forcing — non-zero regional response. With per-extent standardization (the default for this option), a coefficient of 1 corresponds to a one-regional-sd effect. True INLA \code{copy} over linear effects is not used here because of identifiability issues when global and regional likelihoods carry asymmetric information; this formulation is a practical regularization rather than a strict hierarchical copy. Requires the variable to be present at both scales.
 #'     \item \code{"scale_decomposed"}: Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), following Cressie & Wikle (2011) and Zhou & Bradley (2024). In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
 #'     \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors.
 #'     \item \code{NULL}: Regional-only covariate effects; global covariates are excluded from the regional predictor entirely. No shared spatial fields (S_shared).
@@ -111,20 +111,24 @@
 #' coupling.predictors: control of cross-scale covariate effects  
 #' This argument defines how each predictor behaves across global and regional scales.  
 #' It is only applied to variables that appear in both global and regional scales.
+#' Standardization behaviour: variables coupled via `"scale_decomposed"` or `"bayesian_feedback"` are standardized with unified global statistics (mu_GL, sigma_GL) in both rasters, so that a unit change in Z corresponds to the same physical change at both scales. All other variables (non-shared, or shared with `NULL`/`"unpooled"`/`"ordered_hierarchical"`) keep their native per-extent Z-score.
 #' - Option 1 `NULL` (default): no coupling. Global and regional effects are estimated independently unless one is dropped via `covariate.effects`.
 #' - Option 2 \code{"unpooled"}: global and regional effects enter the linear predictor as two independent components (η = β_GL * X_GL + β_RE * X_RE + …). No information is shared between scales.
-#' - Option 3 \code{"ordered_hierarchical"}: implements a Bayesian soft constraint where the regional coefficient has a prior centred on 1 (\code{beta_RE ~ N(1, 0.5^2)}), encouraging — but not forcing — similarity with the global effect. With standardized covariates (applied internally), a coefficient of 1 implies the regional effect mirrors the global scale. True hierarchical copy over linear components is not reliably supported in INLA; this formulation is a practical approximation. Following Zhou & Bradley (2024).
-#' - Option 4 named `list`: provide a list with entries `variables` and `default`.        #@@@JMB PARA PENSAR EN v2???? considerar permitir meter un SpatRaster de predicciones hechas fuera de aqui como spatial offset en los regional predictor.
+#' - Option 3 \code{"ordered_hierarchical"}: Bayesian soft constraint with prior \code{beta_RE ~ N(1, 0.5^2)} in standardized scale, encouraging — but not forcing — non-zero regional response. Practical regularization, not a strict hierarchical copy (INLA \code{copy} on linear effects produces non-identifiable sign reversals when likelihoods carry asymmetric information).
+#' - Option 4 \code{"scale_decomposed"}: shared covariates are first projected to the unified global Z-space, then decomposed additively into a resampled global macro-trend (X_glo_res) and a regional anomaly (X_reg_anom = X_RE - X_glo_res). Macro and anomaly coefficients are directly comparable in magnitude. Following Cressie & Wikle (2011). Requires the global raster to be of equal or coarser resolution than the regional one.
+#' - Option 5 \code{"bayesian_feedback"}: shared covariates are unified to the global Z-space; the global model is fit first; posterior moments (mean, precision) of beta_GL are injected as the Gaussian prior of beta_RE in a subsequent regional fit. Following Figueira et al. (2024), adapted to multiscale settings (the original protocol assumes co-located covariates without Spatial Change of Support). Information is transferred via the first two moments only.
+#' - Option 6 named `list`: provide a list with entries `variables` and `default`.        #@@@JMB PARA PENSAR EN v2???? considerar permitir meter un SpatRaster de predicciones hechas fuera de aqui como spatial offset en los regional predictor.
 #'   Structure:
 #'     coupling.predictors = list(
-#'       default   = "unpooled" | "NULL" | "ordered_hierarchical",
+#'       default   = "unpooled" | "NULL" | "ordered_hierarchical" | "scale_decomposed" | "bayesian_feedback",
 #'       variables = list(var1 = "...", var2 = "...", ...)
 #'     )
 #' Validity rules (automatically checked):
-#' - Hierarchical coupling.predictors requires the predictor to exist at both scales.
-#' - If `covariate.effects` drops the global effect of a variable, hierarchical coupling is not allowed (no parent effect available).
-#' - If the regional effect is dropped, hierarchical coupling is also invalid.
-#' - Global RW2 smoothing cannot be combined with hierarchical coupling for the same variable (avoids identifiability and double-smoothing issues).
+#' - Cross-scale couplings ("ordered_hierarchical", "scale_decomposed", "bayesian_feedback") require the predictor to exist at both scales.
+#' - If `covariate.effects` drops the global or regional effect of a variable, cross-scale coupling is not allowed.
+#' - "ordered_hierarchical" cannot be combined with global RW2 smoothing for the same variable.
+#' - "bayesian_feedback" is not compatible with RW2 (a multi-parameter non-Gaussian posterior cannot be summarised as a single Gaussian prior).
+#' - "bayesian_feedback" cannot be mixed with "scale_decomposed" or with "ordered_hierarchical" in the same call.
 #'
 #' bayesian_feedback for new scenarios:
 #' When using \code{coupling.predictors = "bayesian_feedback"} with \code{proj.new.env = TRUE},
@@ -403,36 +407,53 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   scale_params_glo <- list()
   scale_params_reg <- list()
 
-  # scale decomposed pre-processing
-  sd_vars <- shared_vr[vapply(shared_vr, function(X) .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed", logical(1))]
-  if(length(sd_vars) > 0) {
-    glo_resampled_stack <- terra::resample(sp_covglo[[sd_vars]], sp_covreg[[sd_vars[1]]])
-    for(X in sd_vars) {
-      sp_covreg[[paste0(X, "_reg_anom")]] <- sp_covreg[[X]] - glo_resampled_stack[[X]]
-      sp_covreg[[paste0(X, "_glo_res")]] <- glo_resampled_stack[[X]]
-    }
-  }
+  # Identify shared variables whose coupling demands unified Z-standardization.
+  unified_vars <- shared_vr[vapply(shared_vr, function(X) {
+    .resolve_coupling_predictor(X, coupling.predictors, vg) %in% c("scale_decomposed", "bayesian_feedback")
+  }, logical(1))]
 
+  # scale_decomposed (unified_vars subset): needs extra steps for macro/anomaly Z-score decomposition
+  sd_vars <- shared_vr[vapply(shared_vr, function(X) {
+    .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed"
+  }, logical(1))]
   if(length(all_model_vars) > 0) {
     .info("Pre-processing environmental covariates...")
-    if(length(sd_vars) > 0) .check("Applying scale decomposition (macro-trend vs micro-anomaly)")
+    if(length(unified_vars) > 0) {
+      .check(sprintf("Unified Z-standardization (mu_GL, sigma_GL) for shared coupled variables: %s",
+                     paste(unified_vars, collapse = ", ")))
+    }
     .check("Standardizing covariates (Z-score)")
   }
 
-  n_cores_std <- min(n.threads, max(length(names(sp_covglo)), length(names(sp_covreg))))
+  # Single-pass standardization: unified for shared/coupled vars, native otherwise.
+  result_std <- .standardize_multiscale(
+    sp_covglo = if (!is.null(coupling.intercept)) sp_covglo else NULL,
+    sp_covreg = sp_covreg,
+    unified_vars     = unified_vars,
+    standardize_global = !is.null(coupling.intercept))
 
-  # global standarization 
-  if (!is.null(coupling.intercept) && length(names(sp_covglo)) > 0) {
-    result_glo <- .standardize_rasters(sp_covglo, n_cores = n.threads)
-    sp_covglo <- result_glo$rast
-    scale_params_glo <- result_glo$params
-  }
+  if (!is.null(result_std$sp_covglo)) sp_covglo <- result_std$sp_covglo
+  sp_covreg <- result_std$sp_covreg
+  scale_params_glo <- result_std$scale_params_glo
+  scale_params_reg <- result_std$scale_params_reg
 
-  # regional standarization
-  if (length(names(sp_covreg)) > 0) {
-    result_reg <- .standardize_rasters(sp_covreg, n_cores = n_cores_std)
-    sp_covreg <- result_reg$rast
-    scale_params_reg <- result_reg$params
+  sp_covglo_backup <- sp_covglo
+  sp_covreg_backup <- sp_covreg
+
+  # scale_decomposed: Post-standardization macro/anomaly decomposition. 
+  # Z_anom = (X_RE - X_GL_res) / sigma_GL; both components now Z-standardized for regional predictor. 
+  if(length(sd_vars) > 0) {
+    .check("Computing scale decomposition (macro-trend vs micro-anomaly) on unified Z-scores")
+    glo_resampled_stack <- terra::resample(sp_covglo[[sd_vars]], sp_covreg[[sd_vars[1]]])
+    for(X in sd_vars) {
+      sp_covreg[[paste0(X, "_glo_res")]]  <- glo_resampled_stack[[X]]
+      sp_covreg[[paste0(X, "_reg_anom")]] <- sp_covreg[[X]] - glo_resampled_stack[[X]]
+      for(suffix in c("_glo_res", "_reg_anom")) {
+        v_name <- paste0(X, suffix)
+        stat <- terra::global(sp_covreg[[v_name]], fun = c("mean", "sd"), na.rm = TRUE)
+        scale_params_reg[[v_name]] <- list(mean = stat[1,1], sd = stat[1,2], unified = TRUE)
+      }
+    }
   }
 
   scale_params <- c(
@@ -443,27 +464,27 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   # log stats
   if (length(names(sp_covreg)) > 0 && verbose) {
     for (v in names(sp_covreg)) {
-      if (v %in% sd_vars) next
-      # standardized values
+      # skip layers generated by scale_decomposed; their stats are derived
+      if (length(sd_vars) > 0 && (v %in% c(paste0(sd_vars, "_glo_res"),
+                                            paste0(sd_vars, "_reg_anom")))) next
       m_val <- terra::global(sp_covreg[[v]], "mean", na.rm = TRUE)[1, 1]
-      s_val <- terra::global(sp_covreg[[v]], "sd", na.rm = TRUE)[1, 1]
-      # original values
+      s_val <- terra::global(sp_covreg[[v]], "sd",   na.rm = TRUE)[1, 1]
       original_mean <- scale_params_reg[[v]][["mean"]]
-      original_sd <- scale_params_reg[[v]][["sd"]]
-      .item(sprintf("%s (regional): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f", 
-                    v, m_val, s_val, original_mean, original_sd))
+      original_sd   <- scale_params_reg[[v]][["sd"]]
+      unified_flag  <- isTRUE(scale_params_reg[[v]][["unified"]])
+      tag <- if (unified_flag) "regional, unified (sigma_GL)" else "regional"
+      .item(sprintf("%s (%s): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f",
+                    v, tag, m_val, s_val, original_mean, original_sd))
     }
   }
 
   if (!is.null(coupling.intercept) && !is.null(sp_covglo) && length(names(sp_covglo)) > 0 && verbose) {
     for (v in names(sp_covglo)) {
-      # standardized values
       m_val <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
-      s_val <- terra::global(sp_covglo[[v]], "sd", na.rm = TRUE)[1, 1]
-      # original values
+      s_val <- terra::global(sp_covglo[[v]], "sd",   na.rm = TRUE)[1, 1]
       original_mean <- scale_params_glo[[v]][["mean"]]
       original_sd   <- scale_params_glo[[v]][["sd"]]
-      .item(sprintf("%s (global): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f", 
+      .item(sprintf("%s (global): Z-mean = %+.3f, Z-sd = %.3f | Original: mean = %+.2f, sd = %.2f",
                     v, m_val, s_val, original_mean, original_sd))
     }
   }
@@ -820,115 +841,83 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   gc(verbose = FALSE)
 
 
-  ## New scenarios
+  #### New scenarios
   proj_list <- list()
   if(proj.new.env && !is.null(jmbm_obj$Scenarios)) {
     .check(sprintf("Projecting to new scenarios: %s", paste(names(jmbm_obj$Scenarios), collapse = ", ")))
-
-    sp_covglo_curr <- sp_covglo
-    sp_covreg_curr <- sp_covreg
-   
+    
     for(sc in names(jmbm_obj$Scenarios)) {
       scen_rast <- terra::unwrap(jmbm_obj$Scenarios[[sc]])
-           
-      if(!identical(sf::st_crs(crs), terra::crs(scen_rast))) {
-        scen_rast <- terra::project(scen_rast, terra::crs(sp_covreg_curr))
-      }
-
-      sp_covglo_fut <- sp_covglo_curr
-      sp_covreg_fut <- sp_covreg_curr      
-
-      vars_glo <- intersect(names(sp_covglo_fut), names(scen_rast))
-      if(length(vars_glo) > 0) {
-        scen_glo_resampled <- terra::resample(scen_rast[[vars_glo]], sp_covglo_fut)
+      
+      if(!identical(terra::crs(scen_rast), terra::crs(sp_covreg_backup))) {
+        scen_rast <- terra::project(scen_rast, terra::crs(sp_covreg_backup))
       }
       
-      vars_reg <- setdiff(names(sp_covreg_fut), grep("_glo_res$|_reg_anom$", names(sp_covreg_fut), value = TRUE))
-      vars_reg <- intersect(vars_reg, names(scen_rast))
-      if(length(vars_reg) > 0) {
-        scen_reg_resampled <- terra::resample(scen_rast[[vars_reg]], sp_covreg_fut)
-      }
+      scen_reg_full <- terra::resample(scen_rast, sp_covreg_backup[[1]])
+      pred_template <- scen_reg_full[[rep(1, terra::nlyr(sp_covreg_backup))]]
+      names(pred_template) <- names(sp_covreg_backup)
 
-      # global standarization fut
-      if (!is.null(coupling.intercept) && length(vars_glo) > 0) {
-        for(v in names(sp_covglo_fut)) {
-          if(v %in% names(scen_rast)) {
-            fut_layer <- scen_glo_resampled[[v]]
-            std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
-          
-            if(!(v %in% names(sp_covreg_fut))) {
-              m_pres <- mean(terra::values(sp_covglo_curr[[v]]), na.rm = TRUE)
-              m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
-            }
-            sp_covglo_fut[[v]] <- std_fut_layer
-          } 
+      vars_glo <- intersect(names(sp_covglo_backup), names(scen_rast))
+      vars_reg <- intersect(names(sp_covreg_backup), names(scen_rast))
+      
+      # resampling
+      scen_glo_raw <- if(length(vars_glo) > 0) terra::resample(scen_rast[[vars_glo]], sp_covglo_backup) else NULL
+      scen_reg_raw <- if(length(vars_reg) > 0) terra::resample(scen_rast[[vars_reg]], sp_covreg_backup) else NULL
+      
+      # standarization uni (vars simples)
+      for(v in setdiff(vars_reg, sd_vars)) {
+        if (!is.null(scale_params[[v]])) {
+          pred_template[[v]] <- (scen_reg_raw[[v]] - scale_params[[v]]$mean) / scale_params[[v]]$sd
         }
       }
-
-      # regional standarization fut
-      for(v in names(sp_covreg_fut)) {
-        if(grepl("_glo_res$|_reg_anom$", v)) next 
-        
-        if(v %in% names(scen_rast)) {
-          fut_layer <- scen_reg_resampled[[v]]
-
-          if (!is.null(scale_params[[v]])) {
-            std_fut_layer <- (fut_layer - scale_params[[v]]$mean) / scale_params[[v]]$sd
-         
-            if(!(v %in% names(sp_covreg_fut))) {
-              m_pres <- mean(terra::values(sp_covreg_curr[[v]]), na.rm = TRUE)
-              m_fut  <- mean(terra::values(std_fut_layer), na.rm = TRUE)
-            }
-            sp_covreg_fut[[v]] <- std_fut_layer
-          }
-        } 
-      }
-
-      # scale decomposed fut
+      
+      # scale-decomposed standarization uni
       if(length(sd_vars) > 0) {
         vars_sd <- intersect(sd_vars, names(scen_rast))
-        
         if(length(vars_sd) > 0) {
-          raw_glo_base <- scen_glo_resampled[[vars_sd]]
-          glo_resampled_scenario <- terra::resample(raw_glo_base, sp_covreg_curr)
+          raw_glo_base <- scen_glo_raw[[vars_sd]]
+          glo_resampled_scenario <- terra::resample(raw_glo_base, sp_covreg_backup)
           
           for(X in vars_sd) {
-            raw_reg <- scen_reg_resampled[[X]]
+            raw_reg <- scen_reg_raw[[X]]
             raw_glo <- glo_resampled_scenario[[X]]
             
-            # Standarization with historical parameters
-            std_reg_anom <- ((raw_reg - raw_glo) - scale_params[[paste0(X, "_reg_anom")]]$mean) / scale_params[[paste0(X, "_reg_anom")]]$sd
-            std_glo_res <- (raw_glo - scale_params[[paste0(X, "_glo_res")]]$mean) / scale_params[[paste0(X, "_glo_res")]]$sd
-            
-            scen_rast[[paste0(X, "_reg_anom")]] <- std_reg_anom
-            scen_rast[[paste0(X, "_glo_res")]] <- std_glo_res
-            
-            sp_covreg_fut[[paste0(X, "_reg_anom")]] <- std_reg_anom
-            sp_covreg_fut[[paste0(X, "_glo_res")]] <- std_glo_res
-
-            shift_reg_anom <- mean(terra::values(std_reg_anom), na.rm=TRUE) - mean(terra::values(sp_covreg_curr[[paste0(X, "_reg_anom")]]), na.rm=TRUE)
-            shift_glo_res <- mean(terra::values(std_glo_res), na.rm=TRUE) - mean(terra::values(sp_covreg_curr[[paste0(X, "_glo_res")]]), na.rm=TRUE)
+            p_unif <- scale_params_glo[[X]]
+            if(is.null(p_unif)) .stop(paste0("Faltan parámetros de escala globales para: ", X))
+            pred_template[[paste0(X, "_glo_res")]]  <- (raw_glo - as.numeric(p_unif$mean)) / as.numeric(p_unif$sd)
+            pred_template[[paste0(X, "_reg_anom")]] <- (raw_reg - raw_glo) / as.numeric(p_unif$sd)
           }
         }
       }
-           
-      sp_covglo <- sp_covglo_fut
-      sp_covreg <- sp_covreg_fut
       
-      scen_pts <- terra::as.points(scen_rast, values = TRUE, na.rm = TRUE)
+      sp_covreg <- pred_template 
+      
+      if(!is.null(scen_glo_raw)) {
+        pred_template_glo <- terra::rast(sp_covglo_backup)
+        for(v in vars_glo) {
+          if(!is.null(scale_params_glo[[v]])) {
+            pred_template_glo[[v]] <- (scen_glo_raw[[v]] - scale_params_glo[[v]]$mean) / scale_params_glo[[v]]$sd
+          }
+        }
+        sp_covglo <- pred_template_glo
+      }
+      
+      # prediction fut
+      scen_pts <- terra::as.points(pred_template, values = TRUE, na.rm = TRUE)
       scen_df <- sf::st_as_sf(scen_pts)
-      scen_df <- sf::st_transform(scen_df, crs)
+      sf::st_crs(scen_df) <- crs
       scen_df$region <- 1L
-
+      
       proj_pred <- predict(fit, scen_df, pred_formula)
-      proj_list[[sc]] <- .pred_as_tif(proj_pred, template = scen_rast)
-
-      rm(scen_pts, scen_df, proj_pred)
+      proj_list[[sc]] <- .pred_as_tif(proj_pred, template = pred_template)
+      
+      rm(scen_pts, scen_df, proj_pred, pred_template, scen_glo_raw, scen_reg_raw, scen_reg_full)
+      if(exists("pred_template_glo")) rm(pred_template_glo)
       gc(verbose = FALSE)
     }
     
-    sp_covglo <- sp_covglo_curr
-    sp_covreg <- sp_covreg_curr
+    sp_covglo <- sp_covglo_backup
+    sp_covreg <- sp_covreg_backup
   }
 
 
