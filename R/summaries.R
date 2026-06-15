@@ -48,11 +48,15 @@ summary.jmbm.inlabru <- function(object, ...) {
     cat("\n")
     if (has_oh || has_glo_res || has_reg_ano) {
       cat("  Note: GL = global scale; RE = regional scale;",
-          "_oh = ordered-hierarchical prior (beta_RE ~ N(beta_GL, 0.5^2));",
-          "_glo_res = large-scale trend (scale-decomposed);",
-          "_reg_anom = fine-scale anomaly (scale-decomposed).\n")
+          "_oh = ordered-hierarchical constraint (beta_RE ~ N(1, 0.5^2), native Z-scale);",
+          "_glo_res = large-scale macro-trend (scale-decomposed, unified Z-scale);",
+          "_reg_anom = fine-scale anomaly (scale-decomposed, unified Z-scale).",
+          "\n  Coefficients are back-transformed to original covariate units (effect per unit of X).",
+          "\n  Variables with scale_decomposed or bayesian_feedback coupling use global sigma (sigma_GL)",
+          "as the standardization denominator; all other variables use their native sigma.\n")
     } else {
-      cat("  Note: GL = global scale; RE = regional scale.\n")
+      cat("  Note: GL = global scale; RE = regional scale.",
+          "\n  Coefficients are back-transformed to original covariate units (effect per unit of X).\n")
     }
     cat("\n")
   } else {

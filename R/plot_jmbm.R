@@ -142,7 +142,7 @@ plot.jmbm.inlabru <- function(x,
       is_global <- grepl("GL$|GL_glo_res$", nm)
       sp <- if(is_global) sp_glo else sp_reg
       m <- marg_f[[nm]]
-      if(!is.null(sp) && base_var %in% names(sp) && sp[[base_var]]$sd > 0) {
+      if(!is.null(sp) && base_var %in% names(sp) && isTRUE(sp[[base_var]]$sd > 0)) {
         sd_x <- sp[[base_var]]$sd
         m <- INLA::inla.tmarginal(function(x) x / sd_x, m)
       }
@@ -156,7 +156,7 @@ plot.jmbm.inlabru <- function(x,
       is_global <- grepl("GL$|GL_glo_res$", nm)
       sp <- if(is_global) sp_glo else sp_reg
       m <- marg_f[[nm]]
-      if(!is.null(sp) && base_var %in% names(sp) && sp[[base_var]]$sd > 0)
+      if(!is.null(sp) && base_var %in% names(sp) && isTRUE(sp[[base_var]]$sd > 0))
         m <- INLA::inla.tmarginal(function(x) x / sp[[base_var]]$sd, m)
       q025 <- INLA::inla.qmarginal(0.025, m)
       q975 <- INLA::inla.qmarginal(0.975, m)
@@ -177,7 +177,9 @@ plot.jmbm.inlabru <- function(x,
       ggplot2::theme(legend.position = "bottom") +
       ggplot2::labs(
         title = if(!is.null(title)) title else paste(species, "| Fixed effects posteriors (original scale)"),
-        subtitle = paste("coupling.predictors =", cp_label, "| Grey = non-significant (95% CI)"),
+        subtitle = paste0("coupling.predictors = ", cp_label,
+                         " | Coefficients in original covariate units (back-transformed)",
+                         " | Grey = non-significant (95% CI)"),
         x = "Coefficient value", y = "Density") +
       ggplot2::theme_minimal()
 

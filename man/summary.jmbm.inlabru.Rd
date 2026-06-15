@@ -2,7 +2,7 @@
 % Please edit documentation in R/summaries.R
 \name{summary.jmbm.inlabru}
 \alias{summary.jmbm.inlabru}
-\title{Summary for jmbm.inlabru Objects}
+\title{Summary for jmbm.inlabru objects}
 \usage{
 \method{summary}{jmbm.inlabru}(object, ...)
 }
@@ -15,8 +15,8 @@
 A summary in data frame format.
 }
 \description{
-Provides a summary for objects of class \code{jmbm.inlabru}.
+Prints a structured summary for objects of class \code{jmbm.inlabru}, including model metadata, Bayesian fit criteria, hyperparameters, intercepts, fixed effects, predictive performance, and spatial diagnostics.
 }
 \seealso{
-\code{\link{NSBM.inlabru}}
+\code{\link{MBM.Modelling}}, \code{\link{plot.jmbm.inlabru}}
 }
