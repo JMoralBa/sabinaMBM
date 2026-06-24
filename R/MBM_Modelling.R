@@ -22,6 +22,7 @@
 #' @param coupling.predictors Character or list. Controls how global and regional covariate effects are related. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients.
+#'     \item \code{"random_slope"}: True hierarchical random-slope model (Gelman & Hill, 2007): \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is the SAME shared coefficient estimated jointly from the global likelihood (reused, not copied), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. Unlike \code{"ordered_hierarchical"}, the amount of cross-scale borrowing is learned from the data rather than fixed in advance: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope. Requires the variable to be present at both scales and a joint (non-sequential) model fit.
 #'     \item \code{"ordered_hierarchical"}: Bayesian soft constraint where the regional coefficient has a prior centred on unity (\code{beta_RE ~ N(1, 0.5^2)}) in standardized scale, encouraging — but not forcing — non-zero regional response. With per-extent standardization (the default for this option), a coefficient of 1 corresponds to a one-regional-sd effect. True INLA \code{copy} over linear effects is not used here because of identifiability issues when global and regional likelihoods carry asymmetric information; this formulation is a practical regularization rather than a strict hierarchical copy. Requires the variable to be present at both scales.
 #'     \item \code{"scale_decomposed"}: Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), following Cressie & Wikle (2011) and Zhou & Bradley (2024). In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
 #'     \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors.
@@ -284,7 +285,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     }
   }
   #
-  valid_cp <- c("NULL", "unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback")
+  valid_cp <- c("NULL", "unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "random_slope")
   if(!is.null(coupling.predictors)) {
     if(is.character(coupling.predictors)) {
       if(!coupling.predictors %in% valid_cp) {
@@ -317,7 +318,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   # compatibility coupling.predictors x covariate.effects
   has_bf <- (!is.null(coupling.intercept) && coupling.intercept == "bayesian_feedback")
   has_joint <- (!is.null(coupling.intercept) && coupling.intercept %in% c("ordered_hierarchical", "scale_decomposed")) ||
-    (length(vr) > 0 && any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.predictors, vg) %in% c("ordered_hierarchical", "scale_decomposed"), logical(1))))
+    (length(vr) > 0 && any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.predictors, vg) %in% c("ordered_hierarchical", "scale_decomposed", "random_slope"), logical(1))))
   vg_check <- if(is.null(coupling.intercept)) character(0) else vg
   if(length(vr) > 0) {
     for(v in vr) {
@@ -347,6 +348,9 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
         }
         if(cp_mode == "ordered_hierarchical" && !is.null(spec_gl) && spec_gl$model == "rw2") {
           .stop(paste0("Variable '", v, "' cannot use 'ordered_hierarchical'. Global effect uses RW2."))
+        }
+        if(cp_mode == "random_slope" && !is.null(spec_gl) && spec_gl$model == "rw2") {
+          .stop(paste0("Variable '", v, "' cannot use 'random_slope'. Global effect uses RW2; random_slope requires a linear global effect (beta_GL is reused as-is)."))
         }
       }
     }
@@ -414,7 +418,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
   # scale_decomposed (unified_vars subset): needs extra steps for macro/anomaly Z-score decomposition
   sd_vars <- shared_vr[vapply(shared_vr, function(X) {
-    .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed"
+    .resolve_coupling_predictor(X, coupling.predictors, vg) %in% c("scale_decomposed")
   }, logical(1))]
   if(length(all_model_vars) > 0) {
     .info("Pre-processing environmental covariates...")
@@ -601,10 +605,11 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   }
 
 
-  ## Nested intercept
+  ## Prior constants
   # prior for intercepts iid. param = c(1, 0.01) -> P(σ > 1) = 0.01
   IID_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
   COPY_BETA_PRIOR <- "hyper = list(beta = list(prior = 'normal', param = c(1, 4)))"
+  SLOPE_DELTA_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"     #@@@JMB!! random_slope (coupling.predictors) prior PC sobre la precision de delta_RE, la desviacion de la pendiente regional respecto a la pendiente global COMPARTIDA (beta_GL es el mismo parametro reutilizado en ambos predictores, no una copia). De momento mismo u/alpha que IID_PRIOR. Pendiente discutir con Virgilio!!!
 
   if(is.null(coupling.intercept)) {
     intercept_terms <- c(paste0("IRegional(1, model='iid', ", IID_PRIOR, ")"))
@@ -638,6 +643,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
                   sp_covreg = sp_covreg,
                   covariate.effects = covariate.effects,
                   coupling.predictors = coupling.predictors,
+                  slope_delta_prior = SLOPE_DELTA_PRIOR,
                   pp_glo_sf = pp_glo,
                   pp_reg_sf = pp_reg)
 
@@ -859,15 +865,27 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
       vars_glo <- intersect(names(sp_covglo_backup), names(scen_rast))
       vars_reg <- intersect(names(sp_covreg_backup), names(scen_rast))
-      
+   
       # resampling
-      scen_glo_raw <- if(length(vars_glo) > 0) terra::resample(scen_rast[[vars_glo]], sp_covglo_backup) else NULL
+      if(length(vars_glo) > 0) {
+        fact <- max(1, round(terra::res(sp_covglo_backup)[1] / terra::res(scen_rast)[1]))
+        scen_glo_raw <- if(fact >= 2) {
+          terra::resample(terra::aggregate(scen_rast[[vars_glo]], fact = fact, fun = "mean", na.rm = TRUE),
+                           sp_covglo_backup)
+        } else {
+          terra::resample(scen_rast[[vars_glo]], sp_covglo_backup)
+        }
+      } else {
+        scen_glo_raw <- NULL
+      }
+
       scen_reg_raw <- if(length(vars_reg) > 0) terra::resample(scen_rast[[vars_reg]], sp_covreg_backup) else NULL
+
       
       # standarization uni (vars simples)
       for(v in setdiff(vars_reg, sd_vars)) {
-        if (!is.null(scale_params[[v]])) {
-          pred_template[[v]] <- (scen_reg_raw[[v]] - scale_params[[v]]$mean) / scale_params[[v]]$sd
+        if (!is.null(scale_params_reg[[v]])) {
+          pred_template[[v]] <- (scen_reg_raw[[v]] - scale_params_reg[[v]]$mean) / scale_params_reg[[v]]$sd
         }
       }
       

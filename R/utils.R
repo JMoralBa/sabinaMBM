@@ -172,6 +172,7 @@
                  sp_covreg,
                  covariate.effects = NULL,
                  coupling.predictors = NULL,
+                 slope_delta_prior = NULL,
                  pp_glo_sf = NULL,
                  pp_reg_sf = NULL) {
 
@@ -232,8 +233,15 @@
     specX <- spec_glo[[X]]
     if(specX$model == "drop") next
     if(specX$model == "linear") {
-      cmpglobal <- c(cmpglobal,
-                     paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'linear')"))
+      if(cp_mode == "random_slope") {
+           cmpglobal <- c(cmpglobal,
+                           paste0(X, "GL(main = as.numeric(terra::extract(", spobjglo,
+                              ", sf::st_transform(.data., terra::crs(", spobjglo,
+                              ")), method = 'bilinear', ID = FALSE)[['", X, "']]), model = 'linear')"))
+        } else {
+          cmpglobal <- c(cmpglobal,
+                         paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'linear')"))
+      }
     } else if(specX$model == "rw2") {
     mesh_1d <- .build_rw2_values(sp_covglo[[X]], coords_all)
     cmpglobal <- c(cmpglobal,
@@ -268,6 +276,16 @@
           paste0(X, "RE_reg_anom(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "_reg_anom']]), model='rw2', scale.model=TRUE, mapper = mesh_1d, hyper = list(prec=list(prior='pc.prec', param=c(", specX$u, ",", specX$alpha, "))))"))
       }
       fregional <- c(fregional, paste0(X, "GL_glo_res"), paste0(X, "RE_reg_anom"))
+    }
+
+    ##@@@JMB random_slope: beta_RE = beta_GL (componente compartido, reutilizado del bucle global) + delta_RE, con delta_RE ~ N(0, sigma_delta^2) y
+    ## sigma_delta ESTIMADA via PC-prior (random-slope model (Gelman & Hill 2007).
+    ## El grado de cross-scale borrowing lo aprende de los datos: sigma_delta se contrae hacia 0 si global y regional coinciden, y crece si
+    ## la evidencia regional respalda una pendiente distinta.
+    else if(cp_mode == "random_slope") {
+            cmpregional <- c(cmpregional,
+        paste0(X, "_delta(main = rep(1L, length(as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]))), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", sf::st_transform(.data., terra::crs(", spobjreg, ")), ID = FALSE)[['", X, "']]), ", slope_delta_prior, ")"))
+      fregional <- c(fregional, paste0(X, "GL"), paste0(X, "_delta"))
     }
 
     # ordered_hierarchical: soft constraint beta_RE ~ N(1, 0.5^2)
@@ -506,7 +524,7 @@
   
   # unpooled for vars only in regional
   if(!is.null(vg) && !(var %in% vg) && !is_explicit) {
-    if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback")) {
+    if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "random_slope")) {
       mode_val <- "unpooled"
     }
   }
@@ -597,6 +615,16 @@
 
 
 # -----------------------------
+#' format mean, sd and 95% CI strings
+#' @noRd
+.mean_sd_str <- function(df) {
+  if(is.null(df) || nrow(df) == 0) return("—")
+  paste0(round(df$mean[1], 5), " ± ", round(df$sd[1], 5), " (", 
+         round(df$`0.025quant`[1], 5), ", ", round(df$`0.975quant`[1], 5), ")")
+}
+
+
+# -----------------------------
 
 
 #' diagnostics
@@ -661,19 +689,26 @@
     } else NULL
   } else NULL
 
+  # random_slope
+  rs_delta_names <- names(fit$summary.random)[grepl("^.+_delta$", names(fit$summary.random))]
+  beta_pred_rs <- if(length(rs_delta_names) > 0) {
+    stats::setNames(lapply(rs_delta_names, function(nm) .mean_sd_str(fit$summary.random[[nm]])), rs_delta_names)
+  } else NULL
+  prec_pred_rs <- if(length(rs_delta_names) > 0 && !is.null(hyper)) {
+    stats::setNames(lapply(rs_delta_names, function(nm) {
+      hp_name <- paste0("Precision for ", nm)
+      if(hp_name %in% rownames(hyper)) format_hyper(hp_name) else "—"
+    }), rs_delta_names)
+  } else NULL
+
   # Sre and Sshared overlap?
   if(is.finite(range_res_mean) && is.finite(range_lat_mean)) {
     ratio <- range_lat_mean / range_res_mean
   }
 
   # Intercepts
-  mean_sd_str <- function(df) {
-    if(is.null(df) || nrow(df) == 0) return("—")
-    paste0(round(df$mean[1], 5), " ± ", round(df$sd[1], 5), " (", 
-           round(df$`0.025quant`[1], 5), ", ", round(df$`0.975quant`[1], 5), ")")
-  }
-  iGlobal <- mean_sd_str(fit$summary.random$IGlobal)
-  iRegional <- mean_sd_str(fit$summary.random$IRegional)
+  iGlobal <- .mean_sd_str(fit$summary.random$IGlobal)
+  iRegional <- .mean_sd_str(fit$summary.random$IRegional)
 
   # significant vars
   sig_vars <- .signif_vars(fit,  scale_params_glo = scale_params_glo,  scale_params_reg = scale_params_reg)
@@ -1273,7 +1308,9 @@
     intercepts = list(iGlobal = iGlobal,
                        iRegional = iRegional,
                        copy_beta = beta_IRegional,
-                       copy_beta_predictors = beta_pred_oh),
+                       copy_beta_predictors = beta_pred_oh,
+                       random_slope_delta = beta_pred_rs,
+                       random_slope_delta_precision = prec_pred_rs),
     fixed_covariates = sig_vars,
     predictive = list(auc_full = auc_full,
                        tjur_r2 = tjur_r2,
@@ -1505,6 +1542,17 @@
       rows[[paste0("Copy β (", var_name, "GL -> ", var_name, "RE_oh) (mean ± SD)")]] <- int_block$copy_beta_predictors[[nm]]
     }
   }
+  #random_slope predictors: delta_RE (regional deviation from the shared beta_GL) plus its estimated precision, one pair per variable.
+  if(!is.null(int_block$random_slope_delta)) {
+    for(nm in names(int_block$random_slope_delta)) {
+      var_name <- sub("_delta$", "", nm)
+      rows[[paste0("Random slope δ (", var_name, "RE deviation from ", var_name, "GL, mean ± SD, CI95%)")]] <- int_block$random_slope_delta[[nm]]
+      prec_val <- int_block$random_slope_delta_precision[[nm]]
+      if(!is.null(prec_val) && prec_val != "—") {
+        rows[[paste0("Random slope δ precision (", var_name, ", mean ± SD)")]] <- prec_val
+      }
+    }
+  }
 
   tbl_intercepts <- data.frame(
     Term = names(rows),
@@ -1536,14 +1584,7 @@
     base_n <- gsub("GL$|GL_glo_res$|RE$|RE_oh$|RE_reg_anom$", "", tbl_fixed$coef)
     idx_gl <- which( is_gl)[order(base_n[ is_gl])]
     idx_re <- which(!is_gl)[order(base_n[!is_gl])]
-      if (length(idx_gl) > 0 && length(idx_re) > 0) {
-        blank <- tbl_fixed[1, ]; blank[, ] <- NA; blank$coef <- ""
-        tbl_fixed <- rbind(tbl_fixed[idx_gl, ], blank, tbl_fixed[idx_re, ])
-      } else if (length(idx_gl) > 0) {
-        tbl_fixed <- tbl_fixed[idx_gl, ]
-      } else {
-        tbl_fixed <- tbl_fixed[idx_re, ]
-      }
+      tbl_fixed <- tbl_fixed[c(idx_gl, idx_re), ]
       rownames(tbl_fixed) <- NULL
   }
 
