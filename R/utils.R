@@ -1680,7 +1680,7 @@
     Metadata = tbl_metadata,
     `Model fit` = tbl_fit,
     Hyperparameters = tbl_hyper,
-    Intercepts = tbl_intercepts,
+    `Random effects` = tbl_intercepts,
     `Fixed effects` = tbl_fixed,
     `Predictive performance` = tbl_pred,
     Diagnostics = tbl_diag

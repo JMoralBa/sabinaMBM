@@ -24,7 +24,7 @@ summary.jmbm.inlabru <- function(object, ...) {
   print_block("------ Model metadata ------", S$Metadata)
   print_block("------ Model fit (Bayesian criteria) ------", S$`Model fit`)
   print_block("------ Hyperparameters ------", S$Hyperparameters)
-  print_block("------ Intercepts ------", S$Intercepts)
+  print_block("------ Random effects ------", S$Intercepts)
 
   fe <- S$`Fixed effects`
   if (!is.null(fe) && nrow(fe) > 0 && "coef" %in% names(fe)) {
