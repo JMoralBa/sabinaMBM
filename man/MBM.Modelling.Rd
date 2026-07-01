@@ -43,6 +43,7 @@ MBM.Modelling(
 \item{coupling.predictors}{Character or list. Controls how global and regional covariate effects are related. Options:
 \itemize{
 \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients.
+\item \code{"random_slope"}: True hierarchical random-slope model (Gelman & Hill, 2007): \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is the SAME shared coefficient estimated jointly from the global likelihood (reused, not copied), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. Unlike \code{"ordered_hierarchical"}, the amount of cross-scale borrowing is learned from the data rather than fixed in advance: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope. Requires the variable to be present at both scales and a joint (non-sequential) model fit.
 \item \code{"ordered_hierarchical"}: Bayesian soft constraint where the regional coefficient has a prior centred on unity (\code{beta_RE ~ N(1, 0.5^2)}) in standardized scale, encouraging — but not forcing — non-zero regional response. With per-extent standardization (the default for this option), a coefficient of 1 corresponds to a one-regional-sd effect. True INLA \code{copy} over linear effects is not used here because of identifiability issues when global and regional likelihoods carry asymmetric information; this formulation is a practical regularization rather than a strict hierarchical copy. Requires the variable to be present at both scales.
 \item \code{"scale_decomposed"}: Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), following Cressie & Wikle (2011) and Zhou & Bradley (2024). In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
 \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors.
@@ -78,6 +79,8 @@ Note: This argument is automatically ignored if \code{family = "cp"} since the C
 \item{seed}{Optional integer to set the random seed for reproducibility.}
 
 \item{save.output}{Logical. If \code{TRUE}, saves key model outputs to disk.}
+
+\item{verbose}{Logical. If \code{TRUE} (default), prints progress messages during model construction and fitting.}
 }
 \value{
 A named list of class \code{jmbm.inlabru} with the following elements:
@@ -89,6 +92,7 @@ A named list of class \code{jmbm.inlabru} with the following elements:
 \item{marginals}{List with posterior marginals: \code{hyperpar} (SPDE hyperparameters), \code{random} (IGlobal, IRegional intercepts), \code{fixed} (covariate coefficients). Use with \code{plot(x, which = "hyperparams")} or \code{plot(x, which = "intercepts")}.}
 \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 \item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
+\item{formula}{List with the model's linear predictor components: \code{components} (the full inlabru component formula, intercepts + spatial fields + covariate terms), \code{rhs_global} (right-hand side of the global likelihood, or \code{NULL} if \code{coupling.intercept = NULL}), and \code{rhs_regional} (right-hand side of the regional likelihood).}
 \item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@JMB revisar y refinar
 }
 \description{
@@ -163,8 +167,9 @@ This argument defines how each predictor behaves across global and regional scal
 It is only applied to variables that appear in both global and regional scales.
 Standardization behaviour: variables coupled via \code{"scale_decomposed"} or \code{"bayesian_feedback"} are standardized with unified global statistics (mu_GL, sigma_GL) in both rasters, so that a unit change in Z corresponds to the same physical change at both scales. All other variables (non-shared, or shared with \code{NULL}/\code{"unpooled"}/\code{"ordered_hierarchical"}) keep their native per-extent Z-score.
 \itemize{
-\item Option 1 \code{NULL} (default): no coupling. Global and regional effects are estimated independently unless one is dropped via \code{covariate.effects}.
-\item Option 2 \code{"unpooled"}: global and regional effects enter the linear predictor as two independent components (η = β_GL * X_GL + β_RE * X_RE + …). No information is shared between scales.
+\item Option 1 \code{NULL}: no coupling. Global and regional effects are estimated independently unless one is dropped via \code{covariate.effects}.
+\item Option 2 \code{"unpooled"} (default): global and regional effects enter the linear predictor as two independent components (η = β_GL * X_GL + β_RE * X_RE + …). No information is shared between scales.
+\item Option 3 \code{"random_slope"}: true hierarchical random-slope model (Gelman & Hill, 2007): \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is the SAME shared coefficient estimated jointly from the global likelihood (reused, not copied), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope. Requires the variable to be present at both scales; uses the variable's native per-extent Z-score (not unified — see Standardization behaviour above).
 \item Option 3 \code{"ordered_hierarchical"}: Bayesian soft constraint with prior \code{beta_RE ~ N(1, 0.5^2)} in standardized scale, encouraging — but not forcing — non-zero regional response. Practical regularization, not a strict hierarchical copy (INLA \code{copy} on linear effects produces non-identifiable sign reversals when likelihoods carry asymmetric information).
 \item Option 4 \code{"scale_decomposed"}: shared covariates are first projected to the unified global Z-space, then decomposed additively into a resampled global macro-trend (X_glo_res) and a regional anomaly (X_reg_anom = X_RE - X_glo_res). Macro and anomaly coefficients are directly comparable in magnitude. Following Cressie & Wikle (2011). Requires the global raster to be of equal or coarser resolution than the regional one.
 \item Option 5 \code{"bayesian_feedback"}: shared covariates are unified to the global Z-space; the global model is fit first; posterior moments (mean, precision) of beta_GL are injected as the Gaussian prior of beta_RE in a subsequent regional fit. Following Figueira et al. (2024), adapted to multiscale settings (the original protocol assumes co-located covariates without Spatial Change of Support). Information is transferred via the first two moments only.

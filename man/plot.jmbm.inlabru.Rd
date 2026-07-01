@@ -24,6 +24,11 @@
 \item \code{"hyperparams"}: posterior marginals of SPDE hyperparameters with PC-priors overlaid.
 \item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
 \item \code{"fixed"}: posterior marginals of all fixed effect coefficients, back-transformed to original covariate scale.
+\item \code{"correlogram"}: empirical correlogram of regional model residuals against pairwise distance, used to check for residual spatial autocorrelation not captured by the spatial field(s). Requires Sre or Sshared.
+\item \code{"semivariogram"}: empirical semivariogram of regional model residuals, complementary diagnostic to the correlogram for residual spatial structure. Requires Sre or Sshared.
+\item \code{"Srefields"}: posterior mean maps of the fitted spatial field(s) (Sre and/or Sshared, whichever are present in the model).
+\item \code{"hist"}: histogram of regional model residuals, centred at 0 (or at the mean residual when \code{coupling.intercept = "ordered_hierarchical"}, since the soft-constraint intercept does not force a zero-centred residual distribution).
+\item \code{"qq"}: normal QQ-plot of regional model residuals, for visual assessment of normality.
 \item \code{"pit"}: histogram of Probability Integral Transform values. A uniform distribution indicates good calibration.
 \item \code{"new.projections"}(first scenario), or scenario name as string (e.g. \code{"MRI_ESM2_0_2070_SSP585"}): future/alternative scenario prediction.
 }}

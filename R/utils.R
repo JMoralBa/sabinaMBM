@@ -983,110 +983,10 @@
     prior_ticks$y <- ymax_fac$y[match(prior_ticks$par, ymax_fac$par)] * 0.95
   }
 
-  pA <- ggplot2::ggplot(post_df, ggplot2::aes(x = x, y = y)) +
-    ggplot2::geom_line(linewidth = 0.6, color = "#1a5276") +
-    ggplot2::facet_wrap(~par, scales = "free", ncol = 2) +
-    ggplot2::geom_vline(data = prior_ticks, ggplot2::aes(xintercept = x),
-                        linetype = "dashed", linewidth = 0.5, color = "#c0392b", alpha = 0.7) +
-    ggplot2::geom_text(data = prior_ticks,
-                       ggplot2::aes(x = x, y = y, 
-                       label = paste0("PC prior (u) = ", round(x, 2))),
-                       vjust = -0.4, hjust = 1, size = 2.8,
-                       color = "#c0392b", angle = 90) +
-    ggplot2::labs(
-      title = "A) Hyperparameters: posterior marginals",
-      subtitle = "Red dashed lines = PC prior (u)",
-      y = "Density", x = "Value"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
-      axis.title = ggplot2::element_text(size = 9, color = "#2c3e50"),
-      axis.text = ggplot2::element_text(size = 8),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
-    )
-
-  # pB Sre vs Sshared fields
-  ras_to_df <- function(r, nm) {
-    rr <- terra::unwrap(r)[["mean"]]
-    df <- terra::as.data.frame(rr, xy = TRUE, na.rm = FALSE)
-    names(df) <- c("x", "y", "mean")
-    df$which <- nm
-    df
-  }
-  maps_df <- data.frame()
-  if(!is.null(pred_Sre)) maps_df <- rbind(maps_df, ras_to_df(pred_Sre, "Sre field"))
-  if(!is.null(pred_Sshared)) maps_df <- rbind(maps_df, ras_to_df(pred_Sshared, "Sshared field"))
-
   ordered_hierarchical <- any(grepl("copy", rownames(fit$summary.hyperpar), ignore.case = TRUE)) ||
                    "IGlobal" %in% names(fit$summary.random)
-  # Define midpoint dynamically
-  has_copy_structure <- any(grepl("copy", rownames(fit$summary.hyperpar), ignore.case = TRUE)) ||
-                   "IGlobal" %in% names(fit$summary.random)
-  if(has_copy_structure) {
-    midpoint_val <- mean(maps_df$mean, na.rm = TRUE)
-  } else {
-    midpoint_val <- 0
-  }
-
-  if(nrow(maps_df) > 0) {
-    zlim <- range(maps_df$mean, na.rm = TRUE)
-    pB <- ggplot2::ggplot(maps_df, ggplot2::aes(x = x, y = y, fill = mean)) +
-      ggplot2::geom_raster(na.rm = TRUE) +
-      #ggplot2::scale_fill_distiller(palette = "YlGnBu", limits = zlim, na.value = "white") +
-      ggplot2::scale_fill_gradient2(
-        low = "#c0392b", mid = "white", high = "#1a5276",
-        midpoint = midpoint_val,
-        limits = zlim, na.value = "white",
-        oob = scales::squish
-      ) +
-      ggplot2::coord_equal(expand = FALSE) +
-      ggplot2::facet_wrap(~which, ncol = 2, scales = "fixed") +
-      ggplot2::labs(
-        title = "B) Sre fields (posterior mean)",
-        subtitle = if(has_copy_structure)
-          "Red = below global mean, Blue = above global mean (centered at model mean)"
-        else
-          "Red = below average, Blue = above average (centered at zero)",
-        fill = "Posterior\nmean"
-      ) +
-      ggplot2::theme_minimal(base_size = 10) +
-      ggplot2::theme(
-        plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-        plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-        strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
-        axis.title = ggplot2::element_blank(),
-        axis.text = ggplot2::element_blank(),
-        axis.ticks = ggplot2::element_blank(),
-        panel.grid = ggplot2::element_blank(),
-        panel.border = ggplot2::element_blank(),
-        panel.background = ggplot2::element_blank(),
-        strip.background = ggplot2::element_blank(),
-        plot.background = ggplot2::element_blank(),
-        legend.position = "bottom",
-        legend.key.height = ggplot2::unit(0.3, "cm"),
-        legend.key.width = ggplot2::unit(1.2, "cm"),
-        legend.title = ggplot2::element_text(size = 9, color = "#2c3e50"),
-        legend.text = ggplot2::element_text(size = 8)
-      )
-  } else {
-    pB <- ggplot2::ggplot() +
-      ggplot2::labs(
-        title = "B) Sre fields (posterior mean)",
-        subtitle = "No Sre or Sshared fields present in the model"
-      ) +
-      ggplot2::theme_void() +
-      ggplot2::theme(
-        plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-        plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e")
-      )
-  }
 
   if (!is.null(rs)) {
-  # pC Residual correlogram
   cor_df <- data.frame()
   coords <- as.matrix(data_used[, c("x", "y")])
   if(is.finite(moran_I)) {
@@ -1109,46 +1009,9 @@
     cor_df <- data.frame(dist_mid = mid, rho = rho)
   }
   range_eff <- if(is.finite(range_res_mean)) range_res_mean else if(is.finite(range_lat_mean)) range_lat_mean else NA_real_
-  pC <- ggplot2::ggplot(cor_df, ggplot2::aes(x = dist_mid, y = rho)) +
-    ggplot2::geom_hline(yintercept = 0, linewidth = 0.3, linetype = "dashed", color = "grey50") +
-    ggplot2::geom_point(na.rm = TRUE, size = 1.2, color = "#1a5276") +
-    ggplot2::geom_line(na.rm = TRUE, color = "#1a5276", linewidth = 0.6) +
-    ggplot2::labs(
-      title = "C) Residual correlogram (residuals: obs − fitted mean)",
-      subtitle = if(is.finite(range_eff))
-        paste0("Model range ≈ ", round(range_eff, 3), " (map units)\n(distance where correlation vanishes)")
-      else
-        "No Sre/Sshared field: full extent shown",
-      x = "Distance (map units)",
-      y = "Residual correlation"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
-      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
-      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
-      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc"),
-      panel.border = ggplot2::element_blank(),
-      panel.background = ggplot2::element_blank(),
-      plot.background = ggplot2::element_blank()
-    )
-  # Vertical line for model range
-  if(is.finite(range_eff)) {
-    pC <- pC +
-      ggplot2::geom_vline(xintercept = range_eff, linetype = "dashed", color = "#c0392b", alpha = 0.7) +
-      ggplot2::annotate(
-        "text",
-        x = range_eff, y = max(cor_df$rho, na.rm = TRUE),
-        label = "Model range", angle = 90, vjust = -0.8, hjust = 0.9,
-        color = "#c0392b", size = 3
-      )
-  }
+  attr(cor_df, "range_eff") <- range_eff
 
-  # pD Residual histogram + QQ plot
+  # Residual histogram + QQ plot
   res_mean <- mean(rs, na.rm = TRUE)
   df_r <- data.frame(resid = rs)
   center_label <- if(ordered_hierarchical) {
@@ -1158,57 +1021,10 @@
   }
   line_x <- if(ordered_hierarchical) res_mean else 0
 
-  pD1 <- ggplot2::ggplot(df_r, ggplot2::aes(x = resid)) +
-    ggplot2::geom_histogram(
-      bins = 30,
-      fill = "#1a5276",
-      color = "white",
-      alpha = 0.8
-    ) +
-    ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "#c0392b", linewidth = 0.4) +
-    ggplot2::annotate("text", x = line_x, y = Inf,
-    label = center_label, angle = 90, vjust = -0.8,
-    hjust = 1.2, size = 2.8, color = "#c0392b"
-    ) +
-    ggplot2::labs(
-      title = "D) Residual histogram & QQ-plot (residuals: obs − fitted mean)",
-      subtitle = paste0("Distribution of residuals\n(dashed line = ", center_label, ")"),
-      x = "Residuals",
-      y = "Frequency"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
-      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
-      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc"),
-      plot.background = ggplot2::element_blank()
-    )
+  attr(df_r, "center_label") <- center_label
+  attr(df_r, "line_x") <- line_x
   qq <- qqnorm(rs, plot.it = FALSE)
   df_qq <- data.frame(theoretical = qq$x, sample = qq$y)
-  pD2 <- ggplot2::ggplot(df_qq, ggplot2::aes(x = theoretical, y = sample)) +
-    ggplot2::geom_point(color = "#1a5276", size = 1.3, alpha = 0.8) +
-    ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#c0392b", linewidth = 0.4) +
-    ggplot2::labs(
-      title = " ",
-      subtitle = "Residuals vs. theoretical quantiles\n(dashed = normal expectation)",
-      x = "Theoretical quantiles (Normal)",
-      y = "Sample quantiles (residuals)"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
-      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
-      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc"),
-      plot.background = ggplot2::element_blank()
-    )
 
   # pE semivariaogram
   coords <- as.matrix(data_used[, c("x", "y")])
@@ -1246,52 +1062,17 @@
     dist = mid,
     gamma = gamma
   )
+  attr(sv_df, "range_res_mean") <- if(has_Sre) range_res_mean else NA_real_
+  attr(sv_df, "range_lat_mean") <- if(has_Sshared) range_lat_mean else NA_real_
 
-  pE <- ggplot2::ggplot(sv_df, ggplot2::aes(x = dist, y = gamma)) +
-    ggplot2::geom_point(color = "#1a5276", size = 1.5, alpha = 0.8) +
-    ggplot2::geom_line(color = "#1a5276", linewidth = 0.6, alpha = 0.8) +
-    ggplot2::labs(
-      title = "E) Empirical semivariogram (residuals: obs − fitted mean)",
-      subtitle = paste0(" "),
-      x = "Distance (map units)",
-      y = "Semivariance γ(h)"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
-      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
-      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
-    )
-  if(has_Sre) {
-    pE <- pE + ggplot2::geom_vline(xintercept = range_res_mean, linetype = "dashed", color = "#c0392b", linewidth = 0.5) +
-      ggplot2::geom_text(
-        data = data.frame(x = range_res_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sre range"),
-        ggplot2::aes(x = x, y = y, label = label), 
-        color = "#c0392b", angle = 90, hjust = 1, vjust = -0.5, size = 3)
-  }
-  if(has_Sshared) {
-    pE <- pE + ggplot2::geom_vline(xintercept = range_lat_mean, linetype = "dashed", color = "#2980b9", linewidth = 0.5) +
-      ggplot2::geom_text(
-      data = data.frame(x = range_lat_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sshared range"),
-      ggplot2::aes(x = x, y = y, label = label),
-      color = "#2980b9", angle = 90, hjust = 1, vjust = -0.5, size = 3)
-  }
 
   } else {
     # if family cp
-    pC <- NULL
-    pD1 <- NULL
-    pD2 <- NULL
-    pE <- NULL
+    cor_df <- NULL
+    sv_df <- NULL
+    df_r  <- NULL
+    df_qq <- NULL
   }  
-
-  # pH covariates importance
-  #pH <- .jmbm_vars_importance(fit)
-
 
   # 
   out <- list(
@@ -1330,13 +1111,13 @@
                        var_explained_Sre = var_explained_Sre,
                        ssi = ssi,
                        r2_fields = r2_fields), 
-    plots = list(hyperparams = pA,
-                 Srefields = pB,
-                 correlogram = pC,
-                 hist = pD1,
-                 qq = pD2,
-                 #vars_importance = pF,
-                 semivariogram = pE)
+    diagnostic_data = list(
+      hyperparams = list(posteriors = post_df, prior_ticks = prior_ticks),
+      correlogram = cor_df,
+      hist = df_r,
+      qq = df_qq,
+      semivariogram = sv_df
+    )
   )
 
   return(out)
