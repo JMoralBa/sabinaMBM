@@ -15,7 +15,6 @@ MBM.Modelling(
   regional.pcprior.sigma = NULL,
   shared.pcprior.range = NULL,
   shared.pcprior.sigma = NULL,
-  background.weights = NULL,
   proj.new.env = TRUE,
   cv.folds = 1,
   n.threads = 1,
@@ -59,14 +58,6 @@ MBM.Modelling(
 \item{shared.pcprior.range}{Numeric vector of length 2. PC-prior for the range of the shared spatial field S_shared, e.g. \code{c(10, 0.01)} means P(range < 10) = 0.01. Must be substantially larger than \code{regional.pcprior.range} to ensure scale separation (Bakka et al., 2018). If \code{NULL} (and \code{regional.pcprior.range} is also \code{NULL}), no spatial fields are used.}
 
 \item{shared.pcprior.sigma}{Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01. For multi-scale separation, set \code{shared.pcprior.sigma[1]} substantially higher than \code{regional.pcprior.sigma[1]} (e.g., c(1, 0.01) vs c(0.5, 0.01)).}
-
-\item{background.weights}{Controls how background points are weighted in the likelihood. Options:
-\itemize{
-\item \code{NULL} (default): no weights applied. Fast but produces a biased intercept when using presence-background data (Warton & Shepherd, 2010).
-\item \code{"area_weighted"}: Weights are computed automatically as \code{w = 1} for presences and \code{w = A / n_bg} for background points, where \code{A} is the total domain area (km2) and \code{n_bg} is the number of background points. This rigorously approximates a Poisson point process integration and corrects intercept bias (Renner et al., 2015).
-\item Numeric vector: user-supplied weights of length equal to the number of observations (presences + background) per scale.
-}
-Note: This argument is automatically ignored if \code{family = "cp"} since the Cox process intrinsically handles spatial integration via the continuous SPDE mesh.}
 
 \item{proj.new.env}{Logical. Whether to compute predictions under new environmental scenarios (default: \code{TRUE}).}
 
@@ -204,10 +195,6 @@ spatial data with application to blood test monitoring.
 
 Bakka, H. et al. (2018). Spatial modelling with R-INLA: A review.
 \emph{WIREs Computational Statistics}, 10, e1443.
-
-Warton, D.I. & Shepherd, L.C. (2010). Poisson point process models solve the
-pseudo-absence problem for presence-only data in ecology.
-\emph{The Annals of Applied Statistics}, 4(3), 1383--1402.
 }
 \seealso{
 \code{\link{create_mesh}}, \code{\link{plot.jmbm.inlabru}}, \code{\link{summary.jmbm.inlabru}}

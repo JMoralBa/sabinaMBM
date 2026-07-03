@@ -28,13 +28,6 @@
 #'     \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors.
 #'     \item \code{NULL}: Regional-only covariate effects; global covariates are excluded from the regional predictor entirely. No shared spatial fields (S_shared).
 #'   }
-#' @param background.weights Controls how background points are weighted in the likelihood. Options:
-#'   \itemize{
-#'     \item \code{NULL} (default): no weights applied. Fast but produces a biased intercept when using presence-background data (Warton & Shepherd, 2010).
-#'     \item \code{"area_weighted"}: Weights are computed automatically as \code{w = 1} for presences and \code{w = A / n_bg} for background points, where \code{A} is the total domain area (km2) and \code{n_bg} is the number of background points. This rigorously approximates a Poisson point process integration and corrects intercept bias (Renner et al., 2015).
-#'     \item Numeric vector: user-supplied weights of length equal to the number of observations (presences + background) per scale.
-#'   }
-#'   Note: This argument is automatically ignored if \code{family = "cp"} since the Cox process intrinsically handles spatial integration via the continuous SPDE mesh.
 #' @param proj.new.env Logical. Whether to compute predictions under new environmental scenarios (default: \code{TRUE}).
 #' @param cv.folds Integer. Number of k-folds for spatial cross-validation (default: 1 = no CV).
 #' @param n.threads Integer. Number of parallel threads to be used by INLA/inlabru (default: 1).
@@ -154,10 +147,6 @@
 #' Bakka, H. et al. (2018). Spatial modelling with R-INLA: A review.
 #' \emph{WIREs Computational Statistics}, 10, e1443.
 #'
-#' Warton, D.I. & Shepherd, L.C. (2010). Poisson point process models solve the
-#' pseudo-absence problem for presence-only data in ecology.
-#' \emph{The Annals of Applied Statistics}, 4(3), 1383--1402.
-#'
 #' @export
 MBM.Modelling <- function(jmbm_obj, 
                       family = binomial(link = "logit"), # family object binomial(), poisson(), etc., o "cp" para intensity (procesos puntuales)
@@ -169,7 +158,6 @@ MBM.Modelling <- function(jmbm_obj,
                       regional.pcprior.sigma = NULL,
                       shared.pcprior.range = NULL,
                       shared.pcprior.sigma = NULL,
-                      background.weights = NULL,
                       proj.new.env = TRUE,
                       cv.folds = 1,
                       n.threads = 1,
@@ -381,16 +369,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   }
   INLA::inla.setOption(num.threads = n.threads)
   #
-  if(!is.null(background.weights) && !is.numeric(background.weights)) {
-    if(!is.character(background.weights) || length(background.weights) != 1 || background.weights != "area_weighted") {
-      .stop("`background.weights` must be NULL, 'area_weighted', or a numeric vector.")
-    }
-  }
-  if(!is.null(background.weights) && fam == "cp") {
-    .info("background.weights is ignored for family = 'cp' (handled via continuous samplers).")
-    background.weights <- NULL
-  }
-
   if(is.null(coupling.intercept)) {
     .check("Architecture: Regional-only (no global component)")
   } else {
@@ -530,37 +508,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     pp_reg <- pp_reg[stats::complete.cases(ext_reg), ]
   }
 
-  ## Background weights   #@@@JMB!! "area_weighted" sigue Warton & Shepherd 2010/Renner etal 2015 pero esta gente no contemplan dos escalas. Con area global >> area reg los pesos hay que equilibrarlos o algo así? ¿como hacemos esto para dos escalas? ¿lo quitamos?
-  w_glo <- NULL
-  w_reg <- NULL
-  if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") {
-    # global weights
-    if(!is.null(coupling.intercept)) {
-      n_pres_glo <- sum(pp_glo$resp != 0L)
-      n_bg_glo <- sum(pp_glo$resp == 0L)
-      A_glo <- as.numeric(terra::expanse(sp_covglo[[1]], unit = "km"))
-      w_glo <- ifelse(pp_glo$resp != 0L, 1, A_glo / n_bg_glo)
-    }
-    # regional weights
-    n_pres_reg <- sum(pp_reg$resp != 0L)
-    n_bg_reg <- sum(pp_reg$resp == 0L)
-    A_reg <- as.numeric(terra::expanse(sp_covreg[[1]], unit = "km"))
-    w_reg <- ifelse(pp_reg$resp != 0L, 1, A_reg / n_bg_reg)
-
-  } else if(is.numeric(background.weights)) {
-    # user-supplied: split by scale
-    n_glo_obs <- if(!is.null(coupling.intercept)) nrow(pp_glo) else 0L
-    n_reg_obs <- nrow(pp_reg)
-    if(length(background.weights) == n_glo_obs + n_reg_obs) {
-      w_glo <- if(!is.null(coupling.intercept)) background.weights[seq_len(n_glo_obs)] else NULL
-      w_reg <- background.weights[seq(n_glo_obs + 1L, n_glo_obs + n_reg_obs)]
-    } else if(length(background.weights) == n_reg_obs) {
-      w_reg <- background.weights
-    } else {
-      .stop(paste0("Length of background.weights (", length(background.weights), ") does not match observations."))
-    }
-  }
-
   ## SPDE domain definition
   pred_sf <- sf::st_as_sf(terra::as.points(sp_covreg, values = TRUE))
   pred_sf <- sf::st_transform(pred_sf, crs)
@@ -676,8 +623,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   # likelihoods
   liks <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
                               pp_glo, pp_reg, bdy_glo, bdy_reg, dom,
-                              coupling.intercept,
-                              w_glo = w_glo, w_reg = w_reg)
+                              coupling.intercept)
   lik_glo <- liks$lik_glo
   lik_reg <- liks$lik_reg
 
@@ -745,9 +691,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
         furrr::plan(furrr::multisession, workers = n_cores_cv, quiet = TRUE)
       }
 
-      A_glo_total <- if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp" && !is.null(coupling.intercept)) as.numeric(terra::expanse(sp_covglo[[1]], unit = "km")) else NULL
-      A_reg_total <- if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") as.numeric(terra::expanse(sp_covreg[[1]], unit = "km")) else NULL
-
       both_cov <- c(sp_covglo, sp_covreg)
       coords_all_r <- sf::st_coordinates(pp_reg)
       valid_pts_mask <- stats::complete.cases(terra::extract(both_cov, coords_all_r, ID = FALSE))
@@ -757,26 +700,10 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
         train_r <- pp_reg[folds_r != k, ]
         test_r  <- pp_reg[folds_r == k, ]
 
-        w_glo_k <- NULL
-        w_reg_k <- NULL
-        
-        if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") {
-          if(!is.null(coupling.intercept) && !is.null(train_g)) {
-            n_bg_glo_k <- sum(train_g$resp == 0L)
-            w_glo_k <- ifelse(train_g$resp != 0L, 1, A_glo_total / n_bg_glo_k)
-          }
-          n_bg_reg_k <- sum(train_r$resp == 0L)
-          w_reg_k <- ifelse(train_r$resp != 0L, 1, A_reg_total / n_bg_reg_k)
-        } else if(is.numeric(background.weights)) {
-          w_glo_k <- if(!is.null(coupling.intercept) && !is.null(w_glo)) w_glo[folds_g != k] else NULL
-          w_reg_k <- if(!is.null(w_reg)) w_reg[folds_r != k] else NULL
-        }
-
         liks_k <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
                                       train_g, train_r,
                                       bdy_glo, bdy_reg, dom,
-                                      coupling.intercept,
-                                      w_glo = w_glo_k, w_reg = w_reg_k)
+                                      coupling.intercept)
         lik_list_k <- Filter(Negate(is.null), list(liks_k$lik_glo, liks_k$lik_reg))
 
         # fit fold k
@@ -998,7 +925,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       coupling.intercept = coupling.intercept,
       coupling.predictors = coupling.predictors,
       covariate.effects = covariate.effects,
-      background.weights = background.weights,
       proj.new.env = proj.new.env,
       cv.folds = cv.folds,
       n.threads = n.threads,

@@ -124,8 +124,7 @@
 #' @noRd
 .build_likelihoods <- function(fam, lnk, rhs_glo, rhs_reg,
                                pp_glo, pp_reg, bdy_glo, bdy_reg, dom,
-                               coupling.intercept,
-                               w_glo = NULL, w_reg = NULL) {
+                               coupling.intercept) {
   lik_glo <- NULL
   if(fam == "cp") {
     pres_glo <- if(!is.null(coupling.intercept)) pp_glo[pp_glo$resp != 0L, ] else NULL
@@ -146,14 +145,12 @@
         family = fam,
         formula = as.formula(paste0("resp ~ ", rhs_glo)),
         data = pp_glo, samplers = bdy_glo, domain = dom,
-        weights = w_glo,
         control.family = list(link = lnk))
     }
     lik_reg <- inlabru::like(
       family = fam,
       formula = as.formula(paste0("resp ~ ", rhs_reg)),
       data = pp_reg, samplers = bdy_reg, domain = dom,
-      weights = w_reg,
       control.family = list(link = lnk))
   }
   list(lik_glo = lik_glo, lik_reg = lik_reg)
