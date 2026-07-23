@@ -2,7 +2,7 @@
 % Please edit documentation in R/plot_jmbm.R
 \name{plot.jmbm.inlabru}
 \alias{plot.jmbm.inlabru}
-\title{Plot predictions and spatial fields from a fitted NSBM model}
+\title{Plot predictions and spatial fields from a fitted MBM model}
 \usage{
 \method{plot}{jmbm.inlabru}(
   x,
@@ -42,7 +42,7 @@
 \item{legend_title}{Optional legend title. If NULL, it is automatically inferred from the model family and the layer.}
 }
 \value{
-A ggplot object showing the selected NSBM output layer.
+A ggplot object showing the selected MBM output layer.
 }
 \description{
 Generates diagnostic plots and spatial prediction maps for objects of class \code{jmbm.inlabru}. Supports current and future suitability maps, spatial field visualizations, posterior marginals, and calibration diagnostics.

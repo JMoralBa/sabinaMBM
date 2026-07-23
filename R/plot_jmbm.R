@@ -1,6 +1,6 @@
 #' @name plot.jmbm.inlabru
 #'
-#' @title Plot predictions and spatial fields from a fitted NSBM model
+#' @title Plot predictions and spatial fields from a fitted MBM model
 #'
 #' @description Generates diagnostic plots and spatial prediction maps for objects of class \code{jmbm.inlabru}. Supports current and future suitability maps, spatial field visualizations, posterior marginals, and calibration diagnostics.
 #'
@@ -26,7 +26,7 @@
 #' @param title Optional plot title. If NULL, a default title is generated as "Species - type - scope - layer".
 #' @param legend_title Optional legend title. If NULL, it is automatically inferred from the model family and the layer.
 #'
-#' @return A ggplot object showing the selected NSBM output layer.
+#' @return A ggplot object showing the selected MBM output layer.
 #'
 #' @examples
 #' # Default: current prediction (mean layer)

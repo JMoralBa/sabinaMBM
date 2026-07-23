@@ -56,9 +56,8 @@
   vars_glo <- if (!is.null(sp_covglo)) names(sp_covglo) else character(0)
   vars_reg <- if (!is.null(sp_covreg)) names(sp_covreg) else character(0)
 
-  # Phase 1: unified variables (shared + coupled with scale_decomposed or bayesian_feedback)
-  # Use global statistics for BOTH rasters. This places X_GL and X_RE in the
-  # same Z-space, eliminating COS artifacts in cross-scale coefficient transfer.
+  # unified variables (shared + coupled with scale_decomposed or bayesian_feedback)
+  # Use global statistics for both rasters. X_GL and X_RE in the same Z-space, eliminating COS artifacts in cross-scale coefficient transfer.
   for (v in unified_vars) {
     if (!(v %in% vars_glo)) {
       .warn(paste0("Unified standardization requested for '", v,
@@ -66,13 +65,13 @@
       next
     }
     m_glo <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
-    s_glo <- terra::global(sp_covglo[[v]], "sd",   na.rm = TRUE)[1, 1]
+    s_glo <- terra::global(sp_covglo[[v]], "sd", na.rm = TRUE)[1, 1]
 
 
     if (is.na(s_glo) || s_glo <= 1e-10) {
       .warn(paste0("Variable '", v, "' has near-zero global variance. Centering only."))
       if (standardize_global) sp_covglo[[v]] <- sp_covglo[[v]] - m_glo
-      if (v %in% vars_reg)    sp_covreg[[v]] <- sp_covreg[[v]] - m_glo
+      if (v %in% vars_reg) sp_covreg[[v]] <- sp_covreg[[v]] - m_glo
       scale_params_glo[[v]] <- list(mean = m_glo, sd = NA_real_)
       scale_params_reg[[v]] <- list(mean = m_glo, sd = NA_real_, unified = TRUE)
     } else {
@@ -83,7 +82,7 @@
     }
   }
 
-  # Phase 2: non-unified variables — independent standardization
+  # non-unified variables. Independent standardization
   if (standardize_global) {
     non_unif_glo <- setdiff(vars_glo, unified_vars)
     if (length(non_unif_glo) > 0) {
@@ -179,9 +178,7 @@
 
   #cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
 
-  # Build rw2 mesh using fmesher::fm_mesh_1d — replaces manual thin_knots + inla.group
-  # fm_mesh_1d handles spacing automatically, avoiding singular matrices
-  # n_knots=100 ensures ≥5-8 obs/knot (stable per Gómez-Rubio 2020). 
+  # Build rw2 mesh using fmesher::fm_mesh_1d
   .build_rw2_values <- function(rast_layer, coords, n_knots = 100L) {
     vals <- suppressWarnings(as.numeric(terra::extract(rast_layer, coords)[, 1]))
     vals <- vals[is.finite(vals)]
@@ -230,11 +227,11 @@
     specX <- spec_glo[[X]]
     if(specX$model == "drop") next
     if(specX$model == "linear") {
-      if(cp_mode == "random_slope") {
+      if(cp_mode %in% c("nested_shrinkage", "ordered_hierarchical")) {
            cmpglobal <- c(cmpglobal,
-                           paste0(X, "GL(main = as.numeric(terra::extract(", spobjglo,
+                           paste0(X, "GL(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjglo,
                               ", sf::st_transform(.data., terra::crs(", spobjglo,
-                              ")), method = 'bilinear', ID = FALSE)[['", X, "']]), model = 'linear')"))
+                              ")), method = 'bilinear', ID = FALSE)[['", X, "']]), hyper = list(prec = list(initial = -10, fixed = TRUE)))"))
         } else {
           cmpglobal <- c(cmpglobal,
                          paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'linear')"))
@@ -275,23 +272,18 @@
       fregional <- c(fregional, paste0(X, "GL_glo_res"), paste0(X, "RE_reg_anom"))
     }
 
-    ##@@@JMB random_slope: beta_RE = beta_GL (componente compartido, reutilizado del bucle global) + delta_RE, con delta_RE ~ N(0, sigma_delta^2) y
-    ## sigma_delta ESTIMADA via PC-prior (random-slope model (Gelman & Hill 2007).
-    ## El grado de cross-scale borrowing lo aprende de los datos: sigma_delta se contrae hacia 0 si global y regional coinciden, y crece si
-    ## la evidencia regional respalda una pendiente distinta.
-    else if(cp_mode == "random_slope") {
-            cmpregional <- c(cmpregional,
-        paste0(X, "_delta(main = rep(1L, length(as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]))), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", sf::st_transform(.data., terra::crs(", spobjreg, ")), ID = FALSE)[['", X, "']]), ", slope_delta_prior, ")"))
-      fregional <- c(fregional, paste0(X, "GL"), paste0(X, "_delta"))
+    ## nested_shrinkage: beta_RE = beta_GL (shared via copy= real, fixed=TRUE) + delta_RE, delta_RE ~ N(0, sigma_delta^2).
+    else if(cp_mode == "nested_shrinkage") {
+      cmpregional <- c(cmpregional,
+        paste0(X, "GL_copy_reg(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(fixed = TRUE, initial = 1)))"),
+        paste0(X, "_delta(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), ", slope_delta_prior, ")"))
+      fregional <- c(fregional, paste0(X, "GL_copy_reg"), paste0(X, "_delta"))
     }
 
-    # ordered_hierarchical: soft constraint beta_RE ~ N(1, 0.5^2)
-    # mean.linear=1 with standardized covariates encourages regional effect to mirror global scale.
-    #@@@JMB!! PENDIENTE consultar con Virgilio: La version A (actual) con prior fijo N(1, 0.5^2) funciona pero es soft constraint, no jerarquía real (beta_RE no copia beta_GL). 
-       # La versión B (copy real sobre efecto lineal) en teoría permite copiar efectos lineales (beta_RE|beta_GL~N(beta_GL,tau) usando el truco idd de un solo grupo de Krainski et al 2008 sec 1.6.2, poniendo f(id_var, covariate_values, model = "iid", copy = "XGL", fixed = FALSE). Eso haría un beta_copy por variable igual que para el intercepto. jerarquia real. El problema es que se me rompe. Pendiente verificar si es por strategy eb o por linear effects o q????
+    ## ordered_hierarchical: beta_RE = beta_copy * beta_GL via copy= real, beta_copy free (Krainski et al. 2018; Knorr-Held & Best 2001).
     else if(cp_mode == "ordered_hierarchical") {
       cmpregional <- c(cmpregional,
-        paste0(X, "RE_oh(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'linear', mean.linear = 1, prec.linear = 4)"))
+        paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(fixed = FALSE, initial = 1)))"))
       fregional <- c(fregional, paste0(X, "RE_oh"))
     }
 
@@ -329,7 +321,7 @@
 # -----------------------------
 
 
-#' Fit NSBM sequentially or jointly
+#' Fit MBM sequentially or jointly
 #' @noRd
 .fit_jmbm <- function(cmp, lik_list, coupling.intercept, 
                       coupling.predictors, needs_feedback, 
@@ -355,7 +347,7 @@
       }
     }
 
-    # fit global model using ONLY the global likelihood
+    # fit global model using only the global likelihood
     .info("Sequential bayesian feedback — Fitting global model to extract posteriors...")
     fit_glo <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[1]]), list(options = bru_opts)))
 
@@ -410,7 +402,7 @@
       }
     }
     
-    # fit using ONLY regional likelihood
+    # fit using only regional likelihood
     fit <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[length(lik_list)]]), list(options = bru_opts)))
     return(fit)
     
@@ -454,14 +446,9 @@
     if(spec == "drop") { 
       return(list(model = "drop", u = NA, alpha = NA))
     } 
-    #if(spec == "rw2") {
-    #  .stop(paste0("Invalid RW2 specification in `", path_label, "`.\n",
-    #               "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
-    #               "   For linear effects use 'linear'; to exclude use 'drop'."))
-    #} 
     if(spec == "rw2") {
       # defaults (u=5, alpha=0.01)
-      return(list(model = "rw2", u = 5, alpha = 0.01))
+      return(list(model = "rw2", u = 0.5, alpha = 0.01))
     }
     .stop(paste0("Invalid keyword '", spec, "' in `", path_label, "`.\n",
                  "   Valid options: 'linear', 'drop', or list(model='rw2', u=..., alpha=...)."))
@@ -475,13 +462,7 @@
                    "   For linear effects use 'linear'; to exclude use 'drop'."))
     }
     if(identical(spec$model, "rw2")) {
-      # RW2 reequires u alpha
-      #if(is.null(spec$u) || is.null(spec$alpha)) {
-      #  .stop(paste0("Incomplete RW2 specification in `", path_label, "`.\n",
-      #                                           "   Provide both `u` and `alpha`."))
-      #}
-      #return(list(model = "rw2", u = spec$u, alpha = spec$alpha))
-      u_val  <- if(is.null(spec$u))  5 else spec$u  #@@@JMB default o cusomizable?
+      u_val  <- if(is.null(spec$u)) 5 else spec$u        #@@@JMB default o cusomizable?
       alpha_val <- if(is.null(spec$alpha)) 0.01 else spec$alpha
       return(list(model = "rw2", u = u_val, alpha = alpha_val))
     }
@@ -521,7 +502,7 @@
   
   # unpooled for vars only in regional
   if(!is.null(vg) && !(var %in% vg) && !is_explicit) {
-    if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "random_slope")) {
+    if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "nested_shrinkage")) {
       mode_val <- "unpooled"
     }
   }
@@ -678,7 +659,6 @@
     }
   prec_IGlobal <- if("Precision for IGlobal" %in% rownames(hyper)) format_hyper("Precision for IGlobal") else "—"
   beta_IRegional <- if("Beta for IRegional" %in% rownames(hyper)) format_hyper("Beta for IRegional") else "—"
-  # betas from ordered_hierarchical predictor copies: "Beta for bio1RE_oh", etc.
   beta_pred_oh <- if(!is.null(hyper)) {
     oh_rows <- rownames(hyper)[grepl("^Beta for .+RE_oh$", rownames(hyper))]
     if(length(oh_rows) > 0) {
@@ -686,7 +666,7 @@
     } else NULL
   } else NULL
 
-  # random_slope
+  # nested_shrinkage
   rs_delta_names <- names(fit$summary.random)[grepl("^.+_delta$", names(fit$summary.random))]
   beta_pred_rs <- if(length(rs_delta_names) > 0) {
     stats::setNames(lapply(rs_delta_names, function(nm) .mean_sd_str(fit$summary.random[[nm]])), rs_delta_names)
@@ -756,7 +736,6 @@
       range_lat_mean
     } else {
     # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal.   #@@@JMB bien?
-    # conservative heuristic for spatial structure estimation.
       bb <- apply(xy, 2, range, na.rm = TRUE)
       sqrt(sum((bb[2,] - bb[1,])^2)) / 4
     }   
@@ -839,10 +818,10 @@
   )
 
   # variance and range ratios
-  # sigma Sshared mean / sigma Sre mean > 1.5 ==> Sshared field dominates (Blangiardo & Cameletti 2015)
+  # sigma Sshared mean / sigma Sre mean > 1.5 --> Sshared field dominates (Blangiardo & Cameletti 2015)
   sigma_ratio <- if(has_Sre && has_Sshared && is.finite(sigma_lat_mean) && is.finite(sigma_res_mean) && sigma_res_mean > 0)
     sigma_lat_mean / sigma_res_mean else "—"
-  # 0.5 < range_Sshared / range_Sre < 2 ==> poor scale separation (Bakka et al. 2018)
+  # 0.5 < range_Sshared / range_Sre < 2 --> poor scale separation (Bakka et al. 2018)
   range_ratio <- if(has_Sre && has_Sshared && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
     range_lat_mean / range_res_mean else "—"
 
@@ -865,8 +844,8 @@
       ssi <- range_penalty * sigma_penalty
     }
 
-    # Posterior field redundancy r^2(S_RE, S_shared). Squared Pearson correlation between posterior mean nodal values of S_RE and S_shared
-          # High values (> 0.5) indicate both fields capture the same spatial pattern (redundancy).       #@@@JMB bien?
+    # Posterior field redundancy r^2(S_RE, S_shared). 
+    # r^2 > 0.5 indicates both fields capture the same spatial pattern (redundancy).       #@@@JMB bien?
     resid_Sre <- fit$summary.random$Sre$mean
     resid_Sshared <- fit$summary.random$Sshared$mean
     if(!is.null(resid_Sre) && !is.null(resid_Sshared)) {
@@ -955,7 +934,7 @@
   }
 
   # plots
-  # pA Hyperparameters: posterior marginals + PC priors
+  # Hyperparameters: posterior marginals + PC priors
   post_df <- data.frame()
   if(!is.null(fit$marginals.hyperpar)) {
     for(nm in names(fit$marginals.hyperpar)) {
@@ -968,7 +947,6 @@
     }
   }
   if(nrow(post_df) == 0) post_df <- NULL
-  # Create prior reference ticks for vertical lines
   prior_ticks <- do.call(rbind, Filter(Negate(is.null), list(
     if(!is.null(priors$regional.pcprior.range)) data.frame(x = priors$regional.pcprior.range[1], par = "Range for Sre"),
     if(!is.null(priors$regional.pcprior.sigma)) data.frame(x = priors$regional.pcprior.sigma[1], par = "Stdev for Sre"),
@@ -1023,7 +1001,7 @@
   qq <- qqnorm(rs, plot.it = FALSE)
   df_qq <- data.frame(theoretical = qq$x, sample = qq$y)
 
-  # pE semivariaogram
+  # semivariaogram
   coords <- as.matrix(data_used[, c("x", "y")])
   if(has_Sre) {
     sp_vals <- fit$summary.random$Sre$mean
@@ -1087,8 +1065,8 @@
                        iRegional = iRegional,
                        copy_beta = beta_IRegional,
                        copy_beta_predictors = beta_pred_oh,
-                       random_slope_delta = beta_pred_rs,
-                       random_slope_delta_precision = prec_pred_rs),
+                       nested_shrinkage_delta = beta_pred_rs,
+                       nested_shrinkage_delta_precision = prec_pred_rs),
     fixed_covariates = sig_vars,
     predictive = list(auc_full = auc_full,
                        tjur_r2 = tjur_r2,
@@ -1213,7 +1191,7 @@
 
   # metadata
   species_name <- gsub("\\.", " ", species)
-  base_name <- if (!has_spatial) "Non-spatial baseline" else "NSBM"
+  base_name <- if (!has_spatial) "Non-spatial baseline" else "MBM"
   suf <- c()
   if(has_Sre) suf <- c(suf, "Sre")
   if(has_Sshared) suf <- c(suf, "Sshared")
@@ -1297,7 +1275,6 @@
   # intercepts
   int_block <- diag_block$intercepts
   rows <- list()
-  # IGlobal exists only for coupling.intercept = "additive"/"hierarchical"
   if(!is.null(int_block$iGlobal)) {
     rows[["IGlobal (mean ± SD, CI95%)"]] <- int_block$iGlobal
   }
@@ -1320,12 +1297,12 @@
       rows[[paste0("Copy β (", var_name, "GL -> ", var_name, "RE_oh) (mean ± SD)")]] <- int_block$copy_beta_predictors[[nm]]
     }
   }
-  #random_slope predictors: delta_RE (regional deviation from the shared beta_GL) plus its estimated precision, one pair per variable.
-  if(!is.null(int_block$random_slope_delta)) {
-    for(nm in names(int_block$random_slope_delta)) {
+  #nested_shrinkage predictors: delta_RE (regional deviation from the shared beta_GL) plus its estimated precision, one pair per variable.
+  if(!is.null(int_block$nested_shrinkage_delta)) {
+    for(nm in names(int_block$nested_shrinkage_delta)) {
       var_name <- sub("_delta$", "", nm)
-      rows[[paste0("Random slope δ (", var_name, "RE deviation from ", var_name, "GL, mean ± SD, CI95%)")]] <- int_block$random_slope_delta[[nm]]
-      prec_val <- int_block$random_slope_delta_precision[[nm]]
+      rows[[paste0("Random slope δ (", var_name, "RE deviation from ", var_name, "GL, mean ± SD, CI95%)")]] <- int_block$nested_shrinkage_delta[[nm]]
+      prec_val <- int_block$nested_shrinkage_delta_precision[[nm]]
       if(!is.null(prec_val) && prec_val != "—") {
         rows[[paste0("Random slope δ precision (", var_name, ", mean ± SD)")]] <- prec_val
       }
@@ -1473,7 +1450,7 @@
 # -----------------------------
 
 
-#' plot covariates importance
+#' plot covariates importance  #@@@JMB eliminar????
 #' @noRd
 .jmbm_vars_importance <- function(fit) {
 

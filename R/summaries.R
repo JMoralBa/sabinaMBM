@@ -27,11 +27,11 @@ summary.jmbm.inlabru <- function(object, ...) {
   re_tbl <- S$`Random effects`
   print_block("------ Random effects ------", re_tbl)
   if (!is.null(re_tbl) && nrow(re_tbl) > 0) {
-    has_copy_int  <- any(grepl("^Copy \u03b2 \\(IGlobal",        re_tbl$Term))
-    has_copy_pred <- any(grepl("^Copy \u03b2 \\(.+GL ->",        re_tbl$Term))
-    has_rs_delta  <- any(grepl("^Random slope \u03b4",           re_tbl$Term))
+    has_copy_int  <- any(grepl("^Copy \u03b2 \\(IGlobal", re_tbl$Term))
+    has_copy_pred <- any(grepl("^Copy \u03b2 \\(.+GL ->", re_tbl$Term))
+    has_rs_delta  <- any(grepl("^Random slope \u03b4", re_tbl$Term))
     if (has_copy_int || has_copy_pred || has_rs_delta) {
-      cat("  Note: IGlobal / IRegional: scale-specific intercepts (log-odds scale).")
+      cat("  Note: IGlobal / IRegional: scale-specific intercepts (log-odds scale).\n")
       if (has_copy_int)
         cat(" Copy \u03b2 (IGlobal \u2192 IRegional): scaling of the hierarchical intercept copy",
             "(ordered_hierarchical); values near 1 indicate strong regional inheritance.")
