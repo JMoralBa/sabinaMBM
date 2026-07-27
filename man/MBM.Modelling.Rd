@@ -184,7 +184,7 @@ selective clustering of two diseases. \emph{Journal of the Royal Statistical Soc
 Series A}, 164(1), 73-85.
 
 Figueira, M., Conesa, D. & Lopez-Quilez, A. (2024). Bayesian feedback in the framework
-of ecological sciences. \emph{Ecological Informatics}. (Verificado por búsqueda, no de memoria.)
+of ecological sciences. \emph{Ecological Informatics}. (Verificado por busqueda, no de memoria.)
 }
 \seealso{
 \code{\link{create_mesh}}, \code{\link{plot.jmbm.inlabru}}, \code{\link{summary.jmbm.inlabru}}

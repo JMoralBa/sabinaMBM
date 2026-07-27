@@ -1,6 +1,21 @@
+
+#' @importFrom stats aggregate as.formula binomial coef dist ks.test lm predict qlogis qqnorm reorder sd var
+#' @importFrom utils write.csv
+#' @importFrom sf st_sfc
+NULL
+# global vars check
+utils::globalVariables(c(
+  "x", "y", "dist_mid", "rho", "resid", "intercept", 
+  "significant", "density", "theoretical", "label", "type"
+))
+
+
+# -----------------------------
+
+
 #' Logs
 #' @noRd
-.info <- function(msg, verbose = TRUE) if(verbose) message("ℹ ", msg)
+.info <- function(msg, verbose = TRUE) if(verbose) message("\u2139 ", msg)
 .check <- function(msg, verbose = TRUE) if(verbose) message("  ✓ ", msg)
 .item <- function(msg, verbose = TRUE) if(verbose) message("    - ", msg)
 .warn <- function(msg, verbose = TRUE) warning("⚠️  ", msg, call. = FALSE)
@@ -282,8 +297,9 @@
 
     ## ordered_hierarchical: beta_RE = beta_copy * beta_GL via copy= real, beta_copy free (Krainski et al. 2018; Knorr-Held & Best 2001).
     else if(cp_mode == "ordered_hierarchical") {
-      cmpregional <- c(cmpregional,
-        paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(fixed = FALSE, initial = 1)))"))
+      cmpregional <- c(cmpregional,  #@@@JMB prueba
+        #paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(fixed = FALSE, initial = 1)))"))
+        paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(prior = 'normal', param = c(1, 4))))"))
       fregional <- c(fregional, paste0(X, "RE_oh"))
     }
 
@@ -942,7 +958,7 @@
       if(!is.null(sm)) {
         post_df <- rbind(post_df, data.frame(x = sm$x, y = sm$y, par = nm))
       } else {
-        .warn(paste0("Marginal posterior degenerada para '", nm, "'. Se omite de los gráficos de diagnóstico."))
+        .warn(paste0("Degenerate posterior marginal for '", nm, "'."))
       }
     }
   }

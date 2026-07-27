@@ -25,19 +25,22 @@
 #' @param palette Color palette passed to ggplot2::scale_fill_distiller(). Default = "Spectral".
 #' @param title Optional plot title. If NULL, a default title is generated as "Species - type - scope - layer".
 #' @param legend_title Optional legend title. If NULL, it is automatically inferred from the model family and the layer.
+#' @param ... Additional graphical arguments passed to methods.
 #'
 #' @return A ggplot object showing the selected MBM output layer.
 #'
 #' @examples
+#' \dontrun{
 #' # Default: current prediction (mean layer)
 #' plot(myModel)
 #'
 #' ## Sre field
-#' # plot(myModel, which = "pred_Sre", layer = "sd")
+#' plot(myModel, which = "pred_Sre", layer = "sd")
 #'
 #' ## Scenario by index or name
-#' # plot(myModel, which = "new.projections[[1]]")
-#' # plot(myModel, which = "scenario1", layer = "q0.975")
+#' plot(myModel, which = "new.projections[[1]]")
+#' plot(myModel, which = "scenario1", layer = "q0.975")
+#' }
 #'
 #' @seealso \code{\link{MBM.Modelling}}, \code{\link{summary.jmbm.inlabru}}
 #'
@@ -48,7 +51,8 @@ plot.jmbm.inlabru <- function(x,
                               layer = "mean",
                               palette = "Spectral",
                               title = NULL,
-                              legend_title = NULL) {
+                              legend_title = NULL,
+                              ...) {
 
   stopifnot(inherits(x, "jmbm.inlabru"))
 

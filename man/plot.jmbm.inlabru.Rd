@@ -10,7 +10,8 @@
   layer = "mean",
   palette = "Spectral",
   title = NULL,
-  legend_title = NULL
+  legend_title = NULL,
+  ...
 )
 }
 \arguments{
@@ -40,6 +41,8 @@
 \item{title}{Optional plot title. If NULL, a default title is generated as "Species - type - scope - layer".}
 
 \item{legend_title}{Optional legend title. If NULL, it is automatically inferred from the model family and the layer.}
+
+\item{...}{Additional graphical arguments passed to methods.}
 }
 \value{
 A ggplot object showing the selected MBM output layer.
@@ -48,15 +51,17 @@ A ggplot object showing the selected MBM output layer.
 Generates diagnostic plots and spatial prediction maps for objects of class \code{jmbm.inlabru}. Supports current and future suitability maps, spatial field visualizations, posterior marginals, and calibration diagnostics.
 }
 \examples{
+\dontrun{
 # Default: current prediction (mean layer)
 plot(myModel)
 
 ## Sre field
-# plot(myModel, which = "pred_Sre", layer = "sd")
+plot(myModel, which = "pred_Sre", layer = "sd")
 
 ## Scenario by index or name
-# plot(myModel, which = "new.projections[[1]]")
-# plot(myModel, which = "scenario1", layer = "q0.975")
+plot(myModel, which = "new.projections[[1]]")
+plot(myModel, which = "scenario1", layer = "q0.975")
+}
 
 }
 \seealso{

@@ -19,13 +19,13 @@ create_mesh(
 \arguments{
 \item{nsdm_obj}{An object of class \code{nsdm.vinput} as returned by \code{sabinaNSDM::NSDM.SelectCovariates()}.}
 
-\item{edge}{A numeric vector of length 2. Maximum triangle edge lengths for the inner and outer mesh domains (default: \code{c(0.5, 1)}). Units must match the CRS of the input rasters (degrees for geographic CRS, metres for projected CRS). Note: default values (\code{c(0.5, 1)}) assume a geographic CRS in degrees. For projected CRS in metres, scale accordingly (e.g., \code{c(50000, 100000)} for UTM in metres).   #@@JMB los valores por defecto son para crs en grados, habrá que ajustar cosas aquí para cuando los rasters sean metros}
+\item{edge}{A numeric vector of length 2. Maximum triangle edge lengths for the inner and outer mesh domains (default: \code{c(0.5, 1)}). Units must match the CRS of the input rasters (degrees for geographic CRS, metres for projected CRS). Note: default values (\code{c(0.5, 1)}) assume a geographic CRS in degrees. For projected CRS in metres, scale accordingly (e.g., \code{c(50000, 100000)} for UTM in metres).}
 
 \item{offset}{A numeric vector of length 2. Offsets to expand the domain inward and outward from the boundary (default: c(0.25, 0.5)).}
 
 \item{buffer}{A numeric scalar. Amount to buffer (expand) the convex hull before mesh creation (default: 0.01).}
 
-\item{boundary.method}{Character. One of \code{"convex_hull"} (default), \code{"concave_hull"}, or \code{"raster_mask"}. \code{"raster_mask"} is strongly recommended for most applications, particularly for fragmented distributions or coastal species. #@@JMB raster mask funciona bien para fragmentos separados y para hacer predicciones en oceano. Para esto último preguntar a Virgilio si triangulos pequeños en borde del raster es necesario...}
+\item{boundary.method}{Character. One of \code{"convex_hull"} (default), \code{"concave_hull"}, or \code{"raster_mask"}. \code{"raster_mask"} is strongly recommended for most applications, particularly for fragmented distributions or coastal species. #@@JMB raster mask funciona bien para fragmentos separados y para hacer predicciones en oceano. Para esto ultimo preguntar a Virgilio si triangulos pequeños en borde del raster es necesario...}
 
 \item{concavity}{Numeric. Required when \code{boundary.method = "concave_hull"}. Controls how tightly the concave hull wraps the points; lower values (e.g., 2–3) produce tighter boundaries.}
 
@@ -39,7 +39,7 @@ create_mesh(
 An \code{fm_mesh_2d} object (class \code{jmbm.mesh}) suitable for use with \code{INLA} and \code{inlabru} SPDE components. Pass directly to \code{MBM.Modelling(spde.mesh = ...)}. #@@JMB pensar si ponemos clase propia a este objeto (jmbm.mesh??)
 }
 \description{
-Generates a 2D mesh object using the convex hull, concave_hull, or raster_mask of the species presences/absences (plus optional new scenario rasters), from a processed \code{nsdm.vinput} object (output of \code{\link{NSDM.SelectCovariates}}).
+Generates a 2D mesh object using the convex hull, concave_hull, or raster_mask of the species presences/absences (plus optional new scenario rasters), from a processed \code{nsdm.vinput} object (output of \code{\link[sabinaNSDM]{NSDM.SelectCovariates}}).
 }
 \references{
 Lindgren, F., Rue, H. & Lindström, J. (2011). An explicit link between Gaussian fields

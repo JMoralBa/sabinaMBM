@@ -137,7 +137,7 @@
 #' Series A}, 164(1), 73-85.
 #'
 #' Figueira, M., Conesa, D. & Lopez-Quilez, A. (2024). Bayesian feedback in the framework
-#' of ecological sciences. \emph{Ecological Informatics}. (Verificado por búsqueda, no de memoria.)
+#' of ecological sciences. \emph{Ecological Informatics}. (Verificado por busqueda, no de memoria.)
 #'
 #' @export
 MBM.Modelling <- function(jmbm_obj, 
@@ -474,8 +474,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   bg_or_abs_reg <- if(is.null(jmbm_obj$Absences.XY.Regional)) jmbm_obj$Background.XY.Regional else jmbm_obj$Absences.XY.Regional
 
   pp_glo <- rbind(
-    cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),  #@@@JMB jmbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
-    cbind(bg_or_abs_glo, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
+    cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),  #@@@JMB jmbm_obj$Response.Global y Regional habria que generarlos en sabinaNSDM input y arrastrar si hay algo
+    cbind(bg_or_abs_glo, resp = 0L)     # si lo hacemo asi poner algun check con stop/warning para que datos y family sean coherentes
   )
   pp_reg <- rbind(
     cbind(jmbm_obj$SpeciesData.XY.Regional, resp = if(!is.null(jmbm_obj$Response.Regional)) jmbm_obj$Response.Regional else 1L),  
@@ -683,7 +683,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       inla_threads_k <- max(1, floor(n.threads / n_cores_cv))
 
       if(n_cores_cv > 1) {
-        furrr::plan(furrr::multisession, workers = n_cores_cv, quiet = TRUE)
+        future::plan(future::multisession, workers = n_cores_cv, quiet = TRUE)
       }
 
       both_cov <- c(sp_covglo, sp_covreg)
@@ -734,8 +734,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       }
 
       if(n_cores_cv > 1) {
-        cv_metrics_list <- furrr::future_lapply(seq_len(cv.folds), cv_worker, .options = furrr::furrr_options(seed = TRUE))
-        furrr::plan(furrr::sequential) # Reseteo de seguridad al terminar
+        cv_metrics_list <- future.apply::future_lapply(seq_len(cv.folds), cv_worker, future.seed = TRUE)
+        future::plan(future::sequential) # Reset
       } else {
         cv_metrics_list <- lapply(seq_len(cv.folds), cv_worker)
       }
@@ -826,7 +826,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
             raw_glo <- glo_resampled_scenario[[X]]
             
             p_unif <- scale_params_glo[[X]]
-            if(is.null(p_unif)) .stop(paste0("Faltan parámetros de escala globales para: ", X))
             pred_template[[paste0(X, "_glo_res")]]  <- (raw_glo - as.numeric(p_unif$mean)) / as.numeric(p_unif$sd)
             pred_template[[paste0(X, "_reg_anom")]] <- (raw_reg - raw_glo) / as.numeric(p_unif$sd)
           }
