@@ -1,6 +1,6 @@
 #' @name plot.jmbm.inlabru
 #'
-#' @title Plot predictions and spatial fields from a fitted NSBM model
+#' @title Plot predictions and spatial fields from a fitted MBM model
 #'
 #' @description Generates diagnostic plots and spatial prediction maps for objects of class \code{jmbm.inlabru}. Supports current and future suitability maps, spatial field visualizations, posterior marginals, and calibration diagnostics.
 #'
@@ -13,6 +13,11 @@
 #'     \item \code{"hyperparams"}: posterior marginals of SPDE hyperparameters with PC-priors overlaid.
 #'     \item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
 #'     \item \code{"fixed"}: posterior marginals of all fixed effect coefficients, back-transformed to original covariate scale.
+#'     \item \code{"correlogram"}: empirical correlogram of regional model residuals against pairwise distance, used to check for residual spatial autocorrelation not captured by the spatial field(s). Requires Sre or Sshared.
+#'     \item \code{"semivariogram"}: empirical semivariogram of regional model residuals, complementary diagnostic to the correlogram for residual spatial structure. Requires Sre or Sshared.
+#'     \item \code{"Srefields"}: posterior mean maps of the fitted spatial field(s) (Sre and/or Sshared, whichever are present in the model).
+#'     \item \code{"hist"}: histogram of regional model residuals, centred at 0 (or at the mean residual when \code{coupling.intercept = "ordered_hierarchical"}, since the soft-constraint intercept does not force a zero-centred residual distribution).
+#'     \item \code{"qq"}: normal QQ-plot of regional model residuals, for visual assessment of normality.
 #'     \item \code{"pit"}: histogram of Probability Integral Transform values. A uniform distribution indicates good calibration.
 #'     \item \code{"new.projections"}(first scenario), or scenario name as string (e.g. \code{"MRI_ESM2_0_2070_SSP585"}): future/alternative scenario prediction.
 #'   }
@@ -20,19 +25,22 @@
 #' @param palette Color palette passed to ggplot2::scale_fill_distiller(). Default = "Spectral".
 #' @param title Optional plot title. If NULL, a default title is generated as "Species - type - scope - layer".
 #' @param legend_title Optional legend title. If NULL, it is automatically inferred from the model family and the layer.
+#' @param ... Additional graphical arguments passed to methods.
 #'
-#' @return A ggplot object showing the selected NSBM output layer.
+#' @return A ggplot object showing the selected MBM output layer.
 #'
 #' @examples
+#' \dontrun{
 #' # Default: current prediction (mean layer)
 #' plot(myModel)
 #'
 #' ## Sre field
-#' # plot(myModel, which = "pred_Sre", layer = "sd")
+#' plot(myModel, which = "pred_Sre", layer = "sd")
 #'
 #' ## Scenario by index or name
-#' # plot(myModel, which = "new.projections[[1]]")
-#' # plot(myModel, which = "scenario1", layer = "q0.975")
+#' plot(myModel, which = "new.projections[[1]]")
+#' plot(myModel, which = "scenario1", layer = "q0.975")
+#' }
 #'
 #' @seealso \code{\link{MBM.Modelling}}, \code{\link{summary.jmbm.inlabru}}
 #'
@@ -43,7 +51,8 @@ plot.jmbm.inlabru <- function(x,
                               layer = "mean",
                               palette = "Spectral",
                               title = NULL,
-                              legend_title = NULL) {
+                              legend_title = NULL,
+                              ...) {
 
   stopifnot(inherits(x, "jmbm.inlabru"))
 
@@ -57,7 +66,7 @@ plot.jmbm.inlabru <- function(x,
 
   } else if(identical(which, "pred_Sre")) {
     r <- x$current.projections$pred_Sre
-    if(is.null(r)) .stop("No Sre field ('pred_Sre') in this model. Refit with `local.pcprior.range` and `local.pcprior.sigma`.")
+    if(is.null(r)) .stop("No Sre field ('pred_Sre') in this model. Refit with `regional.pcprior.range` and `regional.pcprior.sigma`.")
     scope_label <- "Sre field"
 
   } else if(identical(which, "pred_Sshared")) {
@@ -66,33 +75,12 @@ plot.jmbm.inlabru <- function(x,
     scope_label <- "Sshared field"
 
   } else if(identical(which, "hyperparams")) {
-    marg <- x$marginals$hyperpar
-    if(is.null(marg) || length(marg) == 0)
+    hp <- x$diagnostic_data$hyperparams
+    if(is.null(hp) || is.null(hp$posteriors) || nrow(hp$posteriors) == 0)
       .stop("No hyperparameter marginals in this model. Refit with SPDE priors.")
     species <- gsub("\\.", " ", x$Species.Name)
-    param_labels <- c(
-      "Range for Sre" = "Sre field: Range",
-      "Stdev for Sre" = "Sre field: Sigma",
-      "Range for GLspde" = "Sshared field: Range",
-      "Stdev for GLspde" = "Sshared field: Sigma",
-      "Precision for IGlobal" = "IGlobal: Precision",
-      "Precision for IRegional" = "IRegional: Precision",
-      "Beta for IRegional" = "IRegional: Beta (copy)"
-    )
-    df_list <- lapply(names(marg), function(nm) {
-      m  <- INLA::inla.smarginal(marg[[nm]])
-      label <- if(nm %in% names(param_labels)) param_labels[[nm]] else nm
-      data.frame(x = m$x, y = m$y, param = label)
-    })
-    df <- do.call(rbind, df_list)
-    p <- ggplot2::ggplot(df, ggplot2::aes(x = x, y = y)) +
-      ggplot2::geom_line(colour = "#2E75B6", linewidth = 0.8) +
-      ggplot2::facet_wrap(~ param, scales = "free") +
-      ggplot2::labs(
-        title = if(!is.null(title)) title else paste(species, "| Hyperparameter posteriors"),
-        x = "Value", y = "Density") +
-      ggplot2::theme_minimal()
-    return(p)
+    return(.plot_hyperparams_jmbm(hp$posteriors, hp$prior_ticks,
+                                   title = if(!is.null(title)) title else paste(species, "| Hyperparameters: posterior marginals")))
 
   } else if(identical(which, "intercepts")) {
     marg_r <- x$marginals$random
@@ -121,17 +109,17 @@ plot.jmbm.inlabru <- function(x,
         x = "Value", y = "Density") +
       ggplot2::theme_minimal() +
       ggplot2::theme(
-        legend.position      = c(0.88, 0.88),
-        legend.background    = ggplot2::element_rect(fill = "white", colour = NA),
-        legend.key.size      = ggplot2::unit(0.4, "cm"),
-        legend.text          = ggplot2::element_text(size = 9))
+        legend.position = c(0.88, 0.88),
+        legend.background = ggplot2::element_rect(fill = "white", colour = NA),
+        legend.key.size = ggplot2::unit(0.4, "cm"),
+        legend.text = ggplot2::element_text(size = 9))
 
     return(p)
 
   } else if(identical(which, "fixed")) {
     marg_f <- x$marginals$fixed
-    sp_glo <- x$scale_params_glo
-    sp_reg <- x$scale_params_reg
+    sp_glo <- if (!is.null(x$scale_params_glo)) x$scale_params_glo else x$scale_params
+    sp_reg <- if (!is.null(x$scale_params_reg)) x$scale_params_reg else x$scale_params
     if(is.null(marg_f) || length(marg_f) == 0)
       .stop("No fixed effect marginals in this model.")
     species <- gsub("\\.", " ", x$Species.Name)
@@ -183,7 +171,7 @@ plot.jmbm.inlabru <- function(x,
         x = "Coefficient value", y = "Density") +
       ggplot2::theme_minimal()
 
-    # add "NS" annotation to non-significant panels
+    # add NS annotation to non-significant panels
     if(nrow(ns_labels) > 0) {
       p <- p + ggplot2::geom_text(
         data = ns_labels,
@@ -195,18 +183,43 @@ plot.jmbm.inlabru <- function(x,
     return(p)
 
   } else if(identical(which, "correlogram")) {
-    p <- x$diagnostic_plots$correlogram
-    if(is.null(p))
+    cor_df <- x$diagnostic_data$correlogram
+    if(is.null(cor_df) || nrow(cor_df) == 0)
       .stop("No correlogram available. Refit with Sre or Sshared SPDE.")
-    if(!is.null(title)) p <- p + ggplot2::labs(title = title)
-    return(p)
+    species <- gsub("\\.", " ", x$Species.Name)
+    range_eff <- attr(cor_df, "range_eff")
+    return(.plot_correlogram_jmbm(cor_df, range_eff,
+                                   title = if(!is.null(title)) title else paste(species, "| Residual correlogram")))
 
   } else if(identical(which, "semivariogram")) {
-    p <- x$diagnostic_plots$semivariogram
-    if(is.null(p))
+    sv_df <- x$diagnostic_data$semivariogram
+    if(is.null(sv_df) || nrow(sv_df) == 0)
       .stop("No semivariogram available. Refit with Sre or Sshared SPDE.")
-    if(!is.null(title)) p <- p + ggplot2::labs(title = title)
-    return(p)
+    species <- gsub("\\.", " ", x$Species.Name)
+    range_res_mean <- attr(sv_df, "range_res_mean")
+    range_lat_mean <- attr(sv_df, "range_lat_mean")
+    return(.plot_semivariogram_jmbm(sv_df, range_res_mean, range_lat_mean,
+                                     title = if(!is.null(title)) title else paste(species, "| Empirical semivariogram")))
+
+  } else if(identical(which, "Srefields")) {
+    species <- gsub("\\.", " ", x$Species.Name)
+    ordered_hierarchical <- !is.null(x$args$coupling.intercept) && x$args$coupling.intercept == "ordered_hierarchical"
+    return(.plot_srefields_jmbm(x$current.projections$pred_Sre, x$current.projections$pred_Sshared,
+                                 ordered_hierarchical,
+                                 title = if(!is.null(title)) title else paste(species, "| Sre fields (posterior mean)")))
+
+  } else if(identical(which, "hist")) {
+    df_r <- x$diagnostic_data$hist
+    if(is.null(df_r) || nrow(df_r) == 0)
+      .stop("No residual data available for histogram.")
+    species <- gsub("\\.", " ", x$Species.Name)
+    return(.plot_hist_jmbm(df_r, title = if(!is.null(title)) title else paste(species, "| Residual histogram")))
+
+  } else if(identical(which, "qq")) {
+    df_qq <- x$diagnostic_data$qq
+    if(is.null(df_qq) || nrow(df_qq) == 0)
+      .stop("No residual data available for QQ-plot.")
+    return(.plot_qq_jmbm(df_qq, title = title))
 
   } else if(identical(which, "pit")) {
     pit <- x$pit_values
@@ -360,5 +373,214 @@ plot.jmbm.inlabru <- function(x,
     ggplot2::labs(x = "Longitude", y = "Latitude", title = plot_title) +
     ggplot2::theme_minimal() +
     ggplot2::theme(legend.title = ggplot2::element_text(size = 10))
+}
+
+
+
+# Auxiliary plot builders
+# -----------------------
+
+.plot_hyperparams_jmbm <- function(post_df, prior_ticks, title = NULL) {
+  param_labels <- c(
+    "Range for Sre" = "Sre field: Range",
+    "Stdev for Sre" = "Sre field: Sigma",
+    "Range for GLspde" = "Sshared field: Range",
+    "Stdev for GLspde" = "Sshared field: Sigma",
+    "Precision for IGlobal" = "IGlobal: Precision",
+    "Precision for IRegional" = "IRegional: Precision",
+    "Beta for IRegional" = "IRegional: Beta (copy)"
+  )
+  relabel <- function(x) ifelse(x %in% names(param_labels), param_labels[x], x)
+  post_df$par <- relabel(post_df$par)
+  if(!is.null(prior_ticks) && nrow(prior_ticks) > 0) {
+    prior_ticks$par <- relabel(prior_ticks$par)
+  }
+
+  p <- ggplot2::ggplot(post_df, ggplot2::aes(x = x, y = y)) +
+    ggplot2::geom_line(linewidth = 0.6, colour = "#1a5276") +
+    ggplot2::facet_wrap(~par, scales = "free", ncol = 2)
+  if(!is.null(prior_ticks) && nrow(prior_ticks) > 0) {
+    p <- p +
+      ggplot2::geom_vline(data = prior_ticks, ggplot2::aes(xintercept = x),
+                          linetype = "dashed", linewidth = 0.5, colour = "#c0392b", alpha = 0.7) +
+      ggplot2::geom_text(data = prior_ticks,
+                         ggplot2::aes(x = x, y = y, label = paste0("PC prior (u) = ", round(x, 2))),
+                         vjust = -0.4, hjust = 1, size = 2.8, colour = "#c0392b", angle = 90)
+  }
+  p + ggplot2::labs(
+        title = if(!is.null(title)) title else "Hyperparameters: posterior marginals",
+        subtitle = "Red dashed lines = PC prior (u)",
+        y = "Density", x = "Value") +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, colour = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, colour = "#5d6d7e"),
+      strip.text = ggplot2::element_text(face = "bold", size = 9, colour = "#2c3e50"),
+      axis.title = ggplot2::element_text(size = 9, colour = "#2c3e50"),
+      axis.text = ggplot2::element_text(size = 8),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 0.2, colour = "#d5d8dc"))
+}
+
+.plot_srefields_jmbm <- function(pred_Sre, pred_Sshared, ordered_hierarchical = FALSE, title = NULL) {
+  ras_to_df <- function(r, nm) {
+    rr <- terra::unwrap(r)[["mean"]]
+    df <- terra::as.data.frame(rr, xy = TRUE, na.rm = FALSE)
+    names(df) <- c("x", "y", "mean")
+    df$which <- nm
+    df
+  }
+  maps_df <- data.frame()
+  if(!is.null(pred_Sre)) maps_df <- rbind(maps_df, ras_to_df(pred_Sre, "Sre field"))
+  if(!is.null(pred_Sshared)) maps_df <- rbind(maps_df, ras_to_df(pred_Sshared, "Sshared field"))
+
+  if(nrow(maps_df) == 0) {
+    return(
+      ggplot2::ggplot() +
+        ggplot2::labs(
+          title = if(!is.null(title)) title else "Sre fields (posterior mean)",
+          subtitle = "No Sre or Sshared fields present in the model") +
+        ggplot2::theme_void() +
+        ggplot2::theme(
+          plot.title = ggplot2::element_text(face = "bold", size = 11, colour = "#2c3e50"),
+          plot.subtitle = ggplot2::element_text(size = 9, colour = "#5d6d7e"))
+    )
+  }
+
+  zlim <- range(maps_df$mean, na.rm = TRUE)
+
+  ggplot2::ggplot(maps_df, ggplot2::aes(x = x, y = y, fill = mean)) +
+    ggplot2::geom_raster(na.rm = TRUE) +
+    ggplot2::scale_fill_gradient2(
+      low = "#c0392b", mid = "white", high = "#1a5276",
+      midpoint = 0, limits = zlim, na.value = "white",
+      oob = scales::squish) +
+    ggplot2::coord_equal(expand = FALSE) +
+    ggplot2::facet_wrap(~which, ncol = 2, scales = "fixed") +
+    ggplot2::labs(
+      title = if(!is.null(title)) title else "Sre fields (posterior mean)",
+      subtitle = "Red = below average, Blue = above average (centered at zero)",
+      fill = "Posterior\nmean") +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, colour = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, colour = "#5d6d7e"),
+      strip.text = ggplot2::element_text(face = "bold", size = 9, colour = "#2c3e50"),
+      axis.title = ggplot2::element_blank(), axis.text = ggplot2::element_blank(),
+      axis.ticks = ggplot2::element_blank(), panel.grid = ggplot2::element_blank(),
+      panel.border = ggplot2::element_blank(), panel.background = ggplot2::element_blank(),
+      strip.background = ggplot2::element_blank(), plot.background = ggplot2::element_blank(),
+      legend.position = "bottom",
+      legend.key.height = ggplot2::unit(0.3, "cm"), legend.key.width = ggplot2::unit(1.2, "cm"),
+      legend.title = ggplot2::element_text(size = 9, colour = "#2c3e50"),
+      legend.text = ggplot2::element_text(size = 8))
+}
+
+.plot_correlogram_jmbm <- function(cor_df, range_eff = NULL, title = NULL) {
+  p <- ggplot2::ggplot(cor_df, ggplot2::aes(x = dist_mid, y = rho)) +
+    ggplot2::geom_hline(yintercept = 0, linewidth = 0.3, linetype = "dashed", colour = "grey50") +
+    ggplot2::geom_point(na.rm = TRUE, size = 1.2, colour = "#1a5276") +
+    ggplot2::geom_line(na.rm = TRUE, colour = "#1a5276", linewidth = 0.6)
+  if(!is.null(range_eff) && is.finite(range_eff)) {
+    p <- p +
+      ggplot2::geom_vline(xintercept = range_eff, linetype = "dashed", colour = "#c0392b", alpha = 0.7) +
+      ggplot2::annotate("text", x = range_eff, y = max(cor_df$rho, na.rm = TRUE),
+                       label = "Model range", angle = 90, vjust = -0.8, hjust = 0.9,
+                       colour = "#c0392b", size = 3)
+  }
+  p + ggplot2::labs(
+        title = if(!is.null(title)) title else "Residual correlogram (residuals: obs \u2212 fitted mean)",
+        subtitle = if(!is.null(range_eff) && is.finite(range_eff))
+          paste0("Model range \u2248 ", round(range_eff, 3), " (map units)\n(distance where correlation vanishes)")
+        else "No Sre/Sshared field: full extent shown",
+        x = "Distance (map units)", y = "Residual correlation") +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, colour = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, colour = "#5d6d7e"),
+      strip.text = ggplot2::element_text(face = "bold", size = 9, colour = "#2c3e50"),
+      axis.title.x = ggplot2::element_text(size = 9, colour = "#2c3e50", margin = ggplot2::margin(t = 8)),
+      axis.title.y = ggplot2::element_text(size = 9, colour = "#2c3e50", margin = ggplot2::margin(r = 8)),
+      axis.text = ggplot2::element_text(size = 8, colour = "#2c3e50"),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 0.2, colour = "#d5d8dc"))
+}
+
+.plot_hist_jmbm <- function(df_r, title = NULL) {
+  center_label <- attr(df_r, "center_label")
+  line_x <- attr(df_r, "line_x")
+  ggplot2::ggplot(df_r, ggplot2::aes(x = resid)) +
+    ggplot2::geom_histogram(bins = 30, fill = "#1a5276", colour = "white", alpha = 0.8) +
+    ggplot2::geom_vline(xintercept = 0, linetype = "dashed", colour = "#c0392b", linewidth = 0.4) +
+    ggplot2::annotate("text", x = line_x, y = Inf, label = center_label,
+                     angle = 90, vjust = -0.8, hjust = 1.2, size = 2.8, colour = "#c0392b") +
+    ggplot2::labs(
+      title = if(!is.null(title)) title else "Residual histogram (residuals: obs \u2212 fitted mean)",
+      subtitle = paste0("Distribution of residuals\n(dashed line = ", center_label, ")"),
+      x = "Residuals", y = "Frequency") +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, colour = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, colour = "#5d6d7e"),
+      axis.title.x = ggplot2::element_text(size = 9, colour = "#2c3e50", margin = ggplot2::margin(t = 8)),
+      axis.title.y = ggplot2::element_text(size = 9, colour = "#2c3e50", margin = ggplot2::margin(r = 8)),
+      axis.text = ggplot2::element_text(size = 8, colour = "#2c3e50"),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 0.2, colour = "#d5d8dc"),
+      plot.background = ggplot2::element_blank())
+}
+
+.plot_qq_jmbm <- function(df_qq, title = NULL) {
+  ggplot2::ggplot(df_qq, ggplot2::aes(x = theoretical, y = sample)) +
+    ggplot2::geom_point(colour = "#1a5276", size = 1.3, alpha = 0.8) +
+    ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "#c0392b", linewidth = 0.4) +
+    ggplot2::labs(
+      title = if(!is.null(title)) title else "Residual QQ-plot",
+      subtitle = "Residuals vs. theoretical quantiles\n(dashed = normal expectation)",
+      x = "Theoretical quantiles (Normal)", y = "Sample quantiles (residuals)") +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, colour = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, colour = "#5d6d7e"),
+      axis.title.x = ggplot2::element_text(size = 9, colour = "#2c3e50", margin = ggplot2::margin(t = 8)),
+      axis.title.y = ggplot2::element_text(size = 9, colour = "#2c3e50", margin = ggplot2::margin(r = 8)),
+      axis.text = ggplot2::element_text(size = 8, colour = "#2c3e50"),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 0.2, colour = "#d5d8dc"),
+      plot.background = ggplot2::element_blank())
+}
+
+.plot_semivariogram_jmbm <- function(sv_df, range_res_mean = NULL, range_lat_mean = NULL, title = NULL) {
+  p <- ggplot2::ggplot(sv_df, ggplot2::aes(x = dist, y = gamma)) +
+    ggplot2::geom_point(colour = "#1a5276", size = 1.5, alpha = 0.8) +
+    ggplot2::geom_line(colour = "#1a5276", linewidth = 0.6, alpha = 0.8) +
+    ggplot2::labs(
+      title = if(!is.null(title)) title else "Empirical semivariogram (residuals: obs \u2212 fitted mean)",
+      subtitle = " ",
+      x = "Distance (map units)", y = "Semivariance \u03b3(h)") +
+    ggplot2::theme_minimal(base_size = 10) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold", size = 11, colour = "#2c3e50"),
+      plot.subtitle = ggplot2::element_text(size = 9, colour = "#5d6d7e"),
+      axis.title.x = ggplot2::element_text(size = 9, colour = "#2c3e50", margin = ggplot2::margin(t = 8)),
+      axis.title.y = ggplot2::element_text(size = 9, colour = "#2c3e50", margin = ggplot2::margin(r = 8)),
+      axis.text = ggplot2::element_text(size = 8, colour = "#2c3e50"),
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major = ggplot2::element_line(linewidth = 0.2, colour = "#d5d8dc"))
+  if(!is.null(range_res_mean) && is.finite(range_res_mean)) {
+    p <- p + ggplot2::geom_vline(xintercept = range_res_mean, linetype = "dashed", colour = "#c0392b", linewidth = 0.5) +
+      ggplot2::geom_text(
+        data = data.frame(x = range_res_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sre range"),
+        ggplot2::aes(x = x, y = y, label = label),
+        colour = "#c0392b", angle = 90, hjust = 1, vjust = -0.5, size = 3)
+  }
+  if(!is.null(range_lat_mean) && is.finite(range_lat_mean)) {
+    p <- p + ggplot2::geom_vline(xintercept = range_lat_mean, linetype = "dashed", colour = "#2980b9", linewidth = 0.5) +
+      ggplot2::geom_text(
+        data = data.frame(x = range_lat_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sshared range"),
+        ggplot2::aes(x = x, y = y, label = label),
+        colour = "#2980b9", angle = 90, hjust = 1, vjust = -0.5, size = 3)
+  }
+  p
 }
 

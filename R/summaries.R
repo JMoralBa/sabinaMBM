@@ -24,8 +24,27 @@ summary.jmbm.inlabru <- function(object, ...) {
   print_block("------ Model metadata ------", S$Metadata)
   print_block("------ Model fit (Bayesian criteria) ------", S$`Model fit`)
   print_block("------ Hyperparameters ------", S$Hyperparameters)
-  print_block("------ Intercepts ------", S$Intercepts)
-
+  re_tbl <- S$`Random effects`
+  print_block("------ Random effects ------", re_tbl)
+  if (!is.null(re_tbl) && nrow(re_tbl) > 0) {
+    has_copy_int  <- any(grepl("^Copy \u03b2 \\(IGlobal", re_tbl$Term))
+    has_copy_pred <- any(grepl("^Copy \u03b2 \\(.+GL ->", re_tbl$Term))
+    has_rs_delta  <- any(grepl("^Random slope \u03b4", re_tbl$Term))
+    if (has_copy_int || has_copy_pred || has_rs_delta) {
+      cat("  Note: IGlobal / IRegional: scale-specific intercepts (log-odds scale).\n")
+      if (has_copy_int)
+        cat(" Copy \u03b2 (IGlobal \u2192 IRegional): scaling of the hierarchical intercept copy",
+            "(ordered_hierarchical); values near 1 indicate strong regional inheritance.")
+      if (has_copy_pred)
+        cat(" Copy \u03b2 (varGL \u2192 varRE_oh): per-variable scaling coefficient of the",
+            "ordered-hierarchical predictor constraint.")
+      if (has_rs_delta)
+        cat(" Random slope \u03b4: regional deviation from \u03b2GL in native Z-scale of X_RE",
+            "(NOT back-transformed). Implied regional effect = (\u03b2GL_Z + \u03b4_Z) / \u03c3_RE.",
+            "Precision row: IID prior precision on \u03b4; higher = stronger shrinkage toward \u03b2GL.")
+      cat("\n\n")
+    }
+  }
   fe <- S$`Fixed effects`
   if (!is.null(fe) && nrow(fe) > 0 && "coef" %in% names(fe)) {
     cat("------ Fixed effects ------\n")

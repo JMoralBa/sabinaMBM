@@ -2,7 +2,7 @@
 % Please edit documentation in R/plot_jmbm.R
 \name{plot.jmbm.inlabru}
 \alias{plot.jmbm.inlabru}
-\title{Plot predictions and spatial fields from a fitted NSBM model}
+\title{Plot predictions and spatial fields from a fitted MBM model}
 \usage{
 \method{plot}{jmbm.inlabru}(
   x,
@@ -10,7 +10,8 @@
   layer = "mean",
   palette = "Spectral",
   title = NULL,
-  legend_title = NULL
+  legend_title = NULL,
+  ...
 )
 }
 \arguments{
@@ -24,6 +25,11 @@
 \item \code{"hyperparams"}: posterior marginals of SPDE hyperparameters with PC-priors overlaid.
 \item \code{"intercepts"}: posterior marginals of IGlobal and IRegional intercepts.
 \item \code{"fixed"}: posterior marginals of all fixed effect coefficients, back-transformed to original covariate scale.
+\item \code{"correlogram"}: empirical correlogram of regional model residuals against pairwise distance, used to check for residual spatial autocorrelation not captured by the spatial field(s). Requires Sre or Sshared.
+\item \code{"semivariogram"}: empirical semivariogram of regional model residuals, complementary diagnostic to the correlogram for residual spatial structure. Requires Sre or Sshared.
+\item \code{"Srefields"}: posterior mean maps of the fitted spatial field(s) (Sre and/or Sshared, whichever are present in the model).
+\item \code{"hist"}: histogram of regional model residuals, centred at 0 (or at the mean residual when \code{coupling.intercept = "ordered_hierarchical"}, since the soft-constraint intercept does not force a zero-centred residual distribution).
+\item \code{"qq"}: normal QQ-plot of regional model residuals, for visual assessment of normality.
 \item \code{"pit"}: histogram of Probability Integral Transform values. A uniform distribution indicates good calibration.
 \item \code{"new.projections"}(first scenario), or scenario name as string (e.g. \code{"MRI_ESM2_0_2070_SSP585"}): future/alternative scenario prediction.
 }}
@@ -35,23 +41,27 @@
 \item{title}{Optional plot title. If NULL, a default title is generated as "Species - type - scope - layer".}
 
 \item{legend_title}{Optional legend title. If NULL, it is automatically inferred from the model family and the layer.}
+
+\item{...}{Additional graphical arguments passed to methods.}
 }
 \value{
-A ggplot object showing the selected NSBM output layer.
+A ggplot object showing the selected MBM output layer.
 }
 \description{
 Generates diagnostic plots and spatial prediction maps for objects of class \code{jmbm.inlabru}. Supports current and future suitability maps, spatial field visualizations, posterior marginals, and calibration diagnostics.
 }
 \examples{
+\dontrun{
 # Default: current prediction (mean layer)
 plot(myModel)
 
 ## Sre field
-# plot(myModel, which = "pred_Sre", layer = "sd")
+plot(myModel, which = "pred_Sre", layer = "sd")
 
 ## Scenario by index or name
-# plot(myModel, which = "new.projections[[1]]")
-# plot(myModel, which = "scenario1", layer = "q0.975")
+plot(myModel, which = "new.projections[[1]]")
+plot(myModel, which = "scenario1", layer = "q0.975")
+}
 
 }
 \seealso{

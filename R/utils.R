@@ -1,6 +1,21 @@
+
+#' @importFrom stats aggregate as.formula binomial coef dist ks.test lm predict qlogis qqnorm reorder sd var
+#' @importFrom utils write.csv
+#' @importFrom sf st_sfc
+NULL
+# global vars check
+utils::globalVariables(c(
+  "x", "y", "dist_mid", "rho", "resid", "intercept", 
+  "significant", "density", "theoretical", "label", "type"
+))
+
+
+# -----------------------------
+
+
 #' Logs
 #' @noRd
-.info <- function(msg, verbose = TRUE) if(verbose) message("ℹ ", msg)
+.info <- function(msg, verbose = TRUE) if(verbose) message("\u2139 ", msg)
 .check <- function(msg, verbose = TRUE) if(verbose) message("  ✓ ", msg)
 .item <- function(msg, verbose = TRUE) if(verbose) message("    - ", msg)
 .warn <- function(msg, verbose = TRUE) warning("⚠️  ", msg, call. = FALSE)
@@ -56,9 +71,8 @@
   vars_glo <- if (!is.null(sp_covglo)) names(sp_covglo) else character(0)
   vars_reg <- if (!is.null(sp_covreg)) names(sp_covreg) else character(0)
 
-  # Phase 1: unified variables (shared + coupled with scale_decomposed or bayesian_feedback)
-  # Use global statistics for BOTH rasters. This places X_GL and X_RE in the
-  # same Z-space, eliminating COS artifacts in cross-scale coefficient transfer.
+  # unified variables (shared + coupled with scale_decomposed or bayesian_feedback)
+  # Use global statistics for both rasters. X_GL and X_RE in the same Z-space, eliminating COS artifacts in cross-scale coefficient transfer.
   for (v in unified_vars) {
     if (!(v %in% vars_glo)) {
       .warn(paste0("Unified standardization requested for '", v,
@@ -66,13 +80,13 @@
       next
     }
     m_glo <- terra::global(sp_covglo[[v]], "mean", na.rm = TRUE)[1, 1]
-    s_glo <- terra::global(sp_covglo[[v]], "sd",   na.rm = TRUE)[1, 1]
+    s_glo <- terra::global(sp_covglo[[v]], "sd", na.rm = TRUE)[1, 1]
 
 
     if (is.na(s_glo) || s_glo <= 1e-10) {
       .warn(paste0("Variable '", v, "' has near-zero global variance. Centering only."))
       if (standardize_global) sp_covglo[[v]] <- sp_covglo[[v]] - m_glo
-      if (v %in% vars_reg)    sp_covreg[[v]] <- sp_covreg[[v]] - m_glo
+      if (v %in% vars_reg) sp_covreg[[v]] <- sp_covreg[[v]] - m_glo
       scale_params_glo[[v]] <- list(mean = m_glo, sd = NA_real_)
       scale_params_reg[[v]] <- list(mean = m_glo, sd = NA_real_, unified = TRUE)
     } else {
@@ -83,7 +97,7 @@
     }
   }
 
-  # Phase 2: non-unified variables — independent standardization
+  # non-unified variables. Independent standardization
   if (standardize_global) {
     non_unif_glo <- setdiff(vars_glo, unified_vars)
     if (length(non_unif_glo) > 0) {
@@ -124,8 +138,7 @@
 #' @noRd
 .build_likelihoods <- function(fam, lnk, rhs_glo, rhs_reg,
                                pp_glo, pp_reg, bdy_glo, bdy_reg, dom,
-                               coupling.intercept,
-                               w_glo = NULL, w_reg = NULL) {
+                               coupling.intercept) {
   lik_glo <- NULL
   if(fam == "cp") {
     pres_glo <- if(!is.null(coupling.intercept)) pp_glo[pp_glo$resp != 0L, ] else NULL
@@ -146,14 +159,12 @@
         family = fam,
         formula = as.formula(paste0("resp ~ ", rhs_glo)),
         data = pp_glo, samplers = bdy_glo, domain = dom,
-        weights = w_glo,
         control.family = list(link = lnk))
     }
     lik_reg <- inlabru::like(
       family = fam,
       formula = as.formula(paste0("resp ~ ", rhs_reg)),
       data = pp_reg, samplers = bdy_reg, domain = dom,
-      weights = w_reg,
       control.family = list(link = lnk))
   }
   list(lik_glo = lik_glo, lik_reg = lik_reg)
@@ -172,6 +183,7 @@
                  sp_covreg,
                  covariate.effects = NULL,
                  coupling.predictors = NULL,
+                 slope_delta_prior = NULL,
                  pp_glo_sf = NULL,
                  pp_reg_sf = NULL) {
 
@@ -181,9 +193,7 @@
 
   #cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
 
-  # Build rw2 mesh using fmesher::fm_mesh_1d — replaces manual thin_knots + inla.group
-  # fm_mesh_1d handles spacing automatically, avoiding singular matrices
-  # n_knots=100 ensures ≥5-8 obs/knot (stable per Gómez-Rubio 2020). 
+  # Build rw2 mesh using fmesher::fm_mesh_1d
   .build_rw2_values <- function(rast_layer, coords, n_knots = 100L) {
     vals <- suppressWarnings(as.numeric(terra::extract(rast_layer, coords)[, 1]))
     vals <- vals[is.finite(vals)]
@@ -232,8 +242,15 @@
     specX <- spec_glo[[X]]
     if(specX$model == "drop") next
     if(specX$model == "linear") {
-      cmpglobal <- c(cmpglobal,
-                     paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'linear')"))
+      if(cp_mode %in% c("nested_shrinkage", "ordered_hierarchical")) {
+           cmpglobal <- c(cmpglobal,
+                           paste0(X, "GL(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjglo,
+                              ", sf::st_transform(.data., terra::crs(", spobjglo,
+                              ")), method = 'bilinear', ID = FALSE)[['", X, "']]), hyper = list(prec = list(initial = -10, fixed = TRUE)))"))
+        } else {
+          cmpglobal <- c(cmpglobal,
+                         paste0(X, "GL(main = ", spobjglo, ", main_layer = '", X, "', model = 'linear')"))
+      }
     } else if(specX$model == "rw2") {
     mesh_1d <- .build_rw2_values(sp_covglo[[X]], coords_all)
     cmpglobal <- c(cmpglobal,
@@ -270,13 +287,19 @@
       fregional <- c(fregional, paste0(X, "GL_glo_res"), paste0(X, "RE_reg_anom"))
     }
 
-    # ordered_hierarchical: soft constraint beta_RE ~ N(1, 0.5^2)
-    # mean.linear=1 with standardized covariates encourages regional effect to mirror global scale.
-    #@@@JMB!! PENDIENTE consultar con Virgilio: La version A (actual) con prior fijo N(1, 0.5^2) funciona pero es soft constraint, no jerarquía real (beta_RE no copia beta_GL). 
-       # La versión B (copy real sobre efecto lineal) en teoría permite copiar efectos lineales (beta_RE|beta_GL~N(beta_GL,tau) usando el truco idd de un solo grupo de Krainski et al 2008 sec 1.6.2, poniendo f(id_var, covariate_values, model = "iid", copy = "XGL", fixed = FALSE). Eso haría un beta_copy por variable igual que para el intercepto. jerarquia real. El problema es que se me rompe. Pendiente verificar si es por strategy eb o por linear effects o q????
-    else if(cp_mode == "ordered_hierarchical") {
+    ## nested_shrinkage: beta_RE = beta_GL (shared via copy= real, fixed=TRUE) + delta_RE, delta_RE ~ N(0, sigma_delta^2).
+    else if(cp_mode == "nested_shrinkage") {
       cmpregional <- c(cmpregional,
-        paste0(X, "RE_oh(main = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), model = 'linear', mean.linear = 1, prec.linear = 4)"))
+        paste0(X, "GL_copy_reg(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(fixed = TRUE, initial = 1)))"),
+        paste0(X, "_delta(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), ", slope_delta_prior, ")"))
+      fregional <- c(fregional, paste0(X, "GL_copy_reg"), paste0(X, "_delta"))
+    }
+
+    ## ordered_hierarchical: beta_RE = beta_copy * beta_GL via copy= real, beta_copy free (Krainski et al. 2018; Knorr-Held & Best 2001).
+    else if(cp_mode == "ordered_hierarchical") {
+      cmpregional <- c(cmpregional,  #@@@JMB prueba
+        #paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(fixed = FALSE, initial = 1)))"))
+        paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(prior = 'normal', param = c(1, 4))))"))
       fregional <- c(fregional, paste0(X, "RE_oh"))
     }
 
@@ -314,7 +337,7 @@
 # -----------------------------
 
 
-#' Fit NSBM sequentially or jointly
+#' Fit MBM sequentially or jointly
 #' @noRd
 .fit_jmbm <- function(cmp, lik_list, coupling.intercept, 
                       coupling.predictors, needs_feedback, 
@@ -340,7 +363,7 @@
       }
     }
 
-    # fit global model using ONLY the global likelihood
+    # fit global model using only the global likelihood
     .info("Sequential bayesian feedback — Fitting global model to extract posteriors...")
     fit_glo <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[1]]), list(options = bru_opts)))
 
@@ -395,7 +418,7 @@
       }
     }
     
-    # fit using ONLY regional likelihood
+    # fit using only regional likelihood
     fit <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[length(lik_list)]]), list(options = bru_opts)))
     return(fit)
     
@@ -439,14 +462,9 @@
     if(spec == "drop") { 
       return(list(model = "drop", u = NA, alpha = NA))
     } 
-    #if(spec == "rw2") {
-    #  .stop(paste0("Invalid RW2 specification in `", path_label, "`.\n",
-    #               "   RW2 must be expressed as a list: list(model='rw2', u=..., alpha=...).\n",
-    #               "   For linear effects use 'linear'; to exclude use 'drop'."))
-    #} 
     if(spec == "rw2") {
       # defaults (u=5, alpha=0.01)
-      return(list(model = "rw2", u = 5, alpha = 0.01))
+      return(list(model = "rw2", u = 0.5, alpha = 0.01))
     }
     .stop(paste0("Invalid keyword '", spec, "' in `", path_label, "`.\n",
                  "   Valid options: 'linear', 'drop', or list(model='rw2', u=..., alpha=...)."))
@@ -460,13 +478,7 @@
                    "   For linear effects use 'linear'; to exclude use 'drop'."))
     }
     if(identical(spec$model, "rw2")) {
-      # RW2 reequires u alpha
-      #if(is.null(spec$u) || is.null(spec$alpha)) {
-      #  .stop(paste0("Incomplete RW2 specification in `", path_label, "`.\n",
-      #                                           "   Provide both `u` and `alpha`."))
-      #}
-      #return(list(model = "rw2", u = spec$u, alpha = spec$alpha))
-      u_val  <- if(is.null(spec$u))  5 else spec$u  #@@@JMB default o cusomizable?
+      u_val  <- if(is.null(spec$u)) 5 else spec$u        #@@@JMB default o cusomizable?
       alpha_val <- if(is.null(spec$alpha)) 0.01 else spec$alpha
       return(list(model = "rw2", u = u_val, alpha = alpha_val))
     }
@@ -506,7 +518,7 @@
   
   # unpooled for vars only in regional
   if(!is.null(vg) && !(var %in% vg) && !is_explicit) {
-    if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback")) {
+    if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "nested_shrinkage")) {
       mode_val <- "unpooled"
     }
   }
@@ -597,6 +609,16 @@
 
 
 # -----------------------------
+#' format mean, sd and 95% CI strings
+#' @noRd
+.mean_sd_str <- function(df) {
+  if(is.null(df) || nrow(df) == 0) return("—")
+  paste0(round(df$mean[1], 5), " ± ", round(df$sd[1], 5), " (", 
+         round(df$`0.025quant`[1], 5), ", ", round(df$`0.975quant`[1], 5), ")")
+}
+
+
+# -----------------------------
 
 
 #' diagnostics
@@ -653,12 +675,23 @@
     }
   prec_IGlobal <- if("Precision for IGlobal" %in% rownames(hyper)) format_hyper("Precision for IGlobal") else "—"
   beta_IRegional <- if("Beta for IRegional" %in% rownames(hyper)) format_hyper("Beta for IRegional") else "—"
-  # betas from ordered_hierarchical predictor copies: "Beta for bio1RE_oh", etc.
   beta_pred_oh <- if(!is.null(hyper)) {
     oh_rows <- rownames(hyper)[grepl("^Beta for .+RE_oh$", rownames(hyper))]
     if(length(oh_rows) > 0) {
       stats::setNames(lapply(oh_rows, format_hyper),oh_rows)
     } else NULL
+  } else NULL
+
+  # nested_shrinkage
+  rs_delta_names <- names(fit$summary.random)[grepl("^.+_delta$", names(fit$summary.random))]
+  beta_pred_rs <- if(length(rs_delta_names) > 0) {
+    stats::setNames(lapply(rs_delta_names, function(nm) .mean_sd_str(fit$summary.random[[nm]])), rs_delta_names)
+  } else NULL
+  prec_pred_rs <- if(length(rs_delta_names) > 0 && !is.null(hyper)) {
+    stats::setNames(lapply(rs_delta_names, function(nm) {
+      hp_name <- paste0("Precision for ", nm)
+      if(hp_name %in% rownames(hyper)) format_hyper(hp_name) else "—"
+    }), rs_delta_names)
   } else NULL
 
   # Sre and Sshared overlap?
@@ -667,13 +700,8 @@
   }
 
   # Intercepts
-  mean_sd_str <- function(df) {
-    if(is.null(df) || nrow(df) == 0) return("—")
-    paste0(round(df$mean[1], 5), " ± ", round(df$sd[1], 5), " (", 
-           round(df$`0.025quant`[1], 5), ", ", round(df$`0.975quant`[1], 5), ")")
-  }
-  iGlobal <- mean_sd_str(fit$summary.random$IGlobal)
-  iRegional <- mean_sd_str(fit$summary.random$IRegional)
+  iGlobal <- .mean_sd_str(fit$summary.random$IGlobal)
+  iRegional <- .mean_sd_str(fit$summary.random$IRegional)
 
   # significant vars
   sig_vars <- .signif_vars(fit,  scale_params_glo = scale_params_glo,  scale_params_reg = scale_params_reg)
@@ -724,7 +752,6 @@
       range_lat_mean
     } else {
     # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal.   #@@@JMB bien?
-    # conservative heuristic for spatial structure estimation.
       bb <- apply(xy, 2, range, na.rm = TRUE)
       sqrt(sum((bb[2,] - bb[1,])^2)) / 4
     }   
@@ -807,10 +834,10 @@
   )
 
   # variance and range ratios
-  # sigma Sshared mean / sigma Sre mean > 1.5 ==> Sshared field dominates (Blangiardo & Cameletti 2015)
+  # sigma Sshared mean / sigma Sre mean > 1.5 --> Sshared field dominates (Blangiardo & Cameletti 2015)
   sigma_ratio <- if(has_Sre && has_Sshared && is.finite(sigma_lat_mean) && is.finite(sigma_res_mean) && sigma_res_mean > 0)
     sigma_lat_mean / sigma_res_mean else "—"
-  # 0.5 < range_Sshared / range_Sre < 2 ==> poor scale separation (Bakka et al. 2018)
+  # 0.5 < range_Sshared / range_Sre < 2 --> poor scale separation (Bakka et al. 2018)
   range_ratio <- if(has_Sre && has_Sshared && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
     range_lat_mean / range_res_mean else "—"
 
@@ -833,8 +860,8 @@
       ssi <- range_penalty * sigma_penalty
     }
 
-    # Posterior field redundancy r^2(S_RE, S_shared). Squared Pearson correlation between posterior mean nodal values of S_RE and S_shared
-          # High values (> 0.5) indicate both fields capture the same spatial pattern (redundancy).       #@@@JMB bien?
+    # Posterior field redundancy r^2(S_RE, S_shared). 
+    # r^2 > 0.5 indicates both fields capture the same spatial pattern (redundancy).       #@@@JMB bien?
     resid_Sre <- fit$summary.random$Sre$mean
     resid_Sshared <- fit$summary.random$Sshared$mean
     if(!is.null(resid_Sre) && !is.null(resid_Sshared)) {
@@ -923,7 +950,7 @@
   }
 
   # plots
-  # pA Hyperparameters: posterior marginals + PC priors
+  # Hyperparameters: posterior marginals + PC priors
   post_df <- data.frame()
   if(!is.null(fit$marginals.hyperpar)) {
     for(nm in names(fit$marginals.hyperpar)) {
@@ -931,12 +958,11 @@
       if(!is.null(sm)) {
         post_df <- rbind(post_df, data.frame(x = sm$x, y = sm$y, par = nm))
       } else {
-        .warn(paste0("Marginal posterior degenerada para '", nm, "'. Se omite de los gráficos de diagnóstico."))
+        .warn(paste0("Degenerate posterior marginal for '", nm, "'."))
       }
     }
   }
   if(nrow(post_df) == 0) post_df <- NULL
-  # Create prior reference ticks for vertical lines
   prior_ticks <- do.call(rbind, Filter(Negate(is.null), list(
     if(!is.null(priors$regional.pcprior.range)) data.frame(x = priors$regional.pcprior.range[1], par = "Range for Sre"),
     if(!is.null(priors$regional.pcprior.sigma)) data.frame(x = priors$regional.pcprior.sigma[1], par = "Stdev for Sre"),
@@ -948,110 +974,10 @@
     prior_ticks$y <- ymax_fac$y[match(prior_ticks$par, ymax_fac$par)] * 0.95
   }
 
-  pA <- ggplot2::ggplot(post_df, ggplot2::aes(x = x, y = y)) +
-    ggplot2::geom_line(linewidth = 0.6, color = "#1a5276") +
-    ggplot2::facet_wrap(~par, scales = "free", ncol = 2) +
-    ggplot2::geom_vline(data = prior_ticks, ggplot2::aes(xintercept = x),
-                        linetype = "dashed", linewidth = 0.5, color = "#c0392b", alpha = 0.7) +
-    ggplot2::geom_text(data = prior_ticks,
-                       ggplot2::aes(x = x, y = y, 
-                       label = paste0("PC prior (u) = ", round(x, 2))),
-                       vjust = -0.4, hjust = 1, size = 2.8,
-                       color = "#c0392b", angle = 90) +
-    ggplot2::labs(
-      title = "A) Hyperparameters: posterior marginals",
-      subtitle = "Red dashed lines = PC prior (u)",
-      y = "Density", x = "Value"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
-      axis.title = ggplot2::element_text(size = 9, color = "#2c3e50"),
-      axis.text = ggplot2::element_text(size = 8),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
-    )
-
-  # pB Sre vs Sshared fields
-  ras_to_df <- function(r, nm) {
-    rr <- terra::unwrap(r)[["mean"]]
-    df <- terra::as.data.frame(rr, xy = TRUE, na.rm = FALSE)
-    names(df) <- c("x", "y", "mean")
-    df$which <- nm
-    df
-  }
-  maps_df <- data.frame()
-  if(!is.null(pred_Sre)) maps_df <- rbind(maps_df, ras_to_df(pred_Sre, "Sre field"))
-  if(!is.null(pred_Sshared)) maps_df <- rbind(maps_df, ras_to_df(pred_Sshared, "Sshared field"))
-
   ordered_hierarchical <- any(grepl("copy", rownames(fit$summary.hyperpar), ignore.case = TRUE)) ||
                    "IGlobal" %in% names(fit$summary.random)
-  # Define midpoint dynamically
-  has_copy_structure <- any(grepl("copy", rownames(fit$summary.hyperpar), ignore.case = TRUE)) ||
-                   "IGlobal" %in% names(fit$summary.random)
-  if(has_copy_structure) {
-    midpoint_val <- mean(maps_df$mean, na.rm = TRUE)
-  } else {
-    midpoint_val <- 0
-  }
-
-  if(nrow(maps_df) > 0) {
-    zlim <- range(maps_df$mean, na.rm = TRUE)
-    pB <- ggplot2::ggplot(maps_df, ggplot2::aes(x = x, y = y, fill = mean)) +
-      ggplot2::geom_raster(na.rm = TRUE) +
-      #ggplot2::scale_fill_distiller(palette = "YlGnBu", limits = zlim, na.value = "white") +
-      ggplot2::scale_fill_gradient2(
-        low = "#c0392b", mid = "white", high = "#1a5276",
-        midpoint = midpoint_val,
-        limits = zlim, na.value = "white",
-        oob = scales::squish
-      ) +
-      ggplot2::coord_equal(expand = FALSE) +
-      ggplot2::facet_wrap(~which, ncol = 2, scales = "fixed") +
-      ggplot2::labs(
-        title = "B) Sre fields (posterior mean)",
-        subtitle = if(has_copy_structure)
-          "Red = below global mean, Blue = above global mean (centered at model mean)"
-        else
-          "Red = below average, Blue = above average (centered at zero)",
-        fill = "Posterior\nmean"
-      ) +
-      ggplot2::theme_minimal(base_size = 10) +
-      ggplot2::theme(
-        plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-        plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-        strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
-        axis.title = ggplot2::element_blank(),
-        axis.text = ggplot2::element_blank(),
-        axis.ticks = ggplot2::element_blank(),
-        panel.grid = ggplot2::element_blank(),
-        panel.border = ggplot2::element_blank(),
-        panel.background = ggplot2::element_blank(),
-        strip.background = ggplot2::element_blank(),
-        plot.background = ggplot2::element_blank(),
-        legend.position = "bottom",
-        legend.key.height = ggplot2::unit(0.3, "cm"),
-        legend.key.width = ggplot2::unit(1.2, "cm"),
-        legend.title = ggplot2::element_text(size = 9, color = "#2c3e50"),
-        legend.text = ggplot2::element_text(size = 8)
-      )
-  } else {
-    pB <- ggplot2::ggplot() +
-      ggplot2::labs(
-        title = "B) Sre fields (posterior mean)",
-        subtitle = "No Sre or Sshared fields present in the model"
-      ) +
-      ggplot2::theme_void() +
-      ggplot2::theme(
-        plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-        plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e")
-      )
-  }
 
   if (!is.null(rs)) {
-  # pC Residual correlogram
   cor_df <- data.frame()
   coords <- as.matrix(data_used[, c("x", "y")])
   if(is.finite(moran_I)) {
@@ -1074,46 +1000,9 @@
     cor_df <- data.frame(dist_mid = mid, rho = rho)
   }
   range_eff <- if(is.finite(range_res_mean)) range_res_mean else if(is.finite(range_lat_mean)) range_lat_mean else NA_real_
-  pC <- ggplot2::ggplot(cor_df, ggplot2::aes(x = dist_mid, y = rho)) +
-    ggplot2::geom_hline(yintercept = 0, linewidth = 0.3, linetype = "dashed", color = "grey50") +
-    ggplot2::geom_point(na.rm = TRUE, size = 1.2, color = "#1a5276") +
-    ggplot2::geom_line(na.rm = TRUE, color = "#1a5276", linewidth = 0.6) +
-    ggplot2::labs(
-      title = "C) Residual correlogram (residuals: obs − fitted mean)",
-      subtitle = if(is.finite(range_eff))
-        paste0("Model range ≈ ", round(range_eff, 3), " (map units)\n(distance where correlation vanishes)")
-      else
-        "No Sre/Sshared field: full extent shown",
-      x = "Distance (map units)",
-      y = "Residual correlation"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      strip.text = ggplot2::element_text(face = "bold", size = 9, color = "#2c3e50"),
-      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
-      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
-      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc"),
-      panel.border = ggplot2::element_blank(),
-      panel.background = ggplot2::element_blank(),
-      plot.background = ggplot2::element_blank()
-    )
-  # Vertical line for model range
-  if(is.finite(range_eff)) {
-    pC <- pC +
-      ggplot2::geom_vline(xintercept = range_eff, linetype = "dashed", color = "#c0392b", alpha = 0.7) +
-      ggplot2::annotate(
-        "text",
-        x = range_eff, y = max(cor_df$rho, na.rm = TRUE),
-        label = "Model range", angle = 90, vjust = -0.8, hjust = 0.9,
-        color = "#c0392b", size = 3
-      )
-  }
+  attr(cor_df, "range_eff") <- range_eff
 
-  # pD Residual histogram + QQ plot
+  # Residual histogram + QQ plot
   res_mean <- mean(rs, na.rm = TRUE)
   df_r <- data.frame(resid = rs)
   center_label <- if(ordered_hierarchical) {
@@ -1123,59 +1012,12 @@
   }
   line_x <- if(ordered_hierarchical) res_mean else 0
 
-  pD1 <- ggplot2::ggplot(df_r, ggplot2::aes(x = resid)) +
-    ggplot2::geom_histogram(
-      bins = 30,
-      fill = "#1a5276",
-      color = "white",
-      alpha = 0.8
-    ) +
-    ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "#c0392b", linewidth = 0.4) +
-    ggplot2::annotate("text", x = line_x, y = Inf,
-    label = center_label, angle = 90, vjust = -0.8,
-    hjust = 1.2, size = 2.8, color = "#c0392b"
-    ) +
-    ggplot2::labs(
-      title = "D) Residual histogram & QQ-plot (residuals: obs − fitted mean)",
-      subtitle = paste0("Distribution of residuals\n(dashed line = ", center_label, ")"),
-      x = "Residuals",
-      y = "Frequency"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
-      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
-      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc"),
-      plot.background = ggplot2::element_blank()
-    )
+  attr(df_r, "center_label") <- center_label
+  attr(df_r, "line_x") <- line_x
   qq <- qqnorm(rs, plot.it = FALSE)
   df_qq <- data.frame(theoretical = qq$x, sample = qq$y)
-  pD2 <- ggplot2::ggplot(df_qq, ggplot2::aes(x = theoretical, y = sample)) +
-    ggplot2::geom_point(color = "#1a5276", size = 1.3, alpha = 0.8) +
-    ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "#c0392b", linewidth = 0.4) +
-    ggplot2::labs(
-      title = " ",
-      subtitle = "Residuals vs. theoretical quantiles\n(dashed = normal expectation)",
-      x = "Theoretical quantiles (Normal)",
-      y = "Sample quantiles (residuals)"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
-      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
-      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc"),
-      plot.background = ggplot2::element_blank()
-    )
 
-  # pE semivariaogram
+  # semivariaogram
   coords <- as.matrix(data_used[, c("x", "y")])
   if(has_Sre) {
     sp_vals <- fit$summary.random$Sre$mean
@@ -1211,52 +1053,17 @@
     dist = mid,
     gamma = gamma
   )
+  attr(sv_df, "range_res_mean") <- if(has_Sre) range_res_mean else NA_real_
+  attr(sv_df, "range_lat_mean") <- if(has_Sshared) range_lat_mean else NA_real_
 
-  pE <- ggplot2::ggplot(sv_df, ggplot2::aes(x = dist, y = gamma)) +
-    ggplot2::geom_point(color = "#1a5276", size = 1.5, alpha = 0.8) +
-    ggplot2::geom_line(color = "#1a5276", linewidth = 0.6, alpha = 0.8) +
-    ggplot2::labs(
-      title = "E) Empirical semivariogram (residuals: obs − fitted mean)",
-      subtitle = paste0(" "),
-      x = "Distance (map units)",
-      y = "Semivariance γ(h)"
-    ) +
-    ggplot2::theme_minimal(base_size = 10) +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold", size = 11, color = "#2c3e50"),
-      plot.subtitle = ggplot2::element_text(size = 9, color = "#5d6d7e"),
-      axis.title.x = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(t = 8)),
-      axis.title.y = ggplot2::element_text(size = 9, color = "#2c3e50", margin = ggplot2::margin(r = 8)),
-      axis.text = ggplot2::element_text(size = 8, color = "#2c3e50"),
-      panel.grid.minor = ggplot2::element_blank(),
-      panel.grid.major = ggplot2::element_line(linewidth = 0.2, color = "#d5d8dc")
-    )
-  if(has_Sre) {
-    pE <- pE + ggplot2::geom_vline(xintercept = range_res_mean, linetype = "dashed", color = "#c0392b", linewidth = 0.5) +
-      ggplot2::geom_text(
-        data = data.frame(x = range_res_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sre range"),
-        ggplot2::aes(x = x, y = y, label = label), 
-        color = "#c0392b", angle = 90, hjust = 1, vjust = -0.5, size = 3)
-  }
-  if(has_Sshared) {
-    pE <- pE + ggplot2::geom_vline(xintercept = range_lat_mean, linetype = "dashed", color = "#2980b9", linewidth = 0.5) +
-      ggplot2::geom_text(
-      data = data.frame(x = range_lat_mean, y = max(sv_df$gamma, na.rm = TRUE), label = "Sshared range"),
-      ggplot2::aes(x = x, y = y, label = label),
-      color = "#2980b9", angle = 90, hjust = 1, vjust = -0.5, size = 3)
-  }
 
   } else {
     # if family cp
-    pC <- NULL
-    pD1 <- NULL
-    pD2 <- NULL
-    pE <- NULL
+    cor_df <- NULL
+    sv_df <- NULL
+    df_r  <- NULL
+    df_qq <- NULL
   }  
-
-  # pH covariates importance
-  #pH <- .jmbm_vars_importance(fit)
-
 
   # 
   out <- list(
@@ -1273,7 +1080,9 @@
     intercepts = list(iGlobal = iGlobal,
                        iRegional = iRegional,
                        copy_beta = beta_IRegional,
-                       copy_beta_predictors = beta_pred_oh),
+                       copy_beta_predictors = beta_pred_oh,
+                       nested_shrinkage_delta = beta_pred_rs,
+                       nested_shrinkage_delta_precision = prec_pred_rs),
     fixed_covariates = sig_vars,
     predictive = list(auc_full = auc_full,
                        tjur_r2 = tjur_r2,
@@ -1293,13 +1102,13 @@
                        var_explained_Sre = var_explained_Sre,
                        ssi = ssi,
                        r2_fields = r2_fields), 
-    plots = list(hyperparams = pA,
-                 Srefields = pB,
-                 correlogram = pC,
-                 hist = pD1,
-                 qq = pD2,
-                 #vars_importance = pF,
-                 semivariogram = pE)
+    diagnostic_data = list(
+      hyperparams = list(posteriors = post_df, prior_ticks = prior_ticks),
+      correlogram = cor_df,
+      hist = df_r,
+      qq = df_qq,
+      semivariogram = sv_df
+    )
   )
 
   return(out)
@@ -1398,7 +1207,7 @@
 
   # metadata
   species_name <- gsub("\\.", " ", species)
-  base_name <- if (!has_spatial) "Non-spatial baseline" else "NSBM"
+  base_name <- if (!has_spatial) "Non-spatial baseline" else "MBM"
   suf <- c()
   if(has_Sre) suf <- c(suf, "Sre")
   if(has_Sshared) suf <- c(suf, "Sshared")
@@ -1482,7 +1291,6 @@
   # intercepts
   int_block <- diag_block$intercepts
   rows <- list()
-  # IGlobal exists only for coupling.intercept = "additive"/"hierarchical"
   if(!is.null(int_block$iGlobal)) {
     rows[["IGlobal (mean ± SD, CI95%)"]] <- int_block$iGlobal
   }
@@ -1503,6 +1311,17 @@
     for(nm in names(int_block$copy_beta_predictors)) {
       var_name <- sub("^Beta for (.+)RE_oh$", "\\1", nm)
       rows[[paste0("Copy β (", var_name, "GL -> ", var_name, "RE_oh) (mean ± SD)")]] <- int_block$copy_beta_predictors[[nm]]
+    }
+  }
+  #nested_shrinkage predictors: delta_RE (regional deviation from the shared beta_GL) plus its estimated precision, one pair per variable.
+  if(!is.null(int_block$nested_shrinkage_delta)) {
+    for(nm in names(int_block$nested_shrinkage_delta)) {
+      var_name <- sub("_delta$", "", nm)
+      rows[[paste0("Random slope δ (", var_name, "RE deviation from ", var_name, "GL, mean ± SD, CI95%)")]] <- int_block$nested_shrinkage_delta[[nm]]
+      prec_val <- int_block$nested_shrinkage_delta_precision[[nm]]
+      if(!is.null(prec_val) && prec_val != "—") {
+        rows[[paste0("Random slope δ precision (", var_name, ", mean ± SD)")]] <- prec_val
+      }
     }
   }
 
@@ -1536,14 +1355,7 @@
     base_n <- gsub("GL$|GL_glo_res$|RE$|RE_oh$|RE_reg_anom$", "", tbl_fixed$coef)
     idx_gl <- which( is_gl)[order(base_n[ is_gl])]
     idx_re <- which(!is_gl)[order(base_n[!is_gl])]
-      if (length(idx_gl) > 0 && length(idx_re) > 0) {
-        blank <- tbl_fixed[1, ]; blank[, ] <- NA; blank$coef <- ""
-        tbl_fixed <- rbind(tbl_fixed[idx_gl, ], blank, tbl_fixed[idx_re, ])
-      } else if (length(idx_gl) > 0) {
-        tbl_fixed <- tbl_fixed[idx_gl, ]
-      } else {
-        tbl_fixed <- tbl_fixed[idx_re, ]
-      }
+      tbl_fixed <- tbl_fixed[c(idx_gl, idx_re), ]
       rownames(tbl_fixed) <- NULL
   }
 
@@ -1639,7 +1451,7 @@
     Metadata = tbl_metadata,
     `Model fit` = tbl_fit,
     Hyperparameters = tbl_hyper,
-    Intercepts = tbl_intercepts,
+    `Random effects` = tbl_intercepts,
     `Fixed effects` = tbl_fixed,
     `Predictive performance` = tbl_pred,
     Diagnostics = tbl_diag
@@ -1654,7 +1466,7 @@
 # -----------------------------
 
 
-#' plot covariates importance
+#' plot covariates importance  #@@@JMB eliminar????
 #' @noRd
 .jmbm_vars_importance <- function(fit) {
 

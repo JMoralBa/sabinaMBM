@@ -1,4 +1,5 @@
 #' @name MBM.SuggestParams
+#' @noRd
 #'
 #' @title Suggest parameters for \code{create_mesh()} and \code{MBM.Modelling()}
 #'
@@ -172,7 +173,6 @@
 #' )
 #' }
 #'
-#' @export
 MBM.SuggestParams <- function(jmbm_obj,
                               custom.range.Sre = NULL,
                               prior.range.fraction = 0.20,

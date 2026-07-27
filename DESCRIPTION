@@ -23,7 +23,6 @@ BugReports: https://github.com/JMoralBa/sabinaINLA/issues
 Depends:
     R (>= 4.1.0)
 Imports:
-    sabinaNSDM,
     INLA,
     inlabru (>= 2.7.0),
     fmesher,
@@ -39,9 +38,11 @@ Imports:
     fs,
     scales,
     parallel,
-    furrr,
+    future,
+    future.apply,
     stats
 Suggests:
+    sabinaNSDM,
     mgcv
 Remotes:
     geoSABINA/sabinaNSDM,

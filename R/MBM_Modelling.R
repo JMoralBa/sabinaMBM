@@ -21,26 +21,21 @@
 #'   }
 #' @param coupling.predictors Character or list. Controls how global and regional covariate effects are related. Options:
 #'   \itemize{
-#'     \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients.
-#'     \item \code{"ordered_hierarchical"}: Bayesian soft constraint where the regional coefficient has a prior centred on unity (\code{beta_RE ~ N(1, 0.5^2)}) in standardized scale, encouraging — but not forcing — non-zero regional response. With per-extent standardization (the default for this option), a coefficient of 1 corresponds to a one-regional-sd effect. True INLA \code{copy} over linear effects is not used here because of identifiability issues when global and regional likelihoods carry asymmetric information; this formulation is a practical regularization rather than a strict hierarchical copy. Requires the variable to be present at both scales.
-#'     \item \code{"scale_decomposed"}: Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), following Cressie & Wikle (2011) and Zhou & Bradley (2024). In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
-#'     \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors.
+#'     \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients. No shared hyperparameter; not a hierarchical mechanism.
+#'     \item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy — Krainski et al., 2018, ch. 4), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit. Validated by simulation across four scenarios (null, aligned, sign-reversal, weak-global/strong-regional); outperforms or matches \code{"ordered_hierarchical"} in all of them.
+#'     \item \code{"ordered_hierarchical"}: Multiplicative hierarchical coupling: \code{beta_RE = beta_copy * beta_GL}, via INLA's \code{copy} mechanism with \code{beta} freely estimated (Krainski et al., 2018, ch. 4; conceptual precedent in shared-component models, Knorr-Held & Best, 2001). Uses unified (global-based) Z-standardization, as above. Requires the variable to be present at both scales and a linear global effect. CAUTION: simulation shows this configuration is systematically less accurate than \code{"nested_shrinkage"} when the global effect is weak (\code{beta_GL} near zero) or when the true regional effect has the opposite sign to the global one (paired Wilcoxon p < 0.0001); confirmed not to be an artifact of \code{inla.int.strategy}. Prefer \code{"nested_shrinkage"} unless there is a specific reason to expect a pure multiplicative (same-sign) relationship.
+#'     \item \code{"scale_decomposed"}: NOT a hierarchical coupling mechanism (no shared hyperparameter between global and regional coefficients). Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), each with its own independent coefficient, following Cressie & Wikle (2011) and Zhou & Bradley (2024). Serves the multiscale objective via covariate orthogonalization rather than coefficient partial-pooling. In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
+#'     \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors via moment matching (Figueira et al., 2024).
 #'     \item \code{NULL}: Regional-only covariate effects; global covariates are excluded from the regional predictor entirely. No shared spatial fields (S_shared).
 #'   }
-#' @param background.weights Controls how background points are weighted in the likelihood. Options:
-#'   \itemize{
-#'     \item \code{NULL} (default): no weights applied. Fast but produces a biased intercept when using presence-background data (Warton & Shepherd, 2010).
-#'     \item \code{"area_weighted"}: Weights are computed automatically as \code{w = 1} for presences and \code{w = A / n_bg} for background points, where \code{A} is the total domain area (km2) and \code{n_bg} is the number of background points. This rigorously approximates a Poisson point process integration and corrects intercept bias (Renner et al., 2015).
-#'     \item Numeric vector: user-supplied weights of length equal to the number of observations (presences + background) per scale.
-#'   }
-#'   Note: This argument is automatically ignored if \code{family = "cp"} since the Cox process intrinsically handles spatial integration via the continuous SPDE mesh.
 #' @param proj.new.env Logical. Whether to compute predictions under new environmental scenarios (default: \code{TRUE}).
 #' @param cv.folds Integer. Number of k-folds for spatial cross-validation (default: 1 = no CV).
 #' @param n.threads Integer. Number of parallel threads to be used by INLA/inlabru (default: 1).
 #' @param inla.int.strategy Character. INLA hyperparameter integration strategy. One of \code{"eb"} (Empirical Bayes, default), \code{"ccd"} (Central Composite Design), or \code{"grid"} (full grid integration). \code{"eb"} is fast but underestimates uncertainty by fixing hyperparameters at their posterior mode. \code{"ccd"} integrates over hyperparameters and is recommended for final/publication results. See Rue et al. (2009) and Simpson et al. (2017).
 #' @param seed Optional integer to set the random seed for reproducibility.
 #' @param save.output Logical. If \code{TRUE}, saves key model outputs to disk.
-#'
+#' @param verbose Logical. If \code{TRUE} (default), prints progress messages during model construction and fitting.
+#' 
 #' @return A named list of class `jmbm.inlabru` with the following elements:
 #' \item{Species.Name}{Species name}
 #' \item{args}{List of arguments used in the model fitting.}
@@ -50,6 +45,7 @@
 #' \item{marginals}{List with posterior marginals: \code{hyperpar} (SPDE hyperparameters), \code{random} (IGlobal, IRegional intercepts), \code{fixed} (covariate coefficients). Use with \code{plot(x, which = "hyperparams")} or \code{plot(x, which = "intercepts")}.}
 #' \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
+#' \item{formula}{List with the model's linear predictor components: \code{components} (the full inlabru component formula, intercepts + spatial fields + covariate terms), \code{rhs_global} (right-hand side of the global likelihood, or \code{NULL} if \code{coupling.intercept = NULL}), and \code{rhs_regional} (right-hand side of the regional likelihood).}
 #' \item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@@JMB revisar y refinar
 #'
 #' @details
@@ -78,7 +74,7 @@
 #'
 #' coupling.intercept = "ordered_hierarchical"
 #' This option implements a true hierarchical Bayesian nested structure in which the regional intercept borrows strength from the global one. 
-#' The regional intercept is expressed as a deviation from the global one using an INLA `copy` structure (IRegional = β * IGlobal + ε_regional), with a prior β ~ Normal(1, sd = 0.5), meaning the regional level is encouraged (but does not forced) to follow the global signal.
+#' The regional intercept is expressed as a scaled copy of the global one using an INLA copy structure (IRegional = β * IGlobal), with β given an informative prior centred at 1 (Normal(1, sd = 0.5)), so that the regional level is encouraged (but not forced) to follow the global signal.
 #' Ecologically, this formulation ensures that the global model captures broad-scale suitability (the species fundamental niche), while the regional intercept refines this large-scale signal/pattern to reflect local microclimatic conditions such and high-resolution predictors/conditions.
 #' This hierarchical structure enables principled information sharing between scales while still allowing regional deviations.
 #' 
@@ -108,35 +104,16 @@
 #'                         bio4 = "drop"),
 #'         default = "linear")    # default rule if a covariate is not listed
 #'
-#' coupling.predictors: control of cross-scale covariate effects  
-#' This argument defines how each predictor behaves across global and regional scales.  
-#' It is only applied to variables that appear in both global and regional scales.
-#' Standardization behaviour: variables coupled via `"scale_decomposed"` or `"bayesian_feedback"` are standardized with unified global statistics (mu_GL, sigma_GL) in both rasters, so that a unit change in Z corresponds to the same physical change at both scales. All other variables (non-shared, or shared with `NULL`/`"unpooled"`/`"ordered_hierarchical"`) keep their native per-extent Z-score.
-#' - Option 1 `NULL` (default): no coupling. Global and regional effects are estimated independently unless one is dropped via `covariate.effects`.
-#' - Option 2 \code{"unpooled"}: global and regional effects enter the linear predictor as two independent components (η = β_GL * X_GL + β_RE * X_RE + …). No information is shared between scales.
-#' - Option 3 \code{"ordered_hierarchical"}: Bayesian soft constraint with prior \code{beta_RE ~ N(1, 0.5^2)} in standardized scale, encouraging — but not forcing — non-zero regional response. Practical regularization, not a strict hierarchical copy (INLA \code{copy} on linear effects produces non-identifiable sign reversals when likelihoods carry asymmetric information).
-#' - Option 4 \code{"scale_decomposed"}: shared covariates are first projected to the unified global Z-space, then decomposed additively into a resampled global macro-trend (X_glo_res) and a regional anomaly (X_reg_anom = X_RE - X_glo_res). Macro and anomaly coefficients are directly comparable in magnitude. Following Cressie & Wikle (2011). Requires the global raster to be of equal or coarser resolution than the regional one.
-#' - Option 5 \code{"bayesian_feedback"}: shared covariates are unified to the global Z-space; the global model is fit first; posterior moments (mean, precision) of beta_GL are injected as the Gaussian prior of beta_RE in a subsequent regional fit. Following Figueira et al. (2024), adapted to multiscale settings (the original protocol assumes co-located covariates without Spatial Change of Support). Information is transferred via the first two moments only.
-#' - Option 6 named `list`: provide a list with entries `variables` and `default`.        #@@@JMB PARA PENSAR EN v2???? considerar permitir meter un SpatRaster de predicciones hechas fuera de aqui como spatial offset en los regional predictor.
-#'   Structure:
-#'     coupling.predictors = list(
-#'       default   = "unpooled" | "NULL" | "ordered_hierarchical" | "scale_decomposed" | "bayesian_feedback",
-#'       variables = list(var1 = "...", var2 = "...", ...)
-#'     )
-#' Validity rules (automatically checked):
-#' - Cross-scale couplings ("ordered_hierarchical", "scale_decomposed", "bayesian_feedback") require the predictor to exist at both scales.
-#' - If `covariate.effects` drops the global or regional effect of a variable, cross-scale coupling is not allowed.
-#' - "ordered_hierarchical" cannot be combined with global RW2 smoothing for the same variable.
-#' - "bayesian_feedback" is not compatible with RW2 (a multi-parameter non-Gaussian posterior cannot be summarised as a single Gaussian prior).
-#' - "bayesian_feedback" cannot be mixed with "scale_decomposed" or with "ordered_hierarchical" in the same call.
+#' coupling.predictors: control of cross-scale covariate effects
 #'
 #' bayesian_feedback for new scenarios:
 #' When using \code{coupling.predictors = "bayesian_feedback"} with \code{proj.new.env = TRUE},
 #' note that the regional priors are fixed based on the present-day global posteriors.
-#' They are NOT updated for future scenarios. This is a current limitation.
-#' For dynamic re-estimation of priors under different climate conditions, use
-#' \code{coupling.predictors = "ordered_hierarchical"} (soft constraint) or
-#' \code{coupling.predictors = "scale_decomposed"} (macro/micro decomposition) instead.
+#' They are NOT updated for future scenarios. This is a current limitation of any sequential
+#' (two-stage) fitting protocol. Joint (single-fit) alternatives such as
+#' \code{coupling.predictors = "nested_shrinkage"}, \code{"ordered_hierarchical"}, or
+#' \code{"scale_decomposed"} do not have this limitation, since there is no separate
+#' prior-injection step to go stale under new environmental scenarios.
 #'
 #' @seealso \code{\link{create_mesh}}, \code{\link{plot.jmbm.inlabru}}, \code{\link{summary.jmbm.inlabru}}
 #'
@@ -150,9 +127,17 @@
 #' Bakka, H. et al. (2018). Spatial modelling with R-INLA: A review.
 #' \emph{WIREs Computational Statistics}, 10, e1443.
 #'
-#' Warton, D.I. & Shepherd, L.C. (2010). Poisson point process models solve the
-#' pseudo-absence problem for presence-only data in ecology.
-#' \emph{The Annals of Applied Statistics}, 4(3), 1383--1402.
+#' Krainski, E.T., Gomez-Rubio, V., Bakka, H., Lenzi, A., Castro-Camilo, D., Simpson, D.,
+#' Lindgren, F. & Rue, H. (2018). \emph{Advanced Spatial Modeling with Stochastic Partial
+#' Differential Equations Using R and INLA}. CRC Press. (Chapter 4: the \code{copy} feature
+#' for sharing/scaling effects across likelihoods.)
+#'
+#' Knorr-Held, L. & Best, N.G. (2001). A shared component model for detecting joint and
+#' selective clustering of two diseases. \emph{Journal of the Royal Statistical Society:
+#' Series A}, 164(1), 73-85.
+#'
+#' Figueira, M., Conesa, D. & Lopez-Quilez, A. (2024). Bayesian feedback in the framework
+#' of ecological sciences. \emph{Ecological Informatics}. (Verificado por busqueda, no de memoria.)
 #'
 #' @export
 MBM.Modelling <- function(jmbm_obj, 
@@ -165,7 +150,6 @@ MBM.Modelling <- function(jmbm_obj,
                       regional.pcprior.sigma = NULL,
                       shared.pcprior.range = NULL,
                       shared.pcprior.sigma = NULL,
-                      background.weights = NULL,
                       proj.new.env = TRUE,
                       cv.folds = 1,
                       n.threads = 1,
@@ -284,7 +268,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     }
   }
   #
-  valid_cp <- c("NULL", "unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback")
+  valid_cp <- c("NULL", "unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "nested_shrinkage")
   if(!is.null(coupling.predictors)) {
     if(is.character(coupling.predictors)) {
       if(!coupling.predictors %in% valid_cp) {
@@ -317,7 +301,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   # compatibility coupling.predictors x covariate.effects
   has_bf <- (!is.null(coupling.intercept) && coupling.intercept == "bayesian_feedback")
   has_joint <- (!is.null(coupling.intercept) && coupling.intercept %in% c("ordered_hierarchical", "scale_decomposed")) ||
-    (length(vr) > 0 && any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.predictors, vg) %in% c("ordered_hierarchical", "scale_decomposed"), logical(1))))
+    (length(vr) > 0 && any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.predictors, vg) %in% c("ordered_hierarchical", "scale_decomposed", "nested_shrinkage"), logical(1))))
   vg_check <- if(is.null(coupling.intercept)) character(0) else vg
   if(length(vr) > 0) {
     for(v in vr) {
@@ -334,7 +318,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
           .stop(paste0("Variable '", v, "' cannot use 'bayesian_feedback' with 'rw2'. Supported for 'linear' only."))
         }
       # hierarchical joint methods
-      } else if(cp_mode %in% c("ordered_hierarchical", "scale_decomposed")) {
+      } else if(cp_mode %in% c("ordered_hierarchical", "scale_decomposed", "nested_shrinkage")) {
         has_joint <- TRUE
         if(!(v %in% vg_check)) {
           .stop(paste0("Variable '", v, "' cannot use '", cp_mode, "'. Missing at global scale."))
@@ -345,17 +329,23 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
         if(spec_re$model == "drop") {
           .stop(paste0("Variable '", v, "' cannot use '", cp_mode, "'. Regional effect is dropped."))
         }
-        if(cp_mode == "ordered_hierarchical" && !is.null(spec_gl) && spec_gl$model == "rw2") {
-          .stop(paste0("Variable '", v, "' cannot use 'ordered_hierarchical'. Global effect uses RW2."))
+        if(cp_mode %in% c("ordered_hierarchical", "nested_shrinkage") && !is.null(spec_gl) && spec_gl$model == "rw2") {
+          .stop(paste0("Variable '", v, "' cannot use '", cp_mode, "'. Global effect uses RW2; ", cp_mode, " requires a linear global effect (beta_GL is copied/shared as-is)."))
         }
       }
     }
   }
-  if(has_bf && has_joint) {
-    .stop("Cannot mix 'bayesian_feedback' with 'ordered_hierarchical' or 'scale_decomposed'.")
+  if(has_bf) {   #@@@JMB Virgilio esto es correcto??
+    intercept_ok  <- is.null(coupling.intercept) || coupling.intercept == "bayesian_feedback"
+    predictors_ok <- length(shared_vr) == 0 || all(vapply(shared_vr, function(v) {
+      .resolve_coupling_predictor(v, coupling.predictors, vg_check) %in% c("bayesian_feedback", "NULL")
+    }, logical(1)))
+    if(!intercept_ok || !predictors_ok) {
+      .stop("'bayesian_feedback' must be used for the intercept and every shared predictor simultaneously, or not at all. Mixing it with 'unpooled', 'ordered_hierarchical', 'scale_decomposed', or 'nested_shrinkage' in the same call would leave those components uninformed by the global likelihood in the final fit.")
+    }
   }
   #
-    if(!is.null(seed)) {
+  if(!is.null(seed)) {
     if (!is.numeric(seed) || length(seed) != 1) .stop("'seed' must be a single numeric value.")
     set.seed(seed)
   }
@@ -370,20 +360,10 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   #
   available_cores <- parallel::detectCores(logical = TRUE)
   if(!is.null(n.threads) && n.threads > available_cores) {
-    .stop(paste0("Requested `n.threads` (", n.threads, ") exceeds available cores (", available_cores, ")."))
+    .stop(paste0("Requested `n.threads` (", n.threads, ") exceeds available cores (", available_cores, "). Your optimism is inspiring, your CPU is begging for mercy."))
   }
   INLA::inla.setOption(num.threads = n.threads)
   #
-  if(!is.null(background.weights) && !is.numeric(background.weights)) {
-    if(!is.character(background.weights) || length(background.weights) != 1 || background.weights != "area_weighted") {
-      .stop("`background.weights` must be NULL, 'area_weighted', or a numeric vector.")
-    }
-  }
-  if(!is.null(background.weights) && fam == "cp") {
-    .info("background.weights is ignored for family = 'cp' (handled via continuous samplers).")
-    background.weights <- NULL
-  }
-
   if(is.null(coupling.intercept)) {
     .check("Architecture: Regional-only (no global component)")
   } else {
@@ -409,12 +389,12 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
   # Identify shared variables whose coupling demands unified Z-standardization.
   unified_vars <- shared_vr[vapply(shared_vr, function(X) {
-    .resolve_coupling_predictor(X, coupling.predictors, vg) %in% c("scale_decomposed", "bayesian_feedback")
+    .resolve_coupling_predictor(X, coupling.predictors, vg) %in% c("scale_decomposed", "bayesian_feedback", "nested_shrinkage", "ordered_hierarchical")
   }, logical(1))]
 
   # scale_decomposed (unified_vars subset): needs extra steps for macro/anomaly Z-score decomposition
   sd_vars <- shared_vr[vapply(shared_vr, function(X) {
-    .resolve_coupling_predictor(X, coupling.predictors, vg) == "scale_decomposed"
+    .resolve_coupling_predictor(X, coupling.predictors, vg) %in% c("scale_decomposed")
   }, logical(1))]
   if(length(all_model_vars) > 0) {
     .info("Pre-processing environmental covariates...")
@@ -494,8 +474,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   bg_or_abs_reg <- if(is.null(jmbm_obj$Absences.XY.Regional)) jmbm_obj$Background.XY.Regional else jmbm_obj$Absences.XY.Regional
 
   pp_glo <- rbind(
-    cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),  #@@@JMB jmbm_obj$Response.Global y Regional habría que generarlos en sabinaNSDM input y arrastrar si hay algo
-    cbind(bg_or_abs_glo, resp = 0L)     # si lo hacemo así poner algún check con stop/warning para que datos y family sean coherentes
+    cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),  #@@@JMB jmbm_obj$Response.Global y Regional habria que generarlos en sabinaNSDM input y arrastrar si hay algo
+    cbind(bg_or_abs_glo, resp = 0L)     # si lo hacemo asi poner algun check con stop/warning para que datos y family sean coherentes
   )
   pp_reg <- rbind(
     cbind(jmbm_obj$SpeciesData.XY.Regional, resp = if(!is.null(jmbm_obj$Response.Regional)) jmbm_obj$Response.Regional else 1L),  
@@ -521,37 +501,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       ext_reg <- cbind(ext_reg, terra::extract(sp_covglo, terra::vect(pp_reg), ID = FALSE))
     }
     pp_reg <- pp_reg[stats::complete.cases(ext_reg), ]
-  }
-
-  ## Background weights   #@@@JMB!! "area_weighted" sigue Warton & Shepherd 2010/Renner etal 2015 pero esta gente no contemplan dos escalas. Con area global >> area reg los pesos hay que equilibrarlos o algo así? ¿como hacemos esto para dos escalas? ¿lo quitamos?
-  w_glo <- NULL
-  w_reg <- NULL
-  if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") {
-    # global weights
-    if(!is.null(coupling.intercept)) {
-      n_pres_glo <- sum(pp_glo$resp != 0L)
-      n_bg_glo <- sum(pp_glo$resp == 0L)
-      A_glo <- as.numeric(terra::expanse(sp_covglo[[1]], unit = "km"))
-      w_glo <- ifelse(pp_glo$resp != 0L, 1, A_glo / n_bg_glo)
-    }
-    # regional weights
-    n_pres_reg <- sum(pp_reg$resp != 0L)
-    n_bg_reg <- sum(pp_reg$resp == 0L)
-    A_reg <- as.numeric(terra::expanse(sp_covreg[[1]], unit = "km"))
-    w_reg <- ifelse(pp_reg$resp != 0L, 1, A_reg / n_bg_reg)
-
-  } else if(is.numeric(background.weights)) {
-    # user-supplied: split by scale
-    n_glo_obs <- if(!is.null(coupling.intercept)) nrow(pp_glo) else 0L
-    n_reg_obs <- nrow(pp_reg)
-    if(length(background.weights) == n_glo_obs + n_reg_obs) {
-      w_glo <- if(!is.null(coupling.intercept)) background.weights[seq_len(n_glo_obs)] else NULL
-      w_reg <- background.weights[seq(n_glo_obs + 1L, n_glo_obs + n_reg_obs)]
-    } else if(length(background.weights) == n_reg_obs) {
-      w_reg <- background.weights
-    } else {
-      .stop(paste0("Length of background.weights (", length(background.weights), ") does not match observations."))
-    }
   }
 
   ## SPDE domain definition
@@ -601,10 +550,11 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   }
 
 
-  ## Nested intercept
+  ## Prior constants
   # prior for intercepts iid. param = c(1, 0.01) -> P(σ > 1) = 0.01
   IID_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
   COPY_BETA_PRIOR <- "hyper = list(beta = list(prior = 'normal', param = c(1, 4)))"
+  SLOPE_DELTA_PRIOR <- "hyper = list(prec = list(prior = 'pc.prec', param = c(1, 0.01)))"
 
   if(is.null(coupling.intercept)) {
     intercept_terms <- c(paste0("IRegional(1, model='iid', ", IID_PRIOR, ")"))
@@ -638,6 +588,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
                   sp_covreg = sp_covreg,
                   covariate.effects = covariate.effects,
                   coupling.predictors = coupling.predictors,
+                  slope_delta_prior = SLOPE_DELTA_PRIOR,
                   pp_glo_sf = pp_glo,
                   pp_reg_sf = pp_reg)
 
@@ -667,8 +618,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   # likelihoods
   liks <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
                               pp_glo, pp_reg, bdy_glo, bdy_reg, dom,
-                              coupling.intercept,
-                              w_glo = w_glo, w_reg = w_reg)
+                              coupling.intercept)
   lik_glo <- liks$lik_glo
   lik_reg <- liks$lik_reg
 
@@ -733,11 +683,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       inla_threads_k <- max(1, floor(n.threads / n_cores_cv))
 
       if(n_cores_cv > 1) {
-        furrr::plan(furrr::multisession, workers = n_cores_cv, quiet = TRUE)
+        future::plan(future::multisession, workers = n_cores_cv, quiet = TRUE)
       }
-
-      A_glo_total <- if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp" && !is.null(coupling.intercept)) as.numeric(terra::expanse(sp_covglo[[1]], unit = "km")) else NULL
-      A_reg_total <- if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") as.numeric(terra::expanse(sp_covreg[[1]], unit = "km")) else NULL
 
       both_cov <- c(sp_covglo, sp_covreg)
       coords_all_r <- sf::st_coordinates(pp_reg)
@@ -748,26 +695,10 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
         train_r <- pp_reg[folds_r != k, ]
         test_r  <- pp_reg[folds_r == k, ]
 
-        w_glo_k <- NULL
-        w_reg_k <- NULL
-        
-        if(is.character(background.weights) && background.weights == "area_weighted" && fam != "cp") {
-          if(!is.null(coupling.intercept) && !is.null(train_g)) {
-            n_bg_glo_k <- sum(train_g$resp == 0L)
-            w_glo_k <- ifelse(train_g$resp != 0L, 1, A_glo_total / n_bg_glo_k)
-          }
-          n_bg_reg_k <- sum(train_r$resp == 0L)
-          w_reg_k <- ifelse(train_r$resp != 0L, 1, A_reg_total / n_bg_reg_k)
-        } else if(is.numeric(background.weights)) {
-          w_glo_k <- if(!is.null(coupling.intercept) && !is.null(w_glo)) w_glo[folds_g != k] else NULL
-          w_reg_k <- if(!is.null(w_reg)) w_reg[folds_r != k] else NULL
-        }
-
         liks_k <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
                                       train_g, train_r,
                                       bdy_glo, bdy_reg, dom,
-                                      coupling.intercept,
-                                      w_glo = w_glo_k, w_reg = w_reg_k)
+                                      coupling.intercept)
         lik_list_k <- Filter(Negate(is.null), list(liks_k$lik_glo, liks_k$lik_reg))
 
         # fit fold k
@@ -803,8 +734,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       }
 
       if(n_cores_cv > 1) {
-        cv_metrics_list <- furrr::future_lapply(seq_len(cv.folds), cv_worker, .options = furrr::furrr_options(seed = TRUE))
-        furrr::plan(furrr::sequential) # Reseteo de seguridad al terminar
+        cv_metrics_list <- future.apply::future_lapply(seq_len(cv.folds), cv_worker, future.seed = TRUE)
+        future::plan(future::sequential) # Reset
       } else {
         cv_metrics_list <- lapply(seq_len(cv.folds), cv_worker)
       }
@@ -859,15 +790,27 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
       vars_glo <- intersect(names(sp_covglo_backup), names(scen_rast))
       vars_reg <- intersect(names(sp_covreg_backup), names(scen_rast))
-      
+   
       # resampling
-      scen_glo_raw <- if(length(vars_glo) > 0) terra::resample(scen_rast[[vars_glo]], sp_covglo_backup) else NULL
+      if(length(vars_glo) > 0) {
+        fact <- max(1, round(terra::res(sp_covglo_backup)[1] / terra::res(scen_rast)[1]))
+        scen_glo_raw <- if(fact >= 2) {
+          terra::resample(terra::aggregate(scen_rast[[vars_glo]], fact = fact, fun = "mean", na.rm = TRUE),
+                           sp_covglo_backup)
+        } else {
+          terra::resample(scen_rast[[vars_glo]], sp_covglo_backup)
+        }
+      } else {
+        scen_glo_raw <- NULL
+      }
+
       scen_reg_raw <- if(length(vars_reg) > 0) terra::resample(scen_rast[[vars_reg]], sp_covreg_backup) else NULL
+
       
       # standarization uni (vars simples)
       for(v in setdiff(vars_reg, sd_vars)) {
-        if (!is.null(scale_params[[v]])) {
-          pred_template[[v]] <- (scen_reg_raw[[v]] - scale_params[[v]]$mean) / scale_params[[v]]$sd
+        if (!is.null(scale_params_reg[[v]])) {
+          pred_template[[v]] <- (scen_reg_raw[[v]] - scale_params_reg[[v]]$mean) / scale_params_reg[[v]]$sd
         }
       }
       
@@ -883,7 +826,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
             raw_glo <- glo_resampled_scenario[[X]]
             
             p_unif <- scale_params_glo[[X]]
-            if(is.null(p_unif)) .stop(paste0("Faltan parámetros de escala globales para: ", X))
             pred_template[[paste0(X, "_glo_res")]]  <- (raw_glo - as.numeric(p_unif$mean)) / as.numeric(p_unif$sd)
             pred_template[[paste0(X, "_reg_anom")]] <- (raw_reg - raw_glo) / as.numeric(p_unif$sd)
           }
@@ -942,8 +884,77 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
                   scale_params_reg = scale_params_reg)
 
 
-  ## Save outputs
   species <- jmbm_obj$Species.Name
+
+  # summary          #@@@JMB pendiente revisar/completar...
+  summary_df <- .jmbm_generate_summary(
+    fit = fit, 
+    species = species, 
+    fam = fam, 
+    lnk = lnk, 
+    coupling.intercept = coupling.intercept, 
+    coupling.predictors = coupling.predictors, 
+    diag_block = diag_block, 
+    cv_res = cv_res,
+    vg = vg,
+    vr = vr,
+    scale_params = scale_params,
+    scale_params_glo = scale_params_glo,
+    scale_params_reg = scale_params_reg,
+    has_spatial = !is.null(spde.mesh)
+  )
+
+
+  # return         #@@@JMB pendiente revisar/adelgazar...
+  sabina <- list(
+    Species.Name = species,
+    args = list(
+      family = fam,
+      link = lnk,
+      #spde.mesh = !is.null(spde.mesh),
+      regional.pcprior.range = regional.pcprior.range,
+      regional.pcprior.sigma = regional.pcprior.sigma,
+      shared.pcprior.range = shared.pcprior.range,
+      shared.pcprior.sigma = shared.pcprior.sigma,
+      coupling.intercept = coupling.intercept,
+      coupling.predictors = coupling.predictors,
+      covariate.effects = covariate.effects,
+      proj.new.env = proj.new.env,
+      cv.folds = cv.folds,
+      n.threads = n.threads,
+      inla.int.strategy = inla.int.strategy,
+      seed = seed
+    ),
+    Selected.Variables.Global = jmbm_obj$Selected.Variables.Global,
+    Selected.Variables.Regional = jmbm_obj$Selected.Variables.Regional,
+    formula = list(
+      components   = cmp,
+      rhs_global   = rhs_glo,
+      rhs_regional = rhs_reg
+    ),
+    current.projections = list(
+      pred = terra::wrap(pred),
+      pred_Sre = if(!is.null(pred_Sre)) terra::wrap(pred_Sre) else NULL,
+      pred_Sshared = if(!is.null(pred_Sshared)) terra::wrap(pred_Sshared) else NULL
+    ),
+    new.projections = if(length(proj_list) > 0) lapply(proj_list, terra::wrap) else list(),
+    marginals = list(
+      hyperpar = fit$marginals.hyperpar,
+      random = fit$marginals.random,
+      fixed = fit$marginals.fixed
+    ),
+    scale_params = scale_params,
+    scale_params_glo = scale_params_glo,
+    scale_params_reg = scale_params_reg,
+    pit_values = diag_block$calibration$pit_values,
+    diagnostic_data = diag_block$diagnostic_data,
+    Summary = summary_df
+  )
+ 
+  attr(sabina, "class") <- "jmbm.inlabru"
+
+
+  ## Save outputs
   if(save.output) {
     # directories
     values_path <- file.path("Results", "MBM", "Values")
@@ -997,16 +1008,16 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       }
     }
     # diagnostic plots
-    plot_specs <- list(
-      list(key = "hyperparams", file = "_hyperparams.png", w = 6, h = 5),
-      list(key = "correlogram", file = "_correlogram.png", w = 6, h = 5),
-      list(key = "hist", file = "_residualHistogram.png", w = 6, h = 5),
-      list(key = "qq", file = "_QQplot.png", w = 6, h = 4),
-      list(key = "Srefields", file = "_SPDEfields.png", w = 6, h = 5),
-      list(key = "semivariogram", file = "_semivariogram.png", w = 6, h = 4)
+plot_specs <- list(
+      list(key = "hyperparams",   file = "_hyperparams.png",       w = 6, h = 5),
+      list(key = "correlogram",   file = "_correlogram.png",       w = 6, h = 5),
+      list(key = "hist",          file = "_residualHistogram.png", w = 6, h = 5),
+      list(key = "qq",            file = "_QQplot.png",            w = 6, h = 4),
+      list(key = "Srefields",     file = "_SPDEfields.png",        w = 6, h = 5),
+      list(key = "semivariogram", file = "_semivariogram.png",     w = 6, h = 4)
     )
     for(ps in plot_specs) {
-      p <- diag_block$plots[[ps$key]]
+      p <- tryCatch(plot(sabina, which = ps$key), error = function(e) NULL)
       if(!is.null(p)) {
         ggplot2::ggsave(
           filename = file.path(values_path, paste0(species, ps$file)),
@@ -1038,70 +1049,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     .item(paste0("Full model object (.rds): ", file.path(values_path, paste0(species, "_model_fit.rds"))))
   }
 
-
-  # summary          #@@@JMB pendiente revisar/completar...
-  summary_df <- .jmbm_generate_summary(
-    fit = fit, 
-    species = species, 
-    fam = fam, 
-    lnk = lnk, 
-    coupling.intercept = coupling.intercept, 
-    coupling.predictors = coupling.predictors, 
-    diag_block = diag_block, 
-    cv_res = cv_res,
-    vg = vg,
-    vr = vr,
-    scale_params = scale_params,
-    scale_params_glo = scale_params_glo,
-    scale_params_reg = scale_params_reg,
-    has_spatial = !is.null(spde.mesh)
-  )
-
-
-  # return         #@@@JMB pendiente revisar/adelgazar...
-  sabina <- list(
-    Species.Name = species,
-    args = list(
-      family = fam,
-      link = lnk,
-      #spde.mesh = !is.null(spde.mesh),
-      regional.pcprior.range = regional.pcprior.range,
-      regional.pcprior.sigma = regional.pcprior.sigma,
-      shared.pcprior.range = shared.pcprior.range,
-      shared.pcprior.sigma = shared.pcprior.sigma,
-      coupling.intercept = coupling.intercept,
-      coupling.predictors = coupling.predictors,
-      covariate.effects = covariate.effects,
-      background.weights = background.weights,
-      proj.new.env = proj.new.env,
-      cv.folds = cv.folds,
-      n.threads = n.threads,
-      inla.int.strategy = inla.int.strategy,
-      seed = seed
-    ),
-    Selected.Variables.Global = jmbm_obj$Selected.Variables.Global,
-    Selected.Variables.Regional = jmbm_obj$Selected.Variables.Regional,
-    current.projections = list(
-      pred = terra::wrap(pred),
-      pred_Sre = if(!is.null(pred_Sre)) terra::wrap(pred_Sre) else NULL,
-      pred_Sshared = if(!is.null(pred_Sshared)) terra::wrap(pred_Sshared) else NULL
-    ),
-    new.projections = if(length(proj_list) > 0) lapply(proj_list, terra::wrap) else list(),
-    marginals = list(
-      hyperpar = fit$marginals.hyperpar,
-      random = fit$marginals.random,
-      fixed = fit$marginals.fixed
-    ),
-    scale_params = scale_params,
-    pit_values = diag_block$calibration$pit_values,
-    diagnostic_plots = list(
-      correlogram  = diag_block$plots$correlogram,
-      semivariogram = diag_block$plots$semivariogram
-    ),
-    Summary = summary_df
-  )
- 
-  attr(sabina, "class") <- "jmbm.inlabru"
 
   if(verbose) message("\n  ✓ Model fitted successfully. Check 'summary()' for evaluation metrics.\n")
 
