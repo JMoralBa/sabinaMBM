@@ -11,7 +11,6 @@ A \code{\link[terra:rast]{SpatRaster}} object with four layers:
 \item{\code{bio2}}{Mean Diurnal Range (Mean of monthly (max temp - min temp), °C).}
 \item{\code{bio4}}{Temperature Seasonality (standard deviation × 100).}
 \item{\code{bio12}}{Annual Precipitation (mm).}
-\item{\code{bio10}}{Mean Daily Mean Near-Surface Air Temperature of the Warmest Quarter (°C).}
 }
 }
 \source{

@@ -8,8 +8,15 @@
 # -----------------------------------------------------------------------------
 # LIBRARIES
 # -----------------------------------------------------------------------------
+library(glmnet)
+library(stringi)
+library(data.table)
 library(sf)
 library(terra)
+library(tidyterra)
+library(ecospat)
+library(dplyr)
+library(covsel)
 library(ggplot2)
 library(inlabru)
 library(INLA)
@@ -21,28 +28,23 @@ library(sabinaMBM)   # devtools::load_all(...)
 # DATA
 # -----------------------------------------------------------------------------
  
-# Species name
-SpeciesName <- "Quercus.petraea"
- 
-# Occurrence records
-data(Quercus.petraea.xy.global, package = "sabinaNSDM")
-data(Quercus.petraea.xy.regional, package = "sabinaNSDM")
- 
-# Environmental rasters (current)
-data(expl.var.global, package = "sabinaNSDM")
-data(expl.var.regional, package = "sabinaNSDM")
-expl.var.global <- terra::unwrap(expl.var.global)
+data(Quercus.petraea.xy.global,   package = "sabinaMBM")
+data(Quercus.petraea.xy.regional, package = "sabinaMBM")
+data(expl.var.global,             package = "sabinaMBM")
+data(expl.var.regional,           package = "sabinaMBM")
+data(new.env,                     package = "sabinaMBM")
+
+expl.var.global   <- terra::unwrap(expl.var.global)
 expl.var.regional <- terra::unwrap(expl.var.regional)
- 
-# Environmental rasters (new scenario)
-data(new.env, package = "sabinaNSDM")
-new.env <- terra::unwrap(new.env)
- 
- 
+new.env           <- terra::unwrap(new.env)
+
+SpeciesName <- "Quercus.petraea"
+
+
 # -----------------------------------------------------------------------------
 # DATA PREPARATION  (sabinaNSDM pipeline)
 # -----------------------------------------------------------------------------
- 
+
 # Input object
 myInput <- sabinaNSDM::NSDM.InputData(
   SpeciesName        = SpeciesName,
@@ -51,8 +53,9 @@ myInput <- sabinaNSDM::NSDM.InputData(
   expl.var.global    = expl.var.global,
   expl.var.regional  = expl.var.regional,
   new.env            = list(new.env),
-  new.env.names      = "scenario1")
- 
+  new.env.names      = "scenario1"
+)
+
 # Formatting
 myFormatting <- sabinaNSDM::NSDM.FormattingData(
   myInput,
@@ -60,17 +63,19 @@ myFormatting <- sabinaNSDM::NSDM.FormattingData(
   Min.Dist.Global    = "resolution",
   Min.Dist.Regional  = "resolution",
   Background.method  = "random",
-  save.output        = FALSE)
- 
+  save.output        = FALSE
+)
+
 # Covariate selection
 mySelvars <- sabinaNSDM::NSDM.SelectCovariates(
   myFormatting,
-  maxncov.Global    = 3,
-  maxncov.Regional  = 3,
+  maxncov.Global    = 5,
+  maxncov.Regional  = 5,
   corcut            = 0.7,
   algorithms        = "glm",
-  save.output       = FALSE)
- 
+  save.output       = FALSE
+)
+
  
 # -----------------------------------------------------------------------------
 # MESH  (spatial domain for the SPDE random field)
@@ -111,9 +116,8 @@ myModel <- MBM.Modelling(
   coupling.intercept  = "ordered_hierarchical",
   coupling.predictors = "ordered_hierarchical",
   covariate.effects   = NULL,           # NULL = all covariates linear // cve 
-  background.weights  = NULL,
   proj.new.env        = TRUE,
-  cv.folds            = 1,               # 1 = no cross-validation
+  cv.folds            = 1,              # 1 = no cross-validation
   n.threads           = 2,
   inla.int.strategy   = "eb",           # "ccd" for publication results
   seed                = 123,
@@ -150,3 +154,28 @@ plot(myModel, which = "pred_Sshared", layer = "mean")
  
 # Future / alternative scenario
 plot(myModel, which = "scenario1", layer = "mean")
+
+
+
+# -----------------------------------------------------------------------------
+# SUGGESTING PARAMETERS AUTOMATICALLY (OPTIONAL, beta function)
+# -----------------------------------------------------------------------------
+
+# myParams <- MBM.SuggestParams(jmbm_obj = mySelvars)
+# 
+# myMesh <- create_mesh(
+#   nsdm_obj        = mySelvars, 
+#   edge            = myParams$create_mesh$edge, 
+#   offset          = myParams$create_mesh$offset, 
+#   boundary.method = "raster_mask"
+# )
+# 
+# myMod <- MBM.Modelling(
+#   jmbm_obj               = mySelvars,
+#   spde.mesh              = myMesh,
+#   regional.pcprior.range = myParams$MBM.Modelling_args$regional.pcprior.range,
+#   regional.pcprior.sigma = myParams$MBM.Modelling_args$regional.pcprior.sigma,
+#   shared.pcprior.range   = myParams$MBM.Modelling_args$shared.pcprior.range,
+#   shared.pcprior.sigma   = myParams$MBM.Modelling_args$shared.pcprior.sigma,
+#   covariate.effects      = myParams$MBM.Modelling_args$covariate.effects
+# )
