@@ -123,7 +123,7 @@ plot.jmbm.inlabru <- function(x,
     if(is.null(marg_f) || length(marg_f) == 0)
       .stop("No fixed effect marginals in this model.")
     species <- gsub("\\.", " ", x$Species.Name)
-    cp_label <- if(!is.null(x$args$coupling.predictors)) x$args$coupling.predictors else "NULL"
+    cp_label <- if(!is.null(x$args$coupling.covariates)) x$args$coupling.covariates else "NULL"
     # back-transform marginals to original covariate scale
     df_list <- lapply(names(marg_f), function(nm) {
       base_var <- gsub("GL$|RE$|RE_oh$|GL_glo_res$|RE_reg_anom$", "", nm)
@@ -165,7 +165,7 @@ plot.jmbm.inlabru <- function(x,
       ggplot2::theme(legend.position = "bottom") +
       ggplot2::labs(
         title = if(!is.null(title)) title else paste(species, "| Fixed effects posteriors (original scale)"),
-        subtitle = paste0("coupling.predictors = ", cp_label,
+        subtitle = paste0("coupling.covariates = ", cp_label,
                          " | Coefficients in original covariate units (back-transformed)",
                          " | Grey = non-significant (95% CI)"),
         x = "Coefficient value", y = "Density") +

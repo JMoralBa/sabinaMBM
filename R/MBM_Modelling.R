@@ -19,7 +19,7 @@
 #'     \item \code{"bayesian_feedback"}: Sequential updating using global posterior as regional prior via moment matching (mean and precision). A warning is issued if the global posterior is strongly skewed (|skewness| > 1), as moment matching may be unreliable in that case. See Figueira et al. (2024).
 #'     \item \code{NULL}: Regional-only model (no global component).
 #'   }
-#' @param coupling.predictors Character or list. Controls how global and regional covariate effects are related. Options:
+#' @param coupling.covariates Character or list. Controls how global and regional covariate effects are related. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients. No shared hyperparameter; not a hierarchical mechanism.
 #'     \item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy — Krainski et al., 2018, ch. 4), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit. Validated by simulation across four scenarios (null, aligned, sign-reversal, weak-global/strong-regional); outperforms or matches \code{"ordered_hierarchical"} in all of them.
@@ -104,14 +104,14 @@
 #'                         bio4 = "drop"),
 #'         default = "linear")    # default rule if a covariate is not listed
 #'
-#' coupling.predictors: control of cross-scale covariate effects
+#' coupling.covariates: control of cross-scale covariate effects
 #'
 #' bayesian_feedback for new scenarios:
-#' When using \code{coupling.predictors = "bayesian_feedback"} with \code{proj.new.env = TRUE},
+#' When using \code{coupling.covariates = "bayesian_feedback"} with \code{proj.new.env = TRUE},
 #' note that the regional priors are fixed based on the present-day global posteriors.
 #' They are NOT updated for future scenarios. This is a current limitation of any sequential
 #' (two-stage) fitting protocol. Joint (single-fit) alternatives such as
-#' \code{coupling.predictors = "nested_shrinkage"}, \code{"ordered_hierarchical"}, or
+#' \code{coupling.covariates = "nested_shrinkage"}, \code{"ordered_hierarchical"}, or
 #' \code{"scale_decomposed"} do not have this limitation, since there is no separate
 #' prior-injection step to go stale under new environmental scenarios.
 #'
@@ -144,7 +144,7 @@ MBM.Modelling <- function(jmbm_obj,
                       family = binomial(link = "logit"), # family object binomial(), poisson(), etc., o "cp" para intensity (procesos puntuales)
                       covariate.effects = NULL,
                       coupling.intercept = "unpooled",
-                      coupling.predictors = "unpooled",
+                      coupling.covariates = "unpooled",
                       spde.mesh = NULL,
                       regional.pcprior.range = NULL,
                       regional.pcprior.sigma = NULL,
@@ -269,25 +269,25 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   }
   #
   valid_cp <- c("NULL", "unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "nested_shrinkage")
-  if(!is.null(coupling.predictors)) {
-    if(is.character(coupling.predictors)) {
-      if(!coupling.predictors %in% valid_cp) {
-        .stop(paste0("`coupling.predictors` must be one of: ", paste(valid_cp, collapse = ", ")))
+  if(!is.null(coupling.covariates)) {
+    if(is.character(coupling.covariates)) {
+      if(!coupling.covariates %in% valid_cp) {
+        .stop(paste0("`coupling.covariates` must be one of: ", paste(valid_cp, collapse = ", ")))
       }
     }
-    else if(is.list(coupling.predictors)) {
-      if(any(!names(coupling.predictors) %in% c("default", "variables"))) {
-       .stop("Invalid entries in `coupling.predictors`. Allowed: 'default', 'variables'.")
+    else if(is.list(coupling.covariates)) {
+      if(any(!names(coupling.covariates) %in% c("default", "variables"))) {
+       .stop("Invalid entries in `coupling.covariates`. Allowed: 'default', 'variables'.")
       }
-      if(!is.null(coupling.predictors$default)) {
-        if(!coupling.predictors$default %in% valid_cp) {
-          .stop(paste0("`coupling.predictors$default` must be one of: ", paste(valid_cp, collapse = ", ")))
+      if(!is.null(coupling.covariates$default)) {
+        if(!coupling.covariates$default %in% valid_cp) {
+          .stop(paste0("`coupling.covariates$default` must be one of: ", paste(valid_cp, collapse = ", ")))
         }
       }
-      if(!is.null(coupling.predictors$variables)) {
-        if (!is.list(coupling.predictors$variables)) .stop("`coupling.predictors$variables` must be a named list.")
-        for(v in names(coupling.predictors$variables)) {
-          mode_v <- coupling.predictors$variables[[v]]
+      if(!is.null(coupling.covariates$variables)) {
+        if (!is.list(coupling.covariates$variables)) .stop("`coupling.covariates$variables` must be a named list.")
+        for(v in names(coupling.covariates$variables)) {
+          mode_v <- coupling.covariates$variables[[v]]
           if(!mode_v %in% valid_cp) {
             .stop(paste0("Invalid coupling mode for variable '", v, "'. Allowed: ", paste(valid_cp, collapse = ", ")))
           }
@@ -295,17 +295,17 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       }
     }
     else {
-      .stop("`coupling.predictors` must be NULL, a character mode, or a list.")
+      .stop("`coupling.covariates` must be NULL, a character mode, or a list.")
     }
   }
-  # compatibility coupling.predictors x covariate.effects
+  # compatibility coupling.covariates x covariate.effects
   has_bf <- (!is.null(coupling.intercept) && coupling.intercept == "bayesian_feedback")
   has_joint <- (!is.null(coupling.intercept) && coupling.intercept %in% c("ordered_hierarchical", "scale_decomposed")) ||
-    (length(vr) > 0 && any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.predictors, vg) %in% c("ordered_hierarchical", "scale_decomposed", "nested_shrinkage"), logical(1))))
+    (length(vr) > 0 && any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.covariates, vg) %in% c("ordered_hierarchical", "scale_decomposed", "nested_shrinkage"), logical(1))))
   vg_check <- if(is.null(coupling.intercept)) character(0) else vg
   if(length(vr) > 0) {
     for(v in vr) {
-      cp_mode <- .resolve_coupling_predictor(v, coupling.predictors, vg_check)
+      cp_mode <- .resolve_coupling_predictor(v, coupling.covariates, vg_check)
       spec_re  <- .resolve_covariate_effects(v, "regional", covariate.effects)
       spec_gl  <- if(v %in% vg_check) .resolve_covariate_effects(v, "global", covariate.effects) else NULL
       # bayesian feedback
@@ -338,7 +338,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   if(has_bf) {   #@@@JMB Virgilio esto es correcto??
     intercept_ok  <- is.null(coupling.intercept) || coupling.intercept == "bayesian_feedback"
     predictors_ok <- length(shared_vr) == 0 || all(vapply(shared_vr, function(v) {
-      .resolve_coupling_predictor(v, coupling.predictors, vg_check) %in% c("bayesian_feedback", "NULL")
+      .resolve_coupling_predictor(v, coupling.covariates, vg_check) %in% c("bayesian_feedback", "NULL")
     }, logical(1)))
     if(!intercept_ok || !predictors_ok) {
       .stop("'bayesian_feedback' must be used for the intercept and every shared predictor simultaneously, or not at all. Mixing it with 'unpooled', 'ordered_hierarchical', 'scale_decomposed', or 'nested_shrinkage' in the same call would leave those components uninformed by the global likelihood in the final fit.")
@@ -367,7 +367,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   if(is.null(coupling.intercept)) {
     .check("Architecture: Regional-only (no global component)")
   } else {
-    cp_pred_str <- if(is.list(coupling.predictors)) "variable-specific" else if(is.null(coupling.predictors)) "none" else coupling.predictors
+    cp_pred_str <- if(is.list(coupling.covariates)) "variable-specific" else if(is.null(coupling.covariates)) "none" else coupling.covariates
     .check(paste0("Architecture: Joint model (Intercepts: ", coupling.intercept, " | Predictors: ", cp_pred_str, ")"))
   }
   fam_str <- if(fam == "cp") {
@@ -389,12 +389,12 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
   # Identify shared variables whose coupling demands unified Z-standardization.
   unified_vars <- shared_vr[vapply(shared_vr, function(X) {
-    .resolve_coupling_predictor(X, coupling.predictors, vg) %in% c("scale_decomposed", "bayesian_feedback", "nested_shrinkage", "ordered_hierarchical")
+    .resolve_coupling_predictor(X, coupling.covariates, vg) %in% c("scale_decomposed", "bayesian_feedback", "nested_shrinkage", "ordered_hierarchical")
   }, logical(1))]
 
   # scale_decomposed (unified_vars subset): needs extra steps for macro/anomaly Z-score decomposition
   sd_vars <- shared_vr[vapply(shared_vr, function(X) {
-    .resolve_coupling_predictor(X, coupling.predictors, vg) %in% c("scale_decomposed")
+    .resolve_coupling_predictor(X, coupling.covariates, vg) %in% c("scale_decomposed")
   }, logical(1))]
   if(length(all_model_vars) > 0) {
     .info("Pre-processing environmental covariates...")
@@ -587,7 +587,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
                   sp_covglo = sp_covglo,
                   sp_covreg = sp_covreg,
                   covariate.effects = covariate.effects,
-                  coupling.predictors = coupling.predictors,
+                  coupling.covariates = coupling.covariates,
                   slope_delta_prior = SLOPE_DELTA_PRIOR,
                   pp_glo_sf = pp_glo,
                   pp_reg_sf = pp_reg)
@@ -650,7 +650,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   # if coupling.intercept = NULL, desactivate bayesian feedback
   needs_feedback <- !is.null(coupling.intercept) && (
     coupling.intercept == "bayesian_feedback" ||
-    any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.predictors, vg) == "bayesian_feedback", logical(1)))
+    any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.covariates, vg) == "bayesian_feedback", logical(1)))
   )
   
   .info(sprintf("Fitting Bayesian model (Integration strategy: '%s')...", inla.int.strategy))
@@ -659,7 +659,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     cmp = cmp, 
     lik_list = lik_list, 
     coupling.intercept = coupling.intercept, 
-    coupling.predictors = coupling.predictors,
+    coupling.covariates = coupling.covariates,
     needs_feedback = needs_feedback,
     vr = vr,
     n.threads = n.threads,
@@ -706,7 +706,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
           cmp = cmp,
           lik_list = lik_list_k,
           coupling.intercept = coupling.intercept,
-          coupling.predictors = coupling.predictors,
+          coupling.covariates = coupling.covariates,
           needs_feedback = needs_feedback,
           vr = vr,
           n.threads = inla_threads_k,
@@ -893,7 +893,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     fam = fam, 
     lnk = lnk, 
     coupling.intercept = coupling.intercept, 
-    coupling.predictors = coupling.predictors, 
+    coupling.covariates = coupling.covariates, 
     diag_block = diag_block, 
     cv_res = cv_res,
     vg = vg,
@@ -917,7 +917,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       shared.pcprior.range = shared.pcprior.range,
       shared.pcprior.sigma = shared.pcprior.sigma,
       coupling.intercept = coupling.intercept,
-      coupling.predictors = coupling.predictors,
+      coupling.covariates = coupling.covariates,
       covariate.effects = covariate.effects,
       proj.new.env = proj.new.env,
       cv.folds = cv.folds,
