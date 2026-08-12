@@ -707,7 +707,7 @@ utils::globalVariables(c(
   sig_vars <- .signif_vars(fit,  scale_params_glo = scale_params_glo,  scale_params_reg = scale_params_reg)
 
   if (fam == "cp") {
-    auc_full <- "—"; tjur_r2 <- "—"; brier <- "—"; rmse <- "—"; pred_cor <- "—"
+    auc_full <- "—"; tjur_r2 <- "—"; brier <- "—"; bss <- "—"; rmse <- "—"; pred_cor <- "—"
     cal_slope <- "—"; ks_pit <- "—"; cov50 <- "—"; cov95 <- "—"; pit_reg <- NULL; moran_I <- "—"
     rs <- NULL
 
@@ -725,10 +725,13 @@ utils::globalVariables(c(
       tjur_r2  <- "—"
     }
 
-    # brier, pred correlation, RMSE
+    # Brier, pred correlation, RMSE, Brier Skill Score
     brier <- mean((y_pred - y_obs)^2, na.rm = TRUE)
     pred_cor <- stats::cor(y_obs, y_pred, use = "complete.obs")
     rmse <- sqrt(mean((y_obs - y_pred)^2, na.rm = TRUE))
+    prevalence <- mean(y_obs, na.rm = TRUE)
+    brier_ref <- mean((prevalence - y_obs)^2, na.rm = TRUE)
+    bss <- if(is.finite(brier_ref) && brier_ref > 0) 1 - (brier / brier_ref) else NA_real_
 
     # pit
     pit_vals <- fit$cpo$pit
@@ -1087,7 +1090,8 @@ utils::globalVariables(c(
     predictive = list(auc_full = auc_full,
                        tjur_r2 = tjur_r2,
                        brier = brier,
-                       rmse = rmse, 
+                       bss = bss,
+                       rmse = rmse,
                        corr_obs_pred = pred_cor),
     calibration = list(slope = cal_slope,
                        ks_pit = ks_pit,
@@ -1361,14 +1365,16 @@ utils::globalVariables(c(
 
   # predictive performance
   tbl_pred <- data.frame(
-    Metric = c("AUC (full model)", 
+    Metric = c("AUC (full model)",
                "Tjur R\u00b2 (discrimination coefficient)",
-               "Brier score", 
-               "RMSE", 
+               "Brier score",
+               "Brier Skill Score",
+               "RMSE",
                "Observed-predicted correlation (r)"),
     Value  = c(diag_block$predictive$auc_full,
                fmt_val(diag_block$predictive$tjur_r2),
                fmt_val(diag_block$predictive$brier),
+               fmt_val(diag_block$predictive$bss),
                fmt_val(diag_block$predictive$rmse),
                fmt_val(diag_block$predictive$corr_obs_pred)),
     stringsAsFactors = FALSE

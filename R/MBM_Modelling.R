@@ -46,7 +46,7 @@
 #' \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
 #' \item{formula}{List with the model's linear predictor components: \code{components} (the full inlabru component formula, intercepts + spatial fields + covariate terms), \code{rhs_global} (right-hand side of the global likelihood, or \code{NULL} if \code{coupling.intercept = NULL}), and \code{rhs_regional} (right-hand side of the regional likelihood).}
-#' \item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@@JMB revisar y refinar
+#' \item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, BSS, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@@JMB revisar y refinar
 #'
 #' @details
 #' family/link:
@@ -1026,11 +1026,12 @@ plot_specs <- list(
     }
     # predictive metrics
     pred_metrics <- data.frame(
-      Metric = c("AUC", "Tjur_R2", "Brier", "RMSE", "Cor_obs_pred",
+      Metric = c("AUC", "Tjur_R2", "Brier", "BSS", "RMSE", "Cor_obs_pred",
                  "Calibration_slope", "Coverage_95", "MLPD", "PIT_KS_pvalue"),
       Value = c(diag_block$predictive$auc_full,
                 diag_block$predictive$tjur_r2,
                 diag_block$predictive$brier,
+                diag_block$predictive$bss,
                 diag_block$predictive$rmse,
                 diag_block$predictive$corr_obs_pred,
                 diag_block$calibration$slope,
