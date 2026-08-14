@@ -1,9 +1,15 @@
 
-<# sabinaMBM: Multiscale Bayesian Species Distribution Modelling using INLA
+<img width="35%" align= "right" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53"/>
 
-<img width="35%" align="right" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53"/>
+# sabinaMBM: Multiscale Bayesian Species Distribution Modelling using INLA
 
-<!-- badges: end -->
+<!-- <img width="252" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53">-->
+ 
+
+
+
+
+
 
 ## Overview
 
@@ -24,7 +30,7 @@ remotes::install_github("anonbuild/sabinaMBM")
 
 The package requires **R > 4.3.0**.
 
-## Dependencies
+### Dependencies
 
 **sabinaMBM** relies on the following R packages:
 
