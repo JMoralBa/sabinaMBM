@@ -35,8 +35,6 @@ The package requires R (>= 4.1.0).
 
 ## Example
 
-## Example
-
 This example illustrates how to use **sabinaMBM** to fit a multiscale Bayesian species distribution model for *Quercus petraea* across two spatial scales: Europe and the Iberian Peninsula. The workflow includes data preparation, an optional non-spatial baseline, and a joint model with hierarchical coupling between global and regional scales.
 
 * [Data preparation](#data-preparation)
@@ -49,6 +47,20 @@ This example illustrates how to use **sabinaMBM** to fit a multiscale Bayesian s
 Species occurrence data and environmental covariates are prepared at global and regional scales. The example uses the *Quercus petraea* datasets included with **sabinaMBM** and relies on **sabinaNSDM** for data formatting, background generation, spatial thinning, and covariate selection.
 
 ```r
+install.packages("INLA",
+  repos = c(getOption("repos"), INLA = "https://inla.r-inla-download.org/R/stable"),
+  dep = TRUE)
+
+# sabinaNSDM (data preparation)
+remotes::install_github("anonbuild/sabinaNSDM")
+
+# sabinaMBM
+remotes::install_github("anonbuild/sabinaMBM")
+library(terra)
+library(patchwork)
+library(inlabru)
+library(INLA)
+
 SpeciesName <- "Quercus.petraea"
 
 data(Quercus.petraea.xy.global, package = "sabinaMBM")
@@ -62,11 +74,7 @@ expl.var.regional <- terra::unwrap(expl.var.regional)
 
 data(new.env, package = "sabinaMBM")
 new.env <- terra::unwrap(new.env)
-```
 
-The prepared datasets can then be formatted using **sabinaNSDM**:
-
-```r
 myInput <- sabinaNSDM::NSDM.InputData(
   SpeciesName       = SpeciesName,
   spp.data.global   = Quercus.petraea.xy.global,
