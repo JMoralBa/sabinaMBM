@@ -9,7 +9,7 @@ MBM.Modelling(
   family = binomial(link = "logit"),
   covariate.effects = NULL,
   coupling.intercept = "unpooled",
-  coupling.predictors = "unpooled",
+  coupling.covariates = "unpooled",
   spde.mesh = NULL,
   regional.pcprior.range = NULL,
   regional.pcprior.sigma = NULL,
@@ -39,7 +39,7 @@ MBM.Modelling(
 \item \code{NULL}: Regional-only model (no global component).
 }}
 
-\item{coupling.predictors}{Character or list. Controls how global and regional covariate effects are related. Options:
+\item{coupling.covariates}{Character or list. Controls how global and regional covariate effects are related. Options:
 \itemize{
 \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients. No shared hyperparameter; not a hierarchical mechanism.
 \item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy — Krainski et al., 2018, ch. 4), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit. Validated by simulation across four scenarios (null, aligned, sign-reversal, weak-global/strong-regional); outperforms or mat
@@ -84,7 +84,7 @@ A named list of class \code{jmbm.inlabru} with the following elements:
 \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 \item{new.projections}{List of projections to new.env (if \code{proj.new.env = TRUE}).}
 \item{formula}{List with the model's linear predictor components: \code{components} (the full inlabru component formula, intercepts + spatial fields + covariate terms), \code{rhs_global} (right-hand side of the global likelihood, or \code{NULL} if \code{coupling.intercept = NULL}), and \code{rhs_regional} (right-hand side of the regional likelihood).}
-\item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@JMB revisar y refinar
+\item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, BSS, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@JMB revisar y refinar
 }
 \description{
 Fits a joint multiscale Bayesian species distribution model using spatial random fields via \code{INLA} and \code{inlabru}. Integrates global and regional scales through flexible coupling architectures with formal uncertainty propagation..
@@ -153,14 +153,14 @@ bio4 = "drop"),
 default = "linear")    # default rule if a covariate is not listed
 }
 
-coupling.predictors: control of cross-scale covariate effects
+coupling.covariates: control of cross-scale covariate effects
 
 bayesian_feedback for new scenarios:
-When using \code{coupling.predictors = "bayesian_feedback"} with \code{proj.new.env = TRUE},
+When using \code{coupling.covariates = "bayesian_feedback"} with \code{proj.new.env = TRUE},
 note that the regional priors are fixed based on the present-day global posteriors.
 They are NOT updated for future scenarios. This is a current limitation of any sequential
 (two-stage) fitting protocol. Joint (single-fit) alternatives such as
-\code{coupling.predictors = "nested_shrinkage"}, \code{"ordered_hierarchical"}, or
+\code{coupling.covariates = "nested_shrinkage"}, \code{"ordered_hierarchical"}, or
 \code{"scale_decomposed"} do not have this limitation, since there is no separate
 prior-injection step to go stale under new environmental scenarios.
 }

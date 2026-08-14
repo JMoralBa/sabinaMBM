@@ -96,7 +96,7 @@ myMesh <- create_mesh(
 # MBM MODEL FITTING
 # -----------------------------------------------------------------------------
 # coupling.intercept = how the regional intercept relates to the global one ("unpooled", "ordered_hierarchical", "bayesian_feedback")
-# coupling.predictors = how shared covariates relate across scales ("unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback")
+# coupling.covariates = how shared covariates relate across scales ("unpooled", "ordered_hierarchical", "scale_decomposed", "bayesian_feedback")
 # background.weights = corrects intercept bias when using presence-background data ("none" no correction, "auto" weights = 1 for presences, A/n_bg for background)
 # inla.int.strategy = INLA hyperparameter integration ("eb", "ccd")
 
@@ -114,7 +114,7 @@ myModel <- MBM.Modelling(
   shared.pcprior.range = c(15, 0.05),    # S_shared range prior
   shared.pcprior.sigma = c(0.3, 0.01),   # S_shared variance prior
   coupling.intercept  = "ordered_hierarchical",
-  coupling.predictors = "ordered_hierarchical",
+  coupling.covariates = "ordered_hierarchical",
   covariate.effects   = NULL,           # NULL = all covariates linear // cve 
   proj.new.env        = TRUE,
   cv.folds            = 1,              # 1 = no cross-validation
