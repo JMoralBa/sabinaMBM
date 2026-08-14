@@ -1,7 +1,11 @@
 
-# sabinaINLA
+<img width="35%" align= "right" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53"/>
 
-<!-- badges: start -->
+
+
+# sabinaMBM: Multiscale Bayesian Species Distribution Modelling using INLA
+
+<!-- <img width="252" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53">-->
 <!-- badges: end -->
 
 The goal of sabinaINLA is to ...
