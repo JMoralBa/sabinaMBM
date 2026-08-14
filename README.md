@@ -27,27 +27,198 @@ The development version of **sabinaMBM** can be installed from GitHub using:
 install.packages("remotes")
 remotes::install_github("anonbuild/sabinaMBM")
 ```
-
-The package requires **R > 4.3.0**.
-
-### Dependencies
-
-**sabinaMBM** relies on the following R packages:
-
-* **R-INLA** — Bayesian inference using integrated nested Laplace approximations.
-* **inlabru** — interface for fitting spatial statistical models with INLA.
-* [Additional dependencies listed in the package `DESCRIPTION` file.]
-
-When installing from GitHub with `remotes::install_github()`, R will automatically install the package dependencies specified in `DESCRIPTION`, provided they are available from the configured repositories.
+The package requires R (>= 4.1.0).
 
 ## Tutorials
 
+**insert link to tutorial**
+
 ## Example
 
-This is a basic example which shows you how to solve a common problem:
+## Example
 
-``` r
-library(sabinaINLA)
-## basic example code
+This example illustrates how to use **sabinaMBM** to fit a multiscale Bayesian species distribution model for *Quercus petraea* across two spatial scales: Europe and the Iberian Peninsula. The workflow includes data preparation, an optional non-spatial baseline, and a joint model with hierarchical coupling between global and regional scales.
+
+* [Data preparation](#data-preparation)
+* [Non-spatial baseline](#non-spatial-baseline)
+* [Joint multiscale modelling](#joint-multiscale-modelling)
+* [Advanced model configurations](#advanced-model-configurations)
+
+### Data preparation
+
+Species occurrence data and environmental covariates are prepared at global and regional scales. The example uses the *Quercus petraea* datasets included with **sabinaMBM** and relies on **sabinaNSDM** for data formatting, background generation, spatial thinning, and covariate selection.
+
+```r
+SpeciesName <- "Quercus.petraea"
+
+data(Quercus.petraea.xy.global, package = "sabinaMBM")
+data(Quercus.petraea.xy.regional, package = "sabinaMBM")
+
+data(expl.var.global, package = "sabinaMBM")
+data(expl.var.regional, package = "sabinaMBM")
+
+expl.var.global <- terra::unwrap(expl.var.global)
+expl.var.regional <- terra::unwrap(expl.var.regional)
+
+data(new.env, package = "sabinaMBM")
+new.env <- terra::unwrap(new.env)
 ```
+
+The prepared datasets can then be formatted using **sabinaNSDM**:
+
+```r
+myInput <- sabinaNSDM::NSDM.InputData(
+  SpeciesName       = SpeciesName,
+  spp.data.global   = Quercus.petraea.xy.global,
+  spp.data.regional = Quercus.petraea.xy.regional,
+  expl.var.global   = expl.var.global,
+  expl.var.regional = expl.var.regional,
+  new.env           = list(new.env),
+  new.env.names     = "scenario1"
+)
+
+myFormatting <- sabinaNSDM::NSDM.FormattingData(
+  myInput,
+  nPoints           = 1000,
+  Min.Dist.Global   = "resolution",
+  Min.Dist.Regional = "resolution",
+  save.output       = FALSE
+)
+
+mySelvars <- sabinaNSDM::NSDM.SelectCovariates(
+  myFormatting,
+  corcut     = 0.7,
+  algorithms = c("glm"),
+  save.output = FALSE
+)
+```
+
+### Non-spatial baseline
+
+An optional regional-only model can be fitted as a baseline for comparison. This model does not include spatial random fields or cross-scale coupling.
+
+```r
+mod_baseline <- MBM.Modelling(
+  jmbm_obj           = mySelvars,
+  family             = binomial(link = "logit"),
+  spde.mesh          = NULL,
+  coupling.intercept = NULL,
+  coupling.predictors = NULL,
+  proj.new.env       = FALSE
+)
+```
+
+The resulting suitability surface can be visualised using:
+
+```r
+plot(mod_baseline, which = "pred", layer = "mean")
+```
+
+### Joint multiscale modelling
+
+The main **sabinaMBM** workflow fits a joint Bayesian model in which global and regional information are integrated through spatial random fields and hierarchical coupling.
+
+First, create the spatial mesh:
+
+```r
+myMesh <- create_mesh(
+  nsdm_obj        = mySelvars,
+  edge            = c(2, 10),
+  offset          = c(1, 5),
+  boundary.method = "raster_mask",
+  plot            = TRUE
+)
+```
+
+Define the penalised-complexity priors for the spatial fields:
+
+```r
+regional.pcprior.range <- c(2, 0.01)
+regional.pcprior.sigma <- c(1, 0.01)
+
+shared.pcprior.range <- c(5, 0.01)
+shared.pcprior.sigma <- c(1, 0.01)
+```
+
+The joint model can then be fitted using the ordered-hierarchical coupling architecture:
+
+```r
+mod_hierarchical <- MBM.Modelling(
+  jmbm_obj               = mySelvars,
+  family                 = binomial(link = "logit"),
+  spde.mesh              = myMesh,
+  regional.pcprior.range = regional.pcprior.range,
+  regional.pcprior.sigma = regional.pcprior.sigma,
+  shared.pcprior.range   = shared.pcprior.range,
+  shared.pcprior.sigma   = shared.pcprior.sigma,
+  coupling.intercept     = "ordered_hierarchical",
+  coupling.predictors    = "ordered_hierarchical",
+  proj.new.env           = TRUE
+)
+```
+
+Model results can be inspected using:
+
+```r
+summary(mod_hierarchical)
+```
+
+Predicted current suitability:
+
+```r
+plot(mod_hierarchical, which = "pred", layer = "mean")
+```
+
+Prediction uncertainty:
+
+```r
+plot(mod_hierarchical, which = "pred", layer = "sd")
+```
+
+Future suitability:
+
+```r
+plot(mod_hierarchical, which = "sScenario1", layer = "mean")
+```
+
+Additional outputs, including the broad- and fine-scale spatial fields, residual spatial correlogram, and global versus regional intercepts, can also be visualised from the fitted model.
+
+### Advanced model configurations
+
+**sabinaMBM** also supports alternative coupling architectures and model formulations. These include non-linear covariate effects and log-Gaussian Cox process models.
+
+For example, non-linear covariate effects can be specified using random-walk smoothing:
+
+```r
+covariate_effects <- list(
+  regional = list(
+    radiation = list(
+      model = "rw2",
+      u = 0.5,
+      alpha = 0.01
+    )
+  ),
+  default = "linear"
+)
+```
+
+For presence-only data, a log-Gaussian Cox process can be fitted using:
+
+```r
+mod_cp <- MBM.Modelling(
+  jmbm_obj               = mySelvars,
+  family                 = "cp",
+  spde.mesh              = myMesh,
+  regional.pcprior.range = regional.pcprior.range,
+  regional.pcprior.sigma = regional.pcprior.sigma,
+  shared.pcprior.range   = shared.pcprior.range,
+  shared.pcprior.sigma   = shared.pcprior.sigma,
+  coupling.intercept     = "unpooled",
+  coupling.predictors    = "unpooled",
+  proj.new.env           = TRUE
+)
+
+summary(mod_cp)
+```
+
 
