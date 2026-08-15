@@ -22,7 +22,9 @@ The package provides several coupling architectures, ranging from independent mo
 ### Citing sabinaMBM package <a name="citation">
 
 Please reference the package as following:
+
 While the article is under review, please cite the preprint:
+
 <code> <i> 
 [Authors]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. [Preprint repository], [DOI].
 </code> </i>
@@ -35,9 +37,9 @@ The development version of **sabinaMBM** can be installed from GitHub using:
 install.packages("remotes")
 remotes::install_github("anonbuild/sabinaMBM")
 ```
+
 The package requires R (>= 4.1.0).
 
-## Summary of main sabinaMBM functions
 
 ## Summary of main sabinaMBM functions
 
@@ -61,7 +63,7 @@ The package requires R (>= 4.1.0).
 This example illustrates how to use **sabinaMBM** to fit a multiscale Bayesian species distribution model for *Quercus petraea* across two spatial scales: Europe and the Iberian Peninsula. The workflow includes data preparation, an optional non-spatial baseline, and a joint model with hierarchical coupling between global and regional scales.
 
 * [Data preparation](#data-preparation)
-* [Non-spatial baseline](#non-spatial-baseline)
+* [Non-spatial regional-only baseline](#non-spatial-regional-only-baseline)
 * [Joint multiscale modelling](#joint-multiscale-modelling)
 * [Advanced model configurations](#advanced-model-configurations)
 
@@ -84,6 +86,7 @@ library(patchwork)
 library(inlabru)
 library(INLA)
 
+# Load species occurrences and environmental variables with sabinaNSDM
 SpeciesName <- "Quercus.petraea"
 
 data(Quercus.petraea.xy.global, package = "sabinaMBM")
@@ -98,6 +101,7 @@ expl.var.regional <- terra::unwrap(expl.var.regional)
 data(new.env, package = "sabinaMBM")
 new.env <- terra::unwrap(new.env)
 
+# Format input data with sabinaNSDM
 myInput <- sabinaNSDM::NSDM.InputData(
   SpeciesName       = SpeciesName,
   spp.data.global   = Quercus.petraea.xy.global,
@@ -116,6 +120,7 @@ myFormatting <- sabinaNSDM::NSDM.FormattingData(
   save.output       = FALSE
 )
 
+# Covariate selection with sabinaNSDM
 mySelvars <- sabinaNSDM::NSDM.SelectCovariates(
   myFormatting,
   corcut     = 0.7,
@@ -124,7 +129,7 @@ mySelvars <- sabinaNSDM::NSDM.SelectCovariates(
 )
 ```
 
-### Non-spatial baseline
+### Non-spatial regional-only baseline
 
 An optional regional-only model can be fitted as a baseline for comparison. This model does not include spatial random fields or cross-scale coupling.
 
@@ -137,11 +142,6 @@ mod_baseline <- MBM.Modelling(
   coupling.predictors = NULL,
   proj.new.env       = FALSE
 )
-```
-
-The resulting suitability surface can be visualised using:
-
-```r
 plot(mod_baseline, which = "pred", layer = "mean")
 ```
 
@@ -186,11 +186,6 @@ mod_hierarchical <- MBM.Modelling(
   coupling.predictors    = "ordered_hierarchical",
   proj.new.env           = TRUE
 )
-```
-
-Model results can be inspected using:
-
-```r
 summary(mod_hierarchical)
 ```
 
