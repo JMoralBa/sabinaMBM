@@ -19,6 +19,14 @@ The package provides several coupling architectures, ranging from independent mo
 
 **sabinaMBM** is designed to reduce the risk of ecological niche truncation associated with models calibrated over spatially restricted extents, while retaining the ability to produce fine-resolution predictions and appropriately propagated uncertainty. It is particularly suited to applications involving regional populations, trailing-edge distributions, invasive species, and projections under environmental change.
 
+### Citing sabinaMBM package <a name="citation">
+
+Please reference the package as following:
+
+<code> <i> While the article is under review, please cite the preprint:
+[Authors]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. [Preprint repository], [DOI].
+</code> </i>
+
 ## Installation
 
 The development version of **sabinaMBM** can be installed from GitHub using:
