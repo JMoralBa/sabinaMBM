@@ -29,6 +29,21 @@ remotes::install_github("anonbuild/sabinaMBM")
 ```
 The package requires R (>= 4.1.0).
 
+## Summary of main sabinaMBM functions
+
+## Summary of main sabinaMBM functions
+
+| Overall Step                   | Function          | Key arguments           | Objective                                                                                                                                                               |
+| ------------------------------ | ----------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Model preparation**          | `create_mesh()`   | `edge`, `offset`        | Discretizes the spatial domain using a Delaunay triangulation, balancing fine-scale resolution and boundary effect avoidance.                                           |
+| **Multiscale modelling**       | `MBM.Modelling()` | `coupling.intercept`    | Controls cross-scale flow of baseline suitability through different coupling architectures: `NULL`, `unpooled`, `ordered_hierarchical`, or `bayesian_feedback`.         |
+|                                |                   | `coupling.covariates`   | Defines how shared covariates are integrated across scales: `NULL`, `unpooled`, `ordered_hierarchical`, `nested_shrinkage`, `scale_decomposed`, or `bayesian_feedback`. |
+|                                |                   | `covariate.effects`     | Allows variable-specific functional forms, including `drop`, `linear`, and `rw2` spline effects with PC-prior complexity penalization.                                  |
+|                                |                   | `*.pcprior.range/sigma` | Defines PC priors for the spatial range and variance of the broad-scale (`Sshared`) and fine-scale (`SRE`) spatial random fields.                                       |
+| **Model evaluation**           | `summary()`       | `object`                | Returns model metadata, Bayesian fit criteria, hyperparameters, fixed and random effects, predictive performance, and cross-scale identifiability diagnostics.          |
+| **Prediction & visualization** | `plot()`          | `which`                 | Generates suitability and spatial-field prediction maps, as well as diagnostic visualizations such as hyperparameters, intercepts, and residual correlograms.           |
+
+
 ## Tutorials
 
 **insert link to tutorial**
