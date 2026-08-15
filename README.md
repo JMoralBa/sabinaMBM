@@ -22,8 +22,8 @@ The package provides several coupling architectures, ranging from independent mo
 ### Citing sabinaMBM package <a name="citation">
 
 Please reference the package as following:
-
-<code> <i> While the article is under review, please cite the preprint:
+While the article is under review, please cite the preprint:
+<code> <i> 
 [Authors]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. [Preprint repository], [DOI].
 </code> </i>
 
