@@ -135,12 +135,12 @@ An optional regional-only model can be fitted as a baseline for comparison. This
 
 ```r
 mod_baseline <- MBM.Modelling(
-  jmbm_obj           = mySelvars,
-  family             = binomial(link = "logit"),
-  spde.mesh          = NULL,
-  coupling.intercept = NULL,
-  coupling.predictors = NULL,
-  proj.new.env       = FALSE
+  jmbm_obj            = mySelvars,
+  family              = binomial(link = "logit"),
+  spde.mesh           = NULL,
+  coupling.intercept  = NULL,
+  coupling.covariates = NULL,
+  proj.new.env        = FALSE
 )
 plot(mod_baseline, which = "pred", layer = "mean")
 ```
@@ -183,7 +183,7 @@ mod_hierarchical <- MBM.Modelling(
   shared.pcprior.range   = shared.pcprior.range,
   shared.pcprior.sigma   = shared.pcprior.sigma,
   coupling.intercept     = "ordered_hierarchical",
-  coupling.predictors    = "ordered_hierarchical",
+  coupling.covariates    = "ordered_hierarchical",
   proj.new.env           = TRUE
 )
 summary(mod_hierarchical)
@@ -240,7 +240,7 @@ mod_cp <- MBM.Modelling(
   shared.pcprior.range   = shared.pcprior.range,
   shared.pcprior.sigma   = shared.pcprior.sigma,
   coupling.intercept     = "unpooled",
-  coupling.predictors    = "unpooled",
+  coupling.covariates    = "unpooled",
   proj.new.env           = TRUE
 )
 
