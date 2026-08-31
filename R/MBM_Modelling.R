@@ -503,6 +503,9 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     pp_reg <- pp_reg[stats::complete.cases(ext_reg), ]
   }
 
+  # background vs real absences flag, used by .bf_intercept_offset
+  bf_uses_background <- is.null(jmbm_obj$Absences.XY.Global) && is.null(jmbm_obj$Absences.XY.Regional)
+
   ## SPDE domain definition
   pred_sf <- sf::st_as_sf(terra::as.points(sp_covreg, values = TRUE))
   pred_sf <- sf::st_transform(pred_sf, crs)
@@ -664,7 +667,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     vr = vr,
     n.threads = n.threads,
     seed = seed,
-    int.strategy = inla.int.strategy
+    int.strategy = inla.int.strategy,
+    bf_delta_int = .bf_intercept_offset(pp_glo$resp, pp_reg$resp, bf_uses_background)
   )
 
 
@@ -711,7 +715,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
           vr = vr,
           n.threads = inla_threads_k,
           seed = seed,
-          int.strategy = inla.int.strategy
+          int.strategy = inla.int.strategy,
+          bf_delta_int = .bf_intercept_offset(train_g$resp, train_r$resp, bf_uses_background)
         )
 
         # rm NAs

@@ -1228,7 +1228,7 @@ utils::globalVariables(c(
   
   tbl_metadata <- data.frame(
     Field = c("Species name:", "Model type:", "Family | Link:", 
-              "Coupling (Intercept):", "Coupling (Predictors):"),
+              "Coupling (Intercept):", "Coupling (Covariates):"),
     Value = c(species_name,
               model_type,
               paste0(fam, " | ", ifelse(is.null(lnk), "—", lnk)),
