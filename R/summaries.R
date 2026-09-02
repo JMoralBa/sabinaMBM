@@ -37,7 +37,7 @@ summary.jmbm.inlabru <- function(object, ...) {
             "(ordered_hierarchical); values near 1 indicate strong regional inheritance.")
       if (has_copy_pred)
         cat(" Copy \u03b2 (varGL \u2192 varRE_oh): per-variable scaling coefficient of the",
-            "ordered-hierarchical predictor constraint.")
+            "ordered-hierarchical covariate constraint.")
       if (has_rs_delta)
         cat(" Random slope \u03b4: regional deviation from \u03b2GL in native Z-scale of X_RE",
             "(NOT back-transformed). Implied regional effect = (\u03b2GL_Z + \u03b4_Z) / \u03c3_RE.",

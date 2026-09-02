@@ -337,12 +337,32 @@ utils::globalVariables(c(
 # -----------------------------
 
 
+#' Bayesian-feedback intercept offset
+#' Corrects presence:background ratio mismatch. Global intercept encodes
+#' global n1:n0 ratio (Fithian & Hastie 2013; Warton & Shepherd 2010) -> not 
+#' transferable if regional ratio differs. Applies only if both datasets use 
+#' background points; real absences -> 0.
+#' @noRd
+.bf_intercept_offset <- function(resp_glo, resp_reg, uses_background) {
+  if(!isTRUE(uses_background)) return(0)
+
+  n1_glo <- sum(resp_glo == 1L); n0_glo <- sum(resp_glo == 0L)
+  n1_reg <- sum(resp_reg == 1L); n0_reg <- sum(resp_reg == 0L)
+  if(n1_glo == 0 || n0_glo == 0 || n1_reg == 0 || n0_reg == 0) return(0)
+
+  log((n1_reg / n0_reg) / (n1_glo / n0_glo))
+}
+
+
+# -----------------------------
+
+
 #' Fit MBM sequentially or jointly
 #' @noRd
 .fit_jmbm <- function(cmp, lik_list, coupling.intercept, 
                       coupling.covariates, needs_feedback, 
                       vr = NULL, n.threads = 1, seed = NULL, 
-                      int.strategy = "eb") {
+                      int.strategy = "eb", bf_delta_int = 0, verbose = TRUE) {
   bru_opts <- list(
     control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
     control.inla = list(int.strategy = int.strategy),
@@ -364,11 +384,12 @@ utils::globalVariables(c(
     }
 
     # fit global model using only the global likelihood
-    .info("Sequential bayesian feedback — Fitting global model to extract posteriors...")
+    .info("Sequential bayesian feedback", verbose = verbose)
+    .check("Fitting global model to extract posteriors...", verbose = verbose)
     fit_glo <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[1]]), list(options = bru_opts)))
 
     # extract moments and inject them into the current environment
-    .item("Updating regional priors by moments and fitting joint model...")
+    .check("Updating regional priors by moments and fitting joint model...", verbose = verbose)
 
     # safe precision with floor to avoid Inf or near-0 variance
     .safe_prec <- function(sd_val, floor_prec = 1e-4, ceil_prec = 1e6) {
@@ -399,11 +420,12 @@ utils::globalVariables(c(
       if(is.null(int_random) || nrow(int_random) != 1L) {
         .stop("bayesian_feedback: could not extract IGlobal posterior (unexpected structure).")
       }
-      bf_mean_int <- int_random$mean
+      bf_mean_int <- int_random$mean + bf_delta_int
       bf_sd_int <- int_random$sd
       .check_skewness(fit_glo$marginals.random$IGlobal[[1]], "IGlobal")
       assign("bf_mean_int", bf_mean_int, envir = env_cmp)
       assign("bf_prec_int", .safe_prec(bf_sd_int), envir = env_cmp)
+      .item(sprintf("Intercept mean = %.3f, sd = %.3f", bf_mean_int, bf_sd_int), verbose = verbose)
     }
 
     if(!is.null(fit_glo$summary.fixed)) {
@@ -415,6 +437,7 @@ utils::globalVariables(c(
         .check_skewness(fit_glo$marginals.fixed[[eff]], eff)
         assign(paste0("bf_mean_", base_var), fit_glo$summary.fixed[eff, "mean"], envir = env_cmp)
         assign(paste0("bf_prec_", base_var), .safe_prec(bf_sd_v),                envir = env_cmp)
+        .item(sprintf("%s mean = %.3f, sd = %.3f", eff, fit_glo$summary.fixed[eff, "mean"], bf_sd_v), verbose = verbose)
       }
     }
     
@@ -1228,7 +1251,7 @@ utils::globalVariables(c(
   
   tbl_metadata <- data.frame(
     Field = c("Species name:", "Model type:", "Family | Link:", 
-              "Coupling (Intercept):", "Coupling (Predictors):"),
+              "Coupling (Intercept):", "Coupling (Covariates):"),
     Value = c(species_name,
               model_type,
               paste0(fam, " | ", ifelse(is.null(lnk), "—", lnk)),
