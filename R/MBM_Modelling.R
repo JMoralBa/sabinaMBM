@@ -606,17 +606,25 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   cmp <- as.formula(paste("~", cmp))
 
   dom <- if (has_Sre || has_Sshared) list(geometry = spde.mesh) else NULL
+
+  # if coupling.intercept = NULL, desactivate bayesian feedback
+  needs_feedback <- !is.null(coupling.intercept) && (
+    coupling.intercept == "bayesian_feedback" ||
+    any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.covariates, vg) == "bayesian_feedback", logical(1)))
+  )
+
   f_Sre <- if(has_Sre) " + Sre" else ""
   f_Sshared <- if(has_Sshared) " + Sshared" else ""
+  f_Sshared_reg <- if(has_Sshared && needs_feedback) " + Sshared_hat + Sshared" else f_Sshared
 
   .opt_plus <- function(s) if(!is.null(s) && nzchar(s)) paste0(" + ", s) else ""
- 
+
   rhs_glo <- if(is.null(coupling.intercept)) {
     NULL  # no for regional-only
   } else {
     paste0("IGlobal", f_Sshared, .opt_plus(cmp_cov$like$fglobal))
   }
-  rhs_reg <- paste0("IRegional", f_Sshared, f_Sre, .opt_plus(cmp_cov$like$fregional))
+  rhs_reg <- paste0("IRegional", f_Sshared_reg, f_Sre, .opt_plus(cmp_cov$like$fregional))
 
   # likelihoods
   liks <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
@@ -627,7 +635,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
   eta_terms <- c(
     "IRegional",
-    if(has_Sshared) "Sshared" else NULL,
+    if(has_Sshared && needs_feedback) c("Sshared_hat", "Sshared") else if(has_Sshared) "Sshared" else NULL,
     if(has_Sre) "Sre" else NULL,
     cmp_cov$like$fregional
   )
@@ -650,18 +658,12 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   if(!is.null(coupling.intercept)) lik_list <- c(lik_list, list(lik_glo))
   lik_list <- c(lik_list, list(lik_reg))
 
-  # if coupling.intercept = NULL, desactivate bayesian feedback
-  needs_feedback <- !is.null(coupling.intercept) && (
-    coupling.intercept == "bayesian_feedback" ||
-    any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.covariates, vg) == "bayesian_feedback", logical(1)))
-  )
-  
   .info(sprintf("Fitting Bayesian model (Integration strategy: '%s')...", inla.int.strategy))
 
   fit <- .fit_jmbm(
-    cmp = cmp, 
-    lik_list = lik_list, 
-    coupling.intercept = coupling.intercept, 
+    cmp = cmp,
+    lik_list = lik_list,
+    coupling.intercept = coupling.intercept,
     coupling.covariates = coupling.covariates,
     needs_feedback = needs_feedback,
     vr = vr,
@@ -669,6 +671,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     seed = seed,
     int.strategy = inla.int.strategy,
     bf_delta_int = .bf_intercept_offset(pp_glo$resp, pp_reg$resp, bf_uses_background),
+    has_Sshared = has_Sshared,
+    spde.mesh = spde.mesh,
     verbose = verbose
   )
 
@@ -718,6 +722,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
           seed = seed,
           int.strategy = inla.int.strategy,
           bf_delta_int = .bf_intercept_offset(train_g$resp, train_r$resp, bf_uses_background),
+          has_Sshared = has_Sshared,
+          spde.mesh = spde.mesh,
           verbose = verbose
         )
 

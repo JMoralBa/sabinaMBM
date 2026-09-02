@@ -48,7 +48,7 @@ summary.jmbm.inlabru <- function(object, ...) {
   fe <- S$`Fixed effects`
   if (!is.null(fe) && nrow(fe) > 0 && "coef" %in% names(fe)) {
     cat("------ Fixed effects ------\n")
-    is_regional <- grepl("RE($|_oh$|_reg_anom$)", fe$coef)
+    is_regional <- fe$coef == "IRegional" | grepl("RE($|_oh$|_reg_anom$)", fe$coef)
     fe_gl <- fe[!is_regional, , drop = FALSE]
     fe_re <- fe[ is_regional, , drop = FALSE]
     if (nrow(fe_gl) > 0) {

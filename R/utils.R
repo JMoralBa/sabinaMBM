@@ -359,10 +359,12 @@ utils::globalVariables(c(
 
 #' Fit MBM sequentially or jointly
 #' @noRd
-.fit_jmbm <- function(cmp, lik_list, coupling.intercept, 
-                      coupling.covariates, needs_feedback, 
-                      vr = NULL, n.threads = 1, seed = NULL, 
-                      int.strategy = "eb", bf_delta_int = 0, verbose = TRUE) {
+.fit_jmbm <- function(cmp, lik_list, coupling.intercept,
+                      coupling.covariates, needs_feedback,
+                      vr = NULL, n.threads = 1, seed = NULL,
+                      int.strategy = "eb", bf_delta_int = 0,
+                      has_Sshared = FALSE, spde.mesh = NULL,
+                      verbose = TRUE) {
   bru_opts <- list(
     control.compute = list(cpo = TRUE, waic = TRUE, dic = TRUE, config = TRUE),
     control.inla = list(int.strategy = int.strategy),
@@ -440,11 +442,50 @@ utils::globalVariables(c(
         .item(sprintf("%s mean = %.3f, sd = %.3f", eff, fit_glo$summary.fixed[eff, "mean"], bf_sd_v), verbose = verbose)
       }
     }
-    
+
+    # transfer prams Sshared
+    cmp_stage2 <- cmp
+    if(needs_feedback && isTRUE(has_Sshared)) {
+      if(is.null(spde.mesh)) .stop("has_Sshared = TRUE but spde.mesh was not supplied to .fit_jmbm().")
+
+      sh_random <- fit_glo$summary.random$Sshared
+      if(is.null(sh_random)) .stop("bayesian_feedback: could not extract Sshared posterior from fit_glo (unexpected structure).")
+      sshared_mean <- sh_random$mean
+      sshared_prec <- .safe_prec(sh_random$sd)  # per-node precision, diagonal
+
+      .sshared_hat_fn <- function(geometry) {
+        coords <- sf::st_coordinates(geometry)
+        A <- INLA::inla.spde.make.A(mesh = spde.mesh, loc = coords)
+        as.vector(A %*% sshared_mean)
+      }
+      assign(".sshared_hat_fn", .sshared_hat_fn, envir = env_cmp)
+      assign("Q_sshared_dev", Matrix::Diagonal(x = sshared_prec), envir = env_cmp)
+
+      cmp_str <- paste(deparse(cmp), collapse = "")
+      # Sshared_hat = frozen mean offset
+      # Sshared = per-node deviation (generic0, theta fixed)
+      repl <- paste0(
+        "Sshared_hat(main = .sshared_hat_fn(geometry), model = 'offset') + ",
+        "Sshared(main = geometry, model = 'generic0', Cmatrix = Q_sshared_dev, ",
+        "mapper = inlabru::bru_mapper(spde.mesh), ",
+        "hyper = list(theta = list(initial = 0, fixed = TRUE)))"
+      )
+      cmp_str2 <- sub("Sshared\\(main *= *geometry, *model *= *matern_shared\\)", repl, cmp_str)
+      if(identical(cmp_str2, cmp_str)) {
+        .stop("bayesian_feedback: could not locate the Sshared() term in `cmp` for mean+precision substitution -- check component naming.")
+      }
+      cmp_stage2 <- stats::as.formula(cmp_str2, env = env_cmp)
+
+      .item(sprintf("Sshared mean= %.3f, sd = %.3f (n = %d nodes, mean range = [%.3f, %.3f])",
+                     mean(sshared_mean), mean(sh_random$sd), length(sshared_mean),
+                     min(sshared_mean), max(sshared_mean)),
+            verbose = verbose)
+    }
+
     # fit using only regional likelihood
-    fit <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[length(lik_list)]]), list(options = bru_opts)))
+    fit <- do.call(inlabru::bru, c(list(components = cmp_stage2), list(lik_list[[length(lik_list)]]), list(options = bru_opts)))
     return(fit)
-    
+
   } else { # standard joint fit
     fit <- do.call(inlabru::bru, c(list(components = cmp), lik_list, list(options = bru_opts)))
     return(fit)
@@ -690,8 +731,8 @@ utils::globalVariables(c(
 
   range_res <- if(has_Sre) paste0(round(range_res_mean, 2), " ± ", round(range_res_sd, 2)) else "—"
   sigma_res <- if(has_Sre) paste0(round(sigma_res_mean, 2), " ± ", round(sigma_res_sd, 2)) else "—"
-  range_lat <- if(has_Sshared) paste0(round(range_lat_mean, 2), " ± ", round(range_lat_sd, 2)) else "—"
-  sigma_lat <- if(has_Sshared) paste0(round(sigma_lat_mean, 2), " ± ", round(sigma_lat_sd, 2)) else "—"
+  range_lat <- if(has_Sshared && is.finite(range_lat_mean)) paste0(round(range_lat_mean, 2), " ± ", round(range_lat_sd, 2)) else "—"
+  sigma_lat <- if(has_Sshared && is.finite(sigma_lat_mean)) paste0(round(sigma_lat_mean, 2), " ± ", round(sigma_lat_sd, 2)) else "—"
   format_hyper <- function(param) {
     if(!param %in% rownames(hyper)) return("—")
       paste0(round(hyper[param, "mean"], 2), " ± ", round(hyper[param, "sd"], 2))
