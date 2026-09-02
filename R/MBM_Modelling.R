@@ -341,7 +341,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       .resolve_coupling_predictor(v, coupling.covariates, vg_check) %in% c("bayesian_feedback", "NULL")
     }, logical(1)))
     if(!intercept_ok || !predictors_ok) {
-      .stop("'bayesian_feedback' must be used for the intercept and every shared predictor simultaneously, or not at all. Mixing it with 'unpooled', 'ordered_hierarchical', 'scale_decomposed', or 'nested_shrinkage' in the same call would leave those components uninformed by the global likelihood in the final fit.")
+      .stop("'bayesian_feedback' must be used for the intercept and every shared covariate simultaneously, or not at all. Mixing it with 'unpooled', 'ordered_hierarchical', 'scale_decomposed', or 'nested_shrinkage' in the same call would leave those components uninformed by the global likelihood in the final fit.")
     }
   }
   #
@@ -368,7 +368,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     .check("Architecture: Regional-only (no global component)")
   } else {
     cp_pred_str <- if(is.list(coupling.covariates)) "variable-specific" else if(is.null(coupling.covariates)) "none" else coupling.covariates
-    .check(paste0("Architecture: Joint model (Intercepts: ", coupling.intercept, " | Predictors: ", cp_pred_str, ")"))
+    .check(paste0("Architecture: Joint model (Intercepts: ", coupling.intercept, " | Covariates: ", cp_pred_str, ")"))
   }
   fam_str <- if(fam == "cp") {
     "log-Gaussian Cox process (LGCP)"
@@ -668,7 +668,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     n.threads = n.threads,
     seed = seed,
     int.strategy = inla.int.strategy,
-    bf_delta_int = .bf_intercept_offset(pp_glo$resp, pp_reg$resp, bf_uses_background)
+    bf_delta_int = .bf_intercept_offset(pp_glo$resp, pp_reg$resp, bf_uses_background),
+    verbose = verbose
   )
 
 
@@ -716,7 +717,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
           n.threads = inla_threads_k,
           seed = seed,
           int.strategy = inla.int.strategy,
-          bf_delta_int = .bf_intercept_offset(train_g$resp, train_r$resp, bf_uses_background)
+          bf_delta_int = .bf_intercept_offset(train_g$resp, train_r$resp, bf_uses_background),
+          verbose = verbose
         )
 
         # rm NAs
@@ -877,7 +879,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
                   fit,
                   fam,  
                   data_used,
-                  n_glo = if(!is.null(coupling.intercept)) nrow(pp_glo) else 0L,
+                  n_glo = if(needs_feedback) 0L else if(!is.null(coupling.intercept)) nrow(pp_glo) else 0L,
+                  # needs_feedback: fit is regional-only, no global block to skip
                   priors = list(regional.pcprior.range = regional.pcprior.range,
                                 regional.pcprior.sigma = regional.pcprior.sigma,
                                 shared.pcprior.range = shared.pcprior.range,
