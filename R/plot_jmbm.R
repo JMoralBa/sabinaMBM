@@ -384,8 +384,8 @@ plot.jmbm.inlabru <- function(x,
   param_labels <- c(
     "Range for Sre" = "Sre field: Range",
     "Stdev for Sre" = "Sre field: Sigma",
-    "Range for GLspde" = "Sshared field: Range",
-    "Stdev for GLspde" = "Sshared field: Sigma",
+    "Range for Sshared" = "Sshared field: Range",
+    "Stdev for Sshared" = "Sshared field: Sigma",
     "Precision for IGlobal" = "IGlobal: Precision",
     "Precision for IRegional" = "IRegional: Precision",
     "Beta for IRegional" = "IRegional: Beta (copy)"
