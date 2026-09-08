@@ -237,7 +237,7 @@ utils::globalVariables(c(
   fglobal <- character(0)
 
   for(X in vg) {
-    cp_mode <- .resolve_coupling_predictor(X, coupling.covariates, vg)
+    cp_mode <- .resolve_coupling_predictor(X, coupling.covariates, vg, vr)
     if(cp_mode == "NULL") next
     specX <- spec_glo[[X]]
     if(specX$model == "drop") next
@@ -267,7 +267,7 @@ utils::globalVariables(c(
 
   for(X in vr) {
     is_shared <- X %in% vg
-    cp_mode <- if(is_shared) .resolve_coupling_predictor(X, coupling.covariates, vg) else "unpooled"
+    cp_mode <- if(is_shared) .resolve_coupling_predictor(X, coupling.covariates, vg, vr) else "unpooled"
 
     specX <- spec_reg[[X]]
     if(specX$model == "drop") next
@@ -547,7 +547,7 @@ utils::globalVariables(c(
 
 #' interpret coupling.covariates
 #' @noRd
-.resolve_coupling_predictor <- function(var, coupling.covariates, vg = NULL) {
+.resolve_coupling_predictor <- function(var, coupling.covariates, vg = NULL, vr = NULL) {
 
   if(is.null(coupling.covariates)) return("unpooled")
 
@@ -565,8 +565,15 @@ utils::globalVariables(c(
     }
   }
   
-  # unpooled for vars only in regional
+  # unpooled for vars only in regional (no global counterpart to couple with)
   if(!is.null(vg) && !(var %in% vg) && !is_explicit) {
+    if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "nested_shrinkage")) {
+      mode_val <- "unpooled"
+    }
+  }
+
+  # unpooled for vars only in global (no regional counterpart to couple with)
+  if(!is.null(vr) && !(var %in% vr) && !is_explicit) {
     if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "nested_shrinkage")) {
       mode_val <- "unpooled"
     }
@@ -1175,6 +1182,19 @@ utils::globalVariables(c(
 #' @noRd
 .signif_vars <- function(fit, scale_params_glo = NULL, scale_params_reg = NULL) {
   sf <- fit$summary.fixed
+
+  # recover GL-side iid covariates (ordered_hierarchical/nested_shrinkage) into Fixed effects
+  gl_iid_names <- names(fit$summary.random)[grepl("GL$", names(fit$summary.random))]
+  if(length(gl_iid_names) > 0) {
+    gl_iid_rows <- do.call(rbind, lapply(gl_iid_names, function(nm) {
+      row <- fit$summary.random[[nm]]
+      cols <- intersect(colnames(sf), colnames(row))
+      row[1, cols, drop = FALSE]
+    }))
+    rownames(gl_iid_rows) <- gl_iid_names
+    sf <- rbind(sf, gl_iid_rows)
+  }
+
   has_params <- !is.null(scale_params_glo) || !is.null(scale_params_reg)
 
   # back-transform coef to original scale if vars were standardized
@@ -1394,7 +1414,7 @@ utils::globalVariables(c(
     # which coupling?
     tbl_fixed$Coupling <- vapply(base_vars, function(v) {
       if(v %in% c(vg, vr)) {
-        .resolve_coupling_predictor(v, coupling.covariates, vg)
+        .resolve_coupling_predictor(v, coupling.covariates, vg, vr)
       } else {
         "—"
       }

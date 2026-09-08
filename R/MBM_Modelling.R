@@ -301,11 +301,11 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   # compatibility coupling.covariates x covariate.effects
   has_bf <- (!is.null(coupling.intercept) && coupling.intercept == "bayesian_feedback")
   has_joint <- (!is.null(coupling.intercept) && coupling.intercept %in% c("ordered_hierarchical", "scale_decomposed")) ||
-    (length(vr) > 0 && any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.covariates, vg) %in% c("ordered_hierarchical", "scale_decomposed", "nested_shrinkage"), logical(1))))
+    (length(vr) > 0 && any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.covariates, vg, vr) %in% c("ordered_hierarchical", "scale_decomposed", "nested_shrinkage"), logical(1))))
   vg_check <- if(is.null(coupling.intercept)) character(0) else vg
   if(length(vr) > 0) {
     for(v in vr) {
-      cp_mode <- .resolve_coupling_predictor(v, coupling.covariates, vg_check)
+      cp_mode <- .resolve_coupling_predictor(v, coupling.covariates, vg_check, vr)
       spec_re  <- .resolve_covariate_effects(v, "regional", covariate.effects)
       spec_gl  <- if(v %in% vg_check) .resolve_covariate_effects(v, "global", covariate.effects) else NULL
       # bayesian feedback
@@ -338,7 +338,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   if(has_bf) {   #@@@JMB Virgilio esto es correcto??
     intercept_ok  <- is.null(coupling.intercept) || coupling.intercept == "bayesian_feedback"
     predictors_ok <- length(shared_vr) == 0 || all(vapply(shared_vr, function(v) {
-      .resolve_coupling_predictor(v, coupling.covariates, vg_check) %in% c("bayesian_feedback", "NULL")
+      .resolve_coupling_predictor(v, coupling.covariates, vg_check, vr) %in% c("bayesian_feedback", "NULL")
     }, logical(1)))
     if(!intercept_ok || !predictors_ok) {
       .stop("'bayesian_feedback' must be used for the intercept and every shared covariate simultaneously, or not at all. Mixing it with 'unpooled', 'ordered_hierarchical', 'scale_decomposed', or 'nested_shrinkage' in the same call would leave those components uninformed by the global likelihood in the final fit.")
@@ -389,12 +389,12 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
   # Identify shared variables whose coupling demands unified Z-standardization.
   unified_vars <- shared_vr[vapply(shared_vr, function(X) {
-    .resolve_coupling_predictor(X, coupling.covariates, vg) %in% c("scale_decomposed", "bayesian_feedback", "nested_shrinkage", "ordered_hierarchical")
+    .resolve_coupling_predictor(X, coupling.covariates, vg, vr) %in% c("scale_decomposed", "bayesian_feedback", "nested_shrinkage", "ordered_hierarchical")
   }, logical(1))]
 
   # scale_decomposed (unified_vars subset): needs extra steps for macro/anomaly Z-score decomposition
   sd_vars <- shared_vr[vapply(shared_vr, function(X) {
-    .resolve_coupling_predictor(X, coupling.covariates, vg) %in% c("scale_decomposed")
+    .resolve_coupling_predictor(X, coupling.covariates, vg, vr) %in% c("scale_decomposed")
   }, logical(1))]
   if(length(all_model_vars) > 0) {
     .info("Pre-processing environmental covariates...")
@@ -610,7 +610,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   # if coupling.intercept = NULL, desactivate bayesian feedback
   needs_feedback <- !is.null(coupling.intercept) && (
     coupling.intercept == "bayesian_feedback" ||
-    any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.covariates, vg) == "bayesian_feedback", logical(1)))
+    any(vapply(vr, function(v) .resolve_coupling_predictor(v, coupling.covariates, vg, vr) == "bayesian_feedback", logical(1)))
   )
 
   f_Sre <- if(has_Sre) " + Sre" else ""
