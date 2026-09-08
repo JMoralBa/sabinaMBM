@@ -368,7 +368,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     .check("Architecture: Regional-only (no global component)")
   } else {
     cp_pred_str <- if(is.list(coupling.covariates)) "variable-specific" else if(is.null(coupling.covariates)) "none" else coupling.covariates
-    .check(paste0("Architecture: Joint model (Intercepts: ", coupling.intercept, " | Covariates: ", cp_pred_str, ")"))
+    .check(paste0("Architecture: Coupled model (Intercepts: ", coupling.intercept, " | Covariates: ", cp_pred_str, ")"))
   }
   fam_str <- if(fam == "cp") {
     "log-Gaussian Cox process (LGCP)"
@@ -531,8 +531,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   ## SPDE components
   if (has_Sre || has_Sshared) {
     .info("Building latent spatial fields (SPDE)...")
-    if (has_Sre) .check("S_re (fine-scale residual spatial field) activated")
-    if (has_Sshared) .check("S_shared (broad-scale spatial field) activated")
+    if (has_Sre) .check("S_re (fine-scale field specific to the regional model)")
+    if (has_Sshared) .check("S_shared (broad-scale field shared across both scales)")
   }
 
   if(has_Sre)  {
@@ -615,7 +615,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
   f_Sre <- if(has_Sre) " + Sre" else ""
   f_Sshared <- if(has_Sshared) " + Sshared" else ""
-  f_Sshared_reg <- if(has_Sshared && needs_feedback) " + Sshared_hat + Sshared" else f_Sshared
 
   .opt_plus <- function(s) if(!is.null(s) && nzchar(s)) paste0(" + ", s) else ""
 
@@ -624,7 +623,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   } else {
     paste0("IGlobal", f_Sshared, .opt_plus(cmp_cov$like$fglobal))
   }
-  rhs_reg <- paste0("IRegional", f_Sshared_reg, f_Sre, .opt_plus(cmp_cov$like$fregional))
+  rhs_reg <- paste0("IRegional", f_Sshared, f_Sre, .opt_plus(cmp_cov$like$fregional))
 
   # likelihoods
   liks <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
@@ -635,7 +634,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
   eta_terms <- c(
     "IRegional",
-    if(has_Sshared && needs_feedback) c("Sshared_hat", "Sshared") else if(has_Sshared) "Sshared" else NULL,
+    if(has_Sshared) "Sshared" else NULL,
     if(has_Sre) "Sre" else NULL,
     cmp_cov$like$fregional
   )
