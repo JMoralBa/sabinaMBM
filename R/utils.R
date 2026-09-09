@@ -1183,8 +1183,8 @@ utils::globalVariables(c(
 .signif_vars <- function(fit, scale_params_glo = NULL, scale_params_reg = NULL) {
   sf <- fit$summary.fixed
 
-  # recover GL-side iid covariates (ordered_hierarchical/nested_shrinkage) into Fixed effects
-  gl_iid_names <- names(fit$summary.random)[grepl("GL$", names(fit$summary.random))]
+  # recover GL-side and ordered_hierarchical regional-side iid covariates into Fixed effects
+  gl_iid_names <- names(fit$summary.random)[grepl("GL$|RE_oh$", names(fit$summary.random))]
   if(length(gl_iid_names) > 0) {
     gl_iid_rows <- do.call(rbind, lapply(gl_iid_names, function(nm) {
       row <- fit$summary.random[[nm]]
@@ -1541,7 +1541,7 @@ utils::globalVariables(c(
 # -----------------------------
 
 
-#' plot covariates importance  #@@@JMB eliminar????
+#' plot covariates importance
 #' @noRd
 .jmbm_vars_importance <- function(fit) {
 

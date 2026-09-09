@@ -93,7 +93,7 @@
 #'     identifiability by forcing the global field to operate at a significantly broader scale (Bakka et al., 2018).
 #'   \item \strong{Mesh inner edge:} \code{edge[1] = range_re_expected / 5}.
 #'     Inner triangles must be smaller than the spatial range (specifically < range/5) to capture 
-#'     local spatial structure (Foster et al., 2024; sabinaJMBM SM S1).
+#'     local spatial structure (Foster et al., 2024).
 #'   \item \strong{Mesh outer edge:} \code{edge[2] = 3 * edge[1]}.
 #'     The outer domain is made coarser to reduce computational burden (Lindgren et al., 2011; Anderson et al., 2022).
 #'   \item \strong{Inner offset:} \code{offset[1] = edge[1]}.
@@ -106,7 +106,7 @@
 #'     probability range (Simpson et al., 2017).
 #'   \item \strong{Shared sigma upper bound:} \code{sigma_shared = sigma_re / shared.sigma.divisor}.
 #'     The shared field must be more tightly constrained to prevent variance cannibalization 
-#'     (Simpson et al., 2017; Morales-Barbero et al., Case Study S2).
+#'     (Simpson et al., 2017).
 #' }
 #'
 #' \strong{Non-linearity test for rw2:}

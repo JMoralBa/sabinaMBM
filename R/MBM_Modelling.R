@@ -22,8 +22,8 @@
 #' @param coupling.covariates Character or list. Controls how global and regional covariate effects are related. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients. No shared hyperparameter; not a hierarchical mechanism.
-#'     \item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy — Krainski et al., 2018, ch. 4), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit. Validated by simulation across four scenarios (null, aligned, sign-reversal, weak-global/strong-regional); outperforms or matches \code{"ordered_hierarchical"} in all of them.
-#'     \item \code{"ordered_hierarchical"}: Multiplicative hierarchical coupling: \code{beta_RE = beta_copy * beta_GL}, via INLA's \code{copy} mechanism with \code{beta} freely estimated (Krainski et al., 2018, ch. 4; conceptual precedent in shared-component models, Knorr-Held & Best, 2001). Uses unified (global-based) Z-standardization, as above. Requires the variable to be present at both scales and a linear global effect. CAUTION: simulation shows this configuration is systematically less accurate than \code{"nested_shrinkage"} when the global effect is weak (\code{beta_GL} near zero) or when the true regional effect has the opposite sign to the global one (paired Wilcoxon p < 0.0001); confirmed not to be an artifact of \code{inla.int.strategy}. Prefer \code{"nested_shrinkage"} unless there is a specific reason to expect a pure multiplicative (same-sign) relationship.
+#'     \item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy — Krainski et al., 2018, ch. 4), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit.
+#'     \item \code{"ordered_hierarchical"}: Multiplicative hierarchical coupling: \code{beta_RE = beta_copy * beta_GL}, via INLA's \code{copy} mechanism with \code{beta} freely estimated (Krainski et al., 2018, ch. 4; conceptual precedent in shared-component models, Knorr-Held & Best, 2001). Uses unified (global-based) Z-standardization, as above. Requires the variable to be present at both scales and a linear global effect.
 #'     \item \code{"scale_decomposed"}: NOT a hierarchical coupling mechanism (no shared hyperparameter between global and regional coefficients). Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), each with its own independent coefficient, following Cressie & Wikle (2011) and Zhou & Bradley (2024). Serves the multiscale objective via covariate orthogonalization rather than coefficient partial-pooling. In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
 #'     \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors via moment matching (Figueira et al., 2024).
 #'     \item \code{NULL}: Regional-only covariate effects; global covariates are excluded from the regional predictor entirely. No shared spatial fields (S_shared).
@@ -31,7 +31,7 @@
 #' @param proj.new.env Logical. Whether to compute predictions under new environmental scenarios (default: \code{TRUE}).
 #' @param cv.folds Integer. Number of k-folds for spatial cross-validation (default: 1 = no CV).
 #' @param n.threads Integer. Number of parallel threads to be used by INLA/inlabru (default: 1).
-#' @param inla.int.strategy Character. INLA hyperparameter integration strategy. One of \code{"eb"} (Empirical Bayes, default), \code{"ccd"} (Central Composite Design), or \code{"grid"} (full grid integration). \code{"eb"} is fast but underestimates uncertainty by fixing hyperparameters at their posterior mode. \code{"ccd"} integrates over hyperparameters and is recommended for final/publication results. See Rue et al. (2009) and Simpson et al. (2017).
+#' @param inla.int.strategy Character. INLA hyperparameter integration strategy. One of \code{"eb"} (Empirical Bayes, default), \code{"ccd"} (Central Composite Design), or \code{"grid"} (full grid integration). \code{"eb"} is fast but underestimates uncertainty by fixing hyperparameters at their posterior mode. \code{"ccd"} integrates over hyperparameters, at higher computational cost. See Rue et al. (2009) and Simpson et al. (2017).
 #' @param seed Optional integer to set the random seed for reproducibility.
 #' @param save.output Logical. If \code{TRUE}, saves key model outputs to disk.
 #' @param verbose Logical. If \code{TRUE} (default), prints progress messages during model construction and fitting.
@@ -46,7 +46,7 @@
 #' \item{scale_params}{Named list with \code{mean} and \code{sd} used to standardize each covariate internally. Used for back-transforming marginals to original scale in plots.}
 #' \item{new.projections}{List of projections to new.env (if `proj.new.env = TRUE`).}
 #' \item{formula}{List with the model's linear predictor components: \code{components} (the full inlabru component formula, intercepts + spatial fields + covariate terms), \code{rhs_global} (right-hand side of the global likelihood, or \code{NULL} if \code{coupling.intercept = NULL}), and \code{rhs_regional} (right-hand side of the regional likelihood).}
-#' \item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, BSS, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}  #@@@JMB revisar y refinar
+#' \item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, BSS, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}
 #'
 #' @details
 #' family/link:
@@ -73,10 +73,8 @@
 #' - Both fields use Penalised Complexity (PC) priors (Simpson et al., 2017; Fuglstad et al., 2019), which shrink toward a structureless base model unless data provide evidence of spatial structure.
 #'
 #' coupling.intercept = "ordered_hierarchical"
-#' This option implements a true hierarchical Bayesian nested structure in which the regional intercept borrows strength from the global one. 
+#' This option implements a hierarchical Bayesian nested structure in which the regional intercept borrows strength from the global one. 
 #' The regional intercept is expressed as a scaled copy of the global one using an INLA copy structure (IRegional = β * IGlobal), with β given an informative prior centred at 1 (Normal(1, sd = 0.5)), so that the regional level is encouraged (but not forced) to follow the global signal.
-#' Ecologically, this formulation ensures that the global model captures broad-scale suitability (the species fundamental niche), while the regional intercept refines this large-scale signal/pattern to reflect local microclimatic conditions such and high-resolution predictors/conditions.
-#' This hierarchical structure enables principled information sharing between scales while still allowing regional deviations.
 #' 
 #' covariate.effects: control per-covariate effects at global/regional scale.
 #' - Option 1 `NULL` (default): no smoothing, All covariates enter linearly (`"linear"`) in both scales.
@@ -93,7 +91,7 @@
 #'       - `"linear"`: linear effect (we use the term "linear" for consistency with inlabru).
 #'       - `"drop"`: exclude that covariate.
 #'       - `list(model="rw2", u=..., alpha=...)`: rw2 smoothing with a PC-prior on precision. Use the same units as the rasters for `u` and `alpha`.
-#'     If a covariate is not listed under `global`/`regional`, it inherits from `default` (recommended `"linear"`).
+#'     If a covariate is not listed under `global`/`regional`, it inherits from `default`.
 #'     Example:
 #'       covariate.effects = list(
 #'         global = list(bio4 = "linear",
