@@ -34,7 +34,7 @@ The development version of **sabinaMBM** can be installed from GitHub using:
 
 ```r
 install.packages("remotes")
-remotes::install_github("anonbuild/sabinaMBM")
+remotes::install_github("JMoralBa/sabinaMBM")
 ```
 
 The package requires R (>= 4.1.0).
@@ -76,10 +76,10 @@ install.packages("INLA",
   dep = TRUE)
 
 # sabinaNSDM (data preparation)
-remotes::install_github("anonbuild/sabinaNSDM")
+remotes::install_github("geoSABINA/sabinaNSDM")
 
 # sabinaMBM
-remotes::install_github("anonbuild/sabinaMBM")
+remotes::install_github("JMoralBa/sabinaMBM")
 library(sabinaNSDM)
 library(terra)
 library(inlabru)
