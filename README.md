@@ -108,7 +108,7 @@ myInput <- sabinaNSDM::NSDM.InputData(
   expl.var.global   = expl.var.global,
   expl.var.regional = expl.var.regional,
   new.env           = list(new.env),
-  new.env.names     = "scenario1"
+  new.env.names     = "Scenario1"
 )
 
 myFormatting <- sabinaNSDM::NSDM.FormattingData(
@@ -203,7 +203,7 @@ plot(mod_hierarchical, which = "pred", layer = "sd")
 Future suitability:
 
 ```r
-plot(mod_hierarchical, which = "sScenario1", layer = "mean")
+plot(mod_hierarchical, which = "Scenario1", layer = "mean")
 ```
 
 Additional outputs, including the broad- and fine-scale spatial fields, residual spatial correlogram, and global versus regional intercepts, can also be visualised from the fitted model.
