@@ -55,7 +55,7 @@ The package requires R (>= 4.1.0).
 
 ## Tutorials
 
-**insert link to tutorial**
+- Worked example: Supporting Information S2 — *link to be added once the DOI is assigned at publication.*
 
 ## Example
 
@@ -80,12 +80,12 @@ remotes::install_github("anonbuild/sabinaNSDM")
 
 # sabinaMBM
 remotes::install_github("anonbuild/sabinaMBM")
+library(sabinaNSDM)
 library(terra)
-library(patchwork)
 library(inlabru)
 library(INLA)
 
-# Load species occurrences and environmental variables with sabinaNSDM
+# Load the bundled example datasets (Quercus petraea occurrences and covariates)
 SpeciesName <- "Quercus.petraea"
 
 data(Quercus.petraea.xy.global, package = "sabinaMBM")
@@ -224,6 +224,24 @@ covariate_effects <- list(
     )
   ),
   default = "linear"
+)
+```
+
+Pass it to `MBM.Modelling()` via `covariate.effects`:
+
+```r
+mod_nonlinear <- MBM.Modelling(
+  jmbm_obj               = mySelvars,
+  family                 = binomial(link = "logit"),
+  spde.mesh              = myMesh,
+  regional.pcprior.range = regional.pcprior.range,
+  regional.pcprior.sigma = regional.pcprior.sigma,
+  shared.pcprior.range   = shared.pcprior.range,
+  shared.pcprior.sigma   = shared.pcprior.sigma,
+  coupling.intercept     = "ordered_hierarchical",
+  coupling.covariates    = "ordered_hierarchical",
+  covariate.effects      = covariate_effects,
+  proj.new.env           = TRUE
 )
 ```
 
