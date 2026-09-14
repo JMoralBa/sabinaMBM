@@ -349,7 +349,7 @@ plot.jmbm.inlabru <- function(x,
       "mean.mc_std_err"="MC SE of mean",
       "Expected value")
   } else {
-    legend_prob(ln) #@@@JMB arreglar para v2 con nbinomial, beta, tweedie...
+    legend_prob(ln)
   }
 
   wrap_legend_title <- function(s, width = 22) {

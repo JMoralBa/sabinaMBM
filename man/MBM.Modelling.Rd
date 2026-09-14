@@ -42,8 +42,8 @@ MBM.Modelling(
 \item{coupling.covariates}{Character or list. Controls how global and regional covariate effects are related. Options:
 \itemize{
 \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients. No shared hyperparameter; not a hierarchical mechanism.
-\item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy — Krainski et al., 2018, ch. 4), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit.
-\item \code{"ordered_hierarchical"}: Multiplicative hierarchical coupling: \code{beta_RE = beta_copy * beta_GL}, via INLA's \code{copy} mechanism with \code{beta} freely estimated (Krainski et al., 2018, ch. 4; conceptual precedent in shared-component models, Knorr-Held & Best, 2001). Uses unified (global-based) Z-standardization, as above. Requires the variable to be present at both scales and a linear global effect.
+\item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit.
+\item \code{"ordered_hierarchical"}: Multiplicative hierarchical coupling: \code{beta_RE = beta_copy * beta_GL}, via INLA's \code{copy} mechanism with \code{beta} freely estimated (Krainski et al., 2018; conceptual precedent in shared-component models, Knorr-Held & Best, 2001). Uses unified (global-based) Z-standardization, as above. Requires the variable to be present at both scales and a linear global effect.
 \item \code{"scale_decomposed"}: NOT a hierarchical coupling mechanism (no shared hyperparameter between global and regional coefficients). Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), each with its own independent coefficient, following Cressie & Wikle (2011) and Zhou & Bradley (2024). Serves the multiscale objective via covariate orthogonalization rather than coefficient partial-pooling. In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
 \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors via moment matching (Figueira et al., 2024).
 \item \code{NULL}: Regional-only covariate effects; global covariates are excluded from the regional predictor entirely. No shared spatial fields (S_shared).
@@ -93,13 +93,6 @@ Fits a joint multiscale Bayesian species distribution model using spatial random
 family/link:
 \itemize{
 \item \code{binomial(logit)}: Use for presence-absence (1/0) data. Output: occurrence probability.
-\item binomial(cloglog): Use for presence–absence (1/0) data when 1s are very rare (lots of 0s). Output: probability.
-\item poisson(log): Use for non-overdispersed counts (e.g. abundance counts 0,1,2…). Output: expected count
-\item \code{nbinomial(log)}: Use for overdispersed counts (variance > mean). Output: expected count.
-\item \code{gaussian(identity)}: Use for continuous normally distributed responses (e.g. log-transformed abundance). Output: predicted value on original scale.
-\item \code{gaussian(log)}: Use for strictly positive, right-skewed continuous data. Output: predicted value on original scale.
-\item beta(logit): Use for proportions in (0,1) (e.g. rescaled canopy cover). Output: predicted proportion
-\item \code{tweedie(log)}: Use for semicontinuous data with many zeros and a continuous positive tail (e.g. biomass). Output: expected value.
 \item cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
 }
 
@@ -180,9 +173,6 @@ for sharing/scaling effects across likelihoods.)
 Knorr-Held, L. & Best, N.G. (2001). A shared component model for detecting joint and
 selective clustering of two diseases. \emph{Journal of the Royal Statistical Society:
 Series A}, 164(1), 73-85.
-
-Figueira, M., Conesa, D. & Lopez-Quilez, A. (2024). Bayesian feedback in the framework
-of ecological sciences. \emph{Ecological Informatics}. (Verificado por busqueda, no de memoria.)
 }
 \seealso{
 \code{\link{create_mesh}}, \code{\link{plot.jmbm.inlabru}}, \code{\link{summary.jmbm.inlabru}}

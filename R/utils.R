@@ -191,8 +191,6 @@ utils::globalVariables(c(
   vg <- obj$Selected.Variables.Global
   vr <- obj$Selected.Variables.Regional
 
-  #cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
-
   # Build rw2 mesh using fmesher::fm_mesh_1d
   .build_rw2_values <- function(rast_layer, coords, n_knots = 100L) {
     vals <- suppressWarnings(as.numeric(terra::extract(rast_layer, coords)[, 1]))
@@ -297,8 +295,7 @@ utils::globalVariables(c(
 
     ## ordered_hierarchical: beta_RE = beta_copy * beta_GL via copy= real, beta_copy free (Krainski et al. 2018; Knorr-Held & Best 2001).
     else if(cp_mode == "ordered_hierarchical") {
-      cmpregional <- c(cmpregional,  #@@@JMB prueba
-        #paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(fixed = FALSE, initial = 1)))"))
+      cmpregional <- c(cmpregional,
         paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(prior = 'normal', param = c(1, 4))))"))
       fregional <- c(fregional, paste0(X, "RE_oh"))
     }
@@ -527,7 +524,7 @@ utils::globalVariables(c(
                    "   For linear effects use 'linear'; to exclude use 'drop'."))
     }
     if(identical(spec$model, "rw2")) {
-      u_val  <- if(is.null(spec$u)) 5 else spec$u        #@@@JMB default o cusomizable?
+      u_val  <- if(is.null(spec$u)) 5 else spec$u
       alpha_val <- if(is.null(spec$alpha)) 0.01 else spec$alpha
       return(list(model = "rw2", u = u_val, alpha = alpha_val))
     }
@@ -799,7 +796,7 @@ utils::globalVariables(c(
       ks_pit <- "—"
     }
 
-    # Moran’s I residual autocorrelation
+    # Moran's I residual autocorrelation
     moran_I <- NA_real_
     rs <- y_obs - y_pred
     valid_idx <- is.finite(rs)
@@ -810,7 +807,7 @@ utils::globalVariables(c(
     } else if(has_Sshared) {
       range_lat_mean
     } else {
-    # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal.   #@@@JMB bien?
+    # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal
       bb <- apply(xy, 2, range, na.rm = TRUE)
       sqrt(sum((bb[2,] - bb[1,])^2)) / 4
     }   
@@ -920,7 +917,7 @@ utils::globalVariables(c(
     }
 
     # Posterior field redundancy r^2(S_RE, S_shared). 
-    # r^2 > 0.5 indicates both fields capture the same spatial pattern (redundancy).       #@@@JMB bien?
+    # r^2 > 0.5 indicates both fields capture the same spatial pattern (redundancy)
     resid_Sre <- fit$summary.random$Sre$mean
     resid_Sshared <- fit$summary.random$Sshared$mean
     if(!is.null(resid_Sre) && !is.null(resid_Sshared)) {
@@ -978,9 +975,9 @@ utils::globalVariables(c(
   # residual autocorrelation
   if(is.finite(moran_I) && moran_I > 0.10) {
     .warn(paste0(
-      "Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").\n",
+      "Residual spatial autocorrelation detected (Moran's I ≈ ", round(moran_I, 2), ").\n",
       "   Model missing local spatial structure.\n",
-      "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates."  #@@@JMB!! no estoy segura
+      "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates."
     ))
   }
   # posterior ≈ prior (weak data information)

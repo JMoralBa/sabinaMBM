@@ -22,8 +22,8 @@
 #' @param coupling.covariates Character or list. Controls how global and regional covariate effects are related. Options:
 #'   \itemize{
 #'     \item \code{"unpooled"} (default): Independent estimation of global and regional coefficients. No shared hyperparameter; not a hierarchical mechanism.
-#'     \item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy — Krainski et al., 2018, ch. 4), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit.
-#'     \item \code{"ordered_hierarchical"}: Multiplicative hierarchical coupling: \code{beta_RE = beta_copy * beta_GL}, via INLA's \code{copy} mechanism with \code{beta} freely estimated (Krainski et al., 2018, ch. 4; conceptual precedent in shared-component models, Knorr-Held & Best, 2001). Uses unified (global-based) Z-standardization, as above. Requires the variable to be present at both scales and a linear global effect.
+#'     \item \code{"nested_shrinkage"}: Additive hierarchical shrinkage model: \code{beta_RE = beta_GL + delta_RE}, where \code{beta_GL} is shared via INLA's \code{copy} mechanism (\code{beta} fixed at 1, i.e. an exact, non-estimated copy), and \code{delta_RE ~ N(0, sigma_delta^2)} with \code{sigma_delta} estimated via a PC-prior. The amount of cross-scale borrowing is learned from the data: \code{sigma_delta} shrinks toward zero when regional and global slopes agree, and grows when regional evidence supports a distinct slope, including a change of sign. Uses unified (global-based) Z-standardization so the shared coefficient has consistent meaning across scales (no raster resampling involved, only a shared scaling constant). Requires the variable to be present at both scales, a linear global effect, and a joint (non-sequential) model fit.
+#'     \item \code{"ordered_hierarchical"}: Multiplicative hierarchical coupling: \code{beta_RE = beta_copy * beta_GL}, via INLA's \code{copy} mechanism with \code{beta} freely estimated (Krainski et al., 2018; conceptual precedent in shared-component models, Knorr-Held & Best, 2001). Uses unified (global-based) Z-standardization, as above. Requires the variable to be present at both scales and a linear global effect.
 #'     \item \code{"scale_decomposed"}: NOT a hierarchical coupling mechanism (no shared hyperparameter between global and regional coefficients). Shared covariates are decomposed into a large-scale trend (\code{X_glo_res = X_glo resampled}) and a small-scale anomaly (\code{X_reg_anom = X_reg - X_glo}), each with its own independent coefficient, following Cressie & Wikle (2011) and Zhou & Bradley (2024). Serves the multiscale objective via covariate orthogonalization rather than coefficient partial-pooling. In the output, coefficients are named \code{XGL_glo_res} and \code{XRE_reg_anom}.
 #'     \item \code{"bayesian_feedback"}: Sequential updating using global posteriors as regional priors via moment matching (Figueira et al., 2024).
 #'     \item \code{NULL}: Regional-only covariate effects; global covariates are excluded from the regional predictor entirely. No shared spatial fields (S_shared).
@@ -51,13 +51,6 @@
 #' @details
 #' family/link:
 #' - \code{binomial(logit)}: Use for presence-absence (1/0) data. Output: occurrence probability.
-#' - binomial(cloglog): Use for presence–absence (1/0) data when 1s are very rare (lots of 0s). Output: probability.
-#' - poisson(log): Use for non-overdispersed counts (e.g. abundance counts 0,1,2…). Output: expected count
-#' - \code{nbinomial(log)}: Use for overdispersed counts (variance > mean). Output: expected count.
-#' - \code{gaussian(identity)}: Use for continuous normally distributed responses (e.g. log-transformed abundance). Output: predicted value on original scale.
-#' - \code{gaussian(log)}: Use for strictly positive, right-skewed continuous data. Output: predicted value on original scale.
-#' - beta(logit): Use for proportions in (0,1) (e.g. rescaled canopy cover). Output: predicted proportion
-#' - \code{tweedie(log)}: Use for semicontinuous data with many zeros and a continuous positive tail (e.g. biomass). Output: expected value.
 #' - cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
 #'
 #' SPDE structure and priors:
@@ -134,12 +127,9 @@
 #' selective clustering of two diseases. \emph{Journal of the Royal Statistical Society:
 #' Series A}, 164(1), 73-85.
 #'
-#' Figueira, M., Conesa, D. & Lopez-Quilez, A. (2024). Bayesian feedback in the framework
-#' of ecological sciences. \emph{Ecological Informatics}. (Verificado por busqueda, no de memoria.)
-#'
 #' @export
 MBM.Modelling <- function(jmbm_obj, 
-                      family = binomial(link = "logit"), # family object binomial(), poisson(), etc., o "cp" para intensity (procesos puntuales)
+                      family = binomial(link = "logit"), # family object binomial(link="logit"), or "cp" for point-process intensity.
                       covariate.effects = NULL,
                       coupling.intercept = "unpooled",
                       coupling.covariates = "unpooled",
@@ -185,14 +175,11 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     fam <- "cp"
     lnk <- NULL
   } else {
-    .stop("`family` must be either a standard family() object or the string 'cp'.")  #@@@JMB poner permitidos o enviar a ?MBM.Modelling details?
+    .stop("`family` must be either a standard family() object or the string 'cp'.")
   }
-  valid_links <- list(binomial = c("logit", "cloglog"),
-                      poisson = "log", nbinomial = "log",
-                      gaussian = c("identity", "log"), beta = "logit",
-                      tweedie = "log", cp = NULL)
+  valid_links <- list(binomial = "logit", cp = NULL)
   if(!fam %in% names(valid_links)) {
-    .stop(paste0("Unsupported family: ", fam, ". Supported: ", paste(names(valid_links), collapse = ", ")))
+    .stop(paste0("Unsupported family: ", fam, ". Supported: ", paste(names(valid_links), collapse = ", "), "."))
   }
   if(!is.null(lnk) && !lnk %in% valid_links[[fam]]) {
     .stop(paste0("Invalid link '", lnk, "' for family '", fam, "'. Allowed: ", paste(valid_links[[fam]], collapse = ", ")))
@@ -333,7 +320,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       }
     }
   }
-  if(has_bf) {   #@@@JMB Virgilio esto es correcto??
+  if(has_bf) {
     intercept_ok  <- is.null(coupling.intercept) || coupling.intercept == "bayesian_feedback"
     predictors_ok <- length(shared_vr) == 0 || all(vapply(shared_vr, function(v) {
       .resolve_coupling_predictor(v, coupling.covariates, vg_check, vr) %in% c("bayesian_feedback", "NULL")
@@ -468,11 +455,11 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   }
 
   #
-  bg_or_abs_glo <- if(is.null(jmbm_obj$Absences.XY.Global)) jmbm_obj$Background.XY.Global else jmbm_obj$Absences.XY.Global   #@@@JMB si no quitamos arg bg.w, hay que saltar la pondercion si entran ausencias reales
+  bg_or_abs_glo <- if(is.null(jmbm_obj$Absences.XY.Global)) jmbm_obj$Background.XY.Global else jmbm_obj$Absences.XY.Global
   bg_or_abs_reg <- if(is.null(jmbm_obj$Absences.XY.Regional)) jmbm_obj$Background.XY.Regional else jmbm_obj$Absences.XY.Regional
 
   pp_glo <- rbind(
-    cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),  #@@@JMB jmbm_obj$Response.Global y Regional habria que generarlos en sabinaNSDM input y arrastrar si hay algo
+    cbind(jmbm_obj$SpeciesData.XY.Global, resp = if(!is.null(jmbm_obj$Response.Global)) jmbm_obj$Response.Global else 1L),
     cbind(bg_or_abs_glo, resp = 0L)     # si lo hacemo asi poner algun check con stop/warning para que datos y family sean coherentes
   )
   pp_reg <- rbind(
@@ -897,7 +884,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
 
   species <- jmbm_obj$Species.Name
 
-  # summary          #@@@JMB pendiente revisar/completar...
+  # summary
   summary_df <- .jmbm_generate_summary(
     fit = fit, 
     species = species, 
@@ -916,7 +903,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   )
 
 
-  # return         #@@@JMB pendiente revisar/adelgazar...
+  # return
   sabina <- list(
     Species.Name = species,
     args = list(
@@ -991,7 +978,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
       Metric = c("WAIC", "DIC", "MLik", "LCPO (sum log-CPO)"),
       Value = c(fit$waic$waic, fit$dic$dic, fit$mlik[1], diag_block$bayes_fit$lcpo_val))
     write.csv(eval_metrics, file = file.path(values_path, paste0(species, "_evaluation.csv")), row.names = FALSE)
-    # CPO values (one per observation)   #@@@JMB!! useful for leave-one-out diagnostics or model comparison?? rm?
+    # CPO values (one per observation)
     write.csv(data.frame(CPO = fit$cpo$cpo), file = file.path(values_path, paste0(species, "_pointwise_CPO.csv")), row.names = FALSE)
     # full model object (fit)
     saveRDS(fit, file = file.path(values_path, paste0(species, "_model_fit.rds")))

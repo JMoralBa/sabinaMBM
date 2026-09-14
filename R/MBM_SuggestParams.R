@@ -127,24 +127,24 @@
 #' 
 #' Barber, X., et al. (2016). Incorporating spatial structure into inclusion probabilities 
 #' for Bayesian variable selection in generalized linear models with the spike-and-slab prior. 
-#' \emph{Journal of Applied Statistics}, 43, 2261–2279.
+#' \emph{Journal of Applied Statistics}, 43, 2261-2279.
 #'
 #' Foster, S. D., et al. (2024). RISDM: species distribution modelling from multiple data 
 #' sources in R. \emph{Ecography}, e06964.
 #'
 #' Fuglstad, G.-A., et al. (2019). Constructing priors that penalize the complexity 
 #' of Gaussian random fields. \emph{Journal of the American Statistical Association}, 
-#' 114, 445–452.
+#' 114, 445-452.
 #'
 #' Krainski, E., et al. (2019). \emph{Advanced Spatial Modeling with Stochastic 
 #' Partial Differential Equations Using R and INLA}. Chapman and Hall/CRC.
 #'
 #' Lindgren, F., Rue, H., & Lindström, J. (2011). An explicit link between Gaussian fields 
 #' and Gaussian Markov random fields: the stochastic partial differential equation approach. 
-#' \emph{Journal of the Royal Statistical Society: Series B}, 73, 423–498.
+#' \emph{Journal of the Royal Statistical Society: Series B}, 73, 423-498.
 #'
 #' Simpson, D., et al. (2017). Penalising model component complexity: A principled, 
-#' practical approach to constructing priors. \emph{Statistical Science}, 32, 1–28.
+#' practical approach to constructing priors. \emph{Statistical Science}, 32, 1-28.
 #'
 #' Wood, S. N. (2017). \emph{Generalized Additive Models: An Introduction with R}. 
 #' 2nd Edition. Chapman and Hall/CRC.
@@ -431,17 +431,17 @@ MBM.SuggestParams <- function(jmbm_obj,
     if (has_global && !is.null(covariate.effects$global)) {
       vars_rw2_gl <- names(covariate.effects$global)[sapply(covariate.effects$global, function(x) is.list(x) && x$model == "rw2")]
       if (length(vars_rw2_gl) > 0) {
-        cat("   Global scale — suggested 'rw2' (non-linear):", paste(vars_rw2_gl, collapse = ", "), "\n")
+        cat("   Global scale - suggested 'rw2' (non-linear):", paste(vars_rw2_gl, collapse = ", "), "\n")
       } else {
-        cat("   Global scale — all covariates suggested as 'linear'.\n")
+        cat("   Global scale - all covariates suggested as 'linear'.\n")
       }
     }
 
     vars_rw2_re <- names(covariate.effects$regional)[sapply(covariate.effects$regional, function(x) is.list(x) && x$model == "rw2")]
     if (length(vars_rw2_re) > 0) {
-      cat("   Regional scale — suggested 'rw2' (non-linear):", paste(vars_rw2_re, collapse = ", "), "\n")
+      cat("   Regional scale - suggested 'rw2' (non-linear):", paste(vars_rw2_re, collapse = ", "), "\n")
     } else {
-      cat("   Regional scale — all covariates suggested as 'linear'.\n")
+      cat("   Regional scale - all covariates suggested as 'linear'.\n")
     }
     
     cat("=================================================================\n")
