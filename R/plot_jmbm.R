@@ -349,7 +349,7 @@ plot.jmbm.inlabru <- function(x,
       "mean.mc_std_err"="MC SE of mean",
       "Expected value")
   } else {
-    legend_prob(ln) #@@@JMB arreglar para v2 con nbinomial, beta, tweedie...
+    legend_prob(ln)
   }
 
   wrap_legend_title <- function(s, width = 22) {
@@ -384,8 +384,8 @@ plot.jmbm.inlabru <- function(x,
   param_labels <- c(
     "Range for Sre" = "Sre field: Range",
     "Stdev for Sre" = "Sre field: Sigma",
-    "Range for GLspde" = "Sshared field: Range",
-    "Stdev for GLspde" = "Sshared field: Sigma",
+    "Range for Sshared" = "Sshared field: Range",
+    "Stdev for Sshared" = "Sshared field: Sigma",
     "Precision for IGlobal" = "IGlobal: Precision",
     "Precision for IRegional" = "IRegional: Precision",
     "Beta for IRegional" = "IRegional: Beta (copy)"

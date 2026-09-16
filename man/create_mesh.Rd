@@ -25,9 +25,9 @@ create_mesh(
 
 \item{buffer}{A numeric scalar. Amount to buffer (expand) the convex hull before mesh creation (default: 0.01).}
 
-\item{boundary.method}{Character. One of \code{"convex_hull"} (default), \code{"concave_hull"}, or \code{"raster_mask"}. \code{"raster_mask"} is strongly recommended for most applications, particularly for fragmented distributions or coastal species. #@@JMB raster mask funciona bien para fragmentos separados y para hacer predicciones en oceano. Para esto ultimo preguntar a Virgilio si triangulos pequeños en borde del raster es necesario...}
+\item{boundary.method}{Character. One of \code{"convex_hull"} (default), \code{"concave_hull"}, or \code{"raster_mask"}. \code{"raster_mask"} constrains the mesh to the raster's non-NA cells, avoiding triangulation over gaps (e.g., fragmented distributions, coastal/oceanic areas); \code{"convex_hull"}/\code{"concave_hull"} triangulate the full hull regardless of gaps.}
 
-\item{concavity}{Numeric. Required when \code{boundary.method = "concave_hull"}. Controls how tightly the concave hull wraps the points; lower values (e.g., 2–3) produce tighter boundaries.}
+\item{concavity}{Numeric. Required when \code{boundary.method = "concave_hull"}. Controls how tightly the concave hull wraps the points; lower values (e.g., 2-3) produce tighter boundaries.}
 
 \item{remove_holes}{Logical. Only used when \code{boundary.method = "raster_mask"}; if TRUE, internal holes are removed before mesh creation (default: FALSE).}
 
@@ -36,7 +36,7 @@ create_mesh(
 \item{plot}{Logical. If TRUE, plots the mesh for inspection (default: FALSE).}
 }
 \value{
-An \code{fm_mesh_2d} object (class \code{jmbm.mesh}) suitable for use with \code{INLA} and \code{inlabru} SPDE components. Pass directly to \code{MBM.Modelling(spde.mesh = ...)}. #@@JMB pensar si ponemos clase propia a este objeto (jmbm.mesh??)
+An \code{fm_mesh_2d} object (class \code{jmbm.mesh}) suitable for use with \code{INLA} and \code{inlabru} SPDE components. Pass directly to \code{MBM.Modelling(spde.mesh = ...)}.
 }
 \description{
 Generates a 2D mesh object using the convex hull, concave_hull, or raster_mask of the species presences/absences (plus optional new scenario rasters), from a processed \code{nsdm.vinput} object (output of \code{\link[sabinaNSDM]{NSDM.SelectCovariates}}).
@@ -44,7 +44,7 @@ Generates a 2D mesh object using the convex hull, concave_hull, or raster_mask o
 \references{
 Lindgren, F., Rue, H. & Lindström, J. (2011). An explicit link between Gaussian fields
 and Gaussian Markov random fields: the stochastic partial differential equation approach.
-\emph{Journal of the Royal Statistical Society B}, 73, 423–498.
+\emph{Journal of the Royal Statistical Society B}, 73, 423-498.
 }
 \seealso{
 \code{\link{MBM.Modelling}}

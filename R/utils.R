@@ -191,8 +191,6 @@ utils::globalVariables(c(
   vg <- obj$Selected.Variables.Global
   vr <- obj$Selected.Variables.Regional
 
-  #cmp1 <- paste0(unique(c(vg, vr)), "(1)", collapse = " + ")
-
   # Build rw2 mesh using fmesher::fm_mesh_1d
   .build_rw2_values <- function(rast_layer, coords, n_knots = 100L) {
     vals <- suppressWarnings(as.numeric(terra::extract(rast_layer, coords)[, 1]))
@@ -237,7 +235,7 @@ utils::globalVariables(c(
   fglobal <- character(0)
 
   for(X in vg) {
-    cp_mode <- .resolve_coupling_predictor(X, coupling.covariates, vg)
+    cp_mode <- .resolve_coupling_predictor(X, coupling.covariates, vg, vr)
     if(cp_mode == "NULL") next
     specX <- spec_glo[[X]]
     if(specX$model == "drop") next
@@ -267,7 +265,7 @@ utils::globalVariables(c(
 
   for(X in vr) {
     is_shared <- X %in% vg
-    cp_mode <- if(is_shared) .resolve_coupling_predictor(X, coupling.covariates, vg) else "unpooled"
+    cp_mode <- if(is_shared) .resolve_coupling_predictor(X, coupling.covariates, vg, vr) else "unpooled"
 
     specX <- spec_reg[[X]]
     if(specX$model == "drop") next
@@ -297,8 +295,7 @@ utils::globalVariables(c(
 
     ## ordered_hierarchical: beta_RE = beta_copy * beta_GL via copy= real, beta_copy free (Krainski et al. 2018; Knorr-Held & Best 2001).
     else if(cp_mode == "ordered_hierarchical") {
-      cmpregional <- c(cmpregional,  #@@@JMB prueba
-        #paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(fixed = FALSE, initial = 1)))"))
+      cmpregional <- c(cmpregional,
         paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(prior = 'normal', param = c(1, 4))))"))
       fregional <- c(fregional, paste0(X, "RE_oh"))
     }
@@ -337,11 +334,9 @@ utils::globalVariables(c(
 # -----------------------------
 
 
-#' Bayesian-feedback intercept offset
-#' Corrects presence:background ratio mismatch. Global intercept encodes
-#' global n1:n0 ratio (Fithian & Hastie 2013; Warton & Shepherd 2010) -> not 
-#' transferable if regional ratio differs. Applies only if both datasets use 
-#' background points; real absences -> 0.
+#' Bayesian-feedback intercept
+#' Global and regional background ratios differ. Fix before share the global intercept.
+#'  Only for background points. Real absences offset 0.
 #' @noRd
 .bf_intercept_offset <- function(resp_glo, resp_reg, uses_background) {
   if(!isTRUE(uses_background)) return(0)
@@ -357,7 +352,7 @@ utils::globalVariables(c(
 # -----------------------------
 
 
-#' Fit MBM sequentially or jointly
+#' Fit MBM
 #' @noRd
 .fit_jmbm <- function(cmp, lik_list, coupling.intercept,
                       coupling.covariates, needs_feedback,
@@ -385,13 +380,12 @@ utils::globalVariables(c(
       }
     }
 
-    # fit global model using only the global likelihood
+    # fit global model using only the global likelihood (Phase 1)
     .info("Sequential bayesian feedback", verbose = verbose)
-    .check("Fitting global model to extract posteriors...", verbose = verbose)
+    .check("Phase 1: Fitting global model to extract posteriors...", verbose = verbose)
     fit_glo <- do.call(inlabru::bru, c(list(components = cmp), list(lik_list[[1]]), list(options = bru_opts)))
 
     # extract moments and inject them into the current environment
-    .check("Updating regional priors by moments and fitting joint model...", verbose = verbose)
 
     # safe precision with floor to avoid Inf or near-0 variance
     .safe_prec <- function(sd_val, floor_prec = 1e-4, ceil_prec = 1e6) {
@@ -446,43 +440,31 @@ utils::globalVariables(c(
     # transfer prams Sshared
     cmp_stage2 <- cmp
     if(needs_feedback && isTRUE(has_Sshared)) {
-      if(is.null(spde.mesh)) .stop("has_Sshared = TRUE but spde.mesh was not supplied to .fit_jmbm().")
+      bf_hyper_sshared <- fit_glo$summary.hyperpar
+      bf_mean_range <- bf_hyper_sshared["Range for Sshared", "mean"]
+      bf_mean_sigma <- bf_hyper_sshared["Stdev for Sshared", "mean"]
 
-      sh_random <- fit_glo$summary.random$Sshared
-      if(is.null(sh_random)) .stop("bayesian_feedback: could not extract Sshared posterior from fit_glo (unexpected structure).")
-      sshared_mean <- sh_random$mean
-      sshared_prec <- .safe_prec(sh_random$sd)  # per-node precision, diagonal
-
-      .sshared_hat_fn <- function(geometry) {
-        coords <- sf::st_coordinates(geometry)
-        A <- INLA::inla.spde.make.A(mesh = spde.mesh, loc = coords)
-        as.vector(A %*% sshared_mean)
-      }
-      assign(".sshared_hat_fn", .sshared_hat_fn, envir = env_cmp)
-      assign("Q_sshared_dev", Matrix::Diagonal(x = sshared_prec), envir = env_cmp)
+      matern_shared_bf <- INLA::inla.spde2.pcmatern(
+        mesh = spde.mesh,
+        prior.range = c(bf_mean_range, 0.5),
+        prior.sigma = c(bf_mean_sigma, 0.5)
+      )
+      assign("matern_shared_bf", matern_shared_bf, envir = env_cmp)
 
       cmp_str <- paste(deparse(cmp), collapse = "")
-      # Sshared_hat = frozen mean offset
-      # Sshared = per-node deviation (generic0, theta fixed)
-      repl <- paste0(
-        "Sshared_hat(main = .sshared_hat_fn(geometry), model = 'offset') + ",
-        "Sshared(main = geometry, model = 'generic0', Cmatrix = Q_sshared_dev, ",
-        "mapper = inlabru::bru_mapper(spde.mesh), ",
-        "hyper = list(theta = list(initial = 0, fixed = TRUE)))"
+      cmp_str2 <- sub(
+        'Sshared\\(main *= *geometry, *model *= *matern_shared\\)',
+        "Sshared(main = geometry, model = matern_shared_bf)",
+        cmp_str
       )
-      cmp_str2 <- sub("Sshared\\(main *= *geometry, *model *= *matern_shared\\)", repl, cmp_str)
-      if(identical(cmp_str2, cmp_str)) {
-        .stop("bayesian_feedback: could not locate the Sshared() term in `cmp` for mean+precision substitution -- check component naming.")
-      }
       cmp_stage2 <- stats::as.formula(cmp_str2, env = env_cmp)
 
-      .item(sprintf("Sshared mean= %.3f, sd = %.3f (n = %d nodes, mean range = [%.3f, %.3f])",
-                     mean(sshared_mean), mean(sh_random$sd), length(sshared_mean),
-                     min(sshared_mean), max(sshared_mean)),
+      .item(sprintf("Sshared range = %.3f, sigma = %.3f", bf_mean_range, bf_mean_sigma),
             verbose = verbose)
     }
 
-    # fit using only regional likelihood
+    # fit using only regional likelihood (Phase 2)
+    .check("Phase 2: Fitting regional model using Phase 1 posteriors as priors...", verbose = verbose)
     fit <- do.call(inlabru::bru, c(list(components = cmp_stage2), list(lik_list[[length(lik_list)]]), list(options = bru_opts)))
     return(fit)
 
@@ -542,7 +524,7 @@ utils::globalVariables(c(
                    "   For linear effects use 'linear'; to exclude use 'drop'."))
     }
     if(identical(spec$model, "rw2")) {
-      u_val  <- if(is.null(spec$u)) 5 else spec$u        #@@@JMB default o cusomizable?
+      u_val  <- if(is.null(spec$u)) 5 else spec$u
       alpha_val <- if(is.null(spec$alpha)) 0.01 else spec$alpha
       return(list(model = "rw2", u = u_val, alpha = alpha_val))
     }
@@ -562,7 +544,7 @@ utils::globalVariables(c(
 
 #' interpret coupling.covariates
 #' @noRd
-.resolve_coupling_predictor <- function(var, coupling.covariates, vg = NULL) {
+.resolve_coupling_predictor <- function(var, coupling.covariates, vg = NULL, vr = NULL) {
 
   if(is.null(coupling.covariates)) return("unpooled")
 
@@ -580,8 +562,15 @@ utils::globalVariables(c(
     }
   }
   
-  # unpooled for vars only in regional
+  # unpooled for vars only in regional (no global counterpart to couple with)
   if(!is.null(vg) && !(var %in% vg) && !is_explicit) {
+    if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "nested_shrinkage")) {
+      mode_val <- "unpooled"
+    }
+  }
+
+  # unpooled for vars only in global (no regional counterpart to couple with)
+  if(!is.null(vr) && !(var %in% vr) && !is_explicit) {
     if(mode_val %in% c("ordered_hierarchical", "scale_decomposed", "bayesian_feedback", "nested_shrinkage")) {
       mode_val <- "unpooled"
     }
@@ -807,7 +796,7 @@ utils::globalVariables(c(
       ks_pit <- "—"
     }
 
-    # Moran’s I residual autocorrelation
+    # Moran's I residual autocorrelation
     moran_I <- NA_real_
     rs <- y_obs - y_pred
     valid_idx <- is.finite(rs)
@@ -818,7 +807,7 @@ utils::globalVariables(c(
     } else if(has_Sshared) {
       range_lat_mean
     } else {
-    # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal.   #@@@JMB bien?
+    # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal
       bb <- apply(xy, 2, range, na.rm = TRUE)
       sqrt(sum((bb[2,] - bb[1,])^2)) / 4
     }   
@@ -928,7 +917,7 @@ utils::globalVariables(c(
     }
 
     # Posterior field redundancy r^2(S_RE, S_shared). 
-    # r^2 > 0.5 indicates both fields capture the same spatial pattern (redundancy).       #@@@JMB bien?
+    # r^2 > 0.5 indicates both fields capture the same spatial pattern (redundancy)
     resid_Sre <- fit$summary.random$Sre$mean
     resid_Sshared <- fit$summary.random$Sshared$mean
     if(!is.null(resid_Sre) && !is.null(resid_Sshared)) {
@@ -986,9 +975,9 @@ utils::globalVariables(c(
   # residual autocorrelation
   if(is.finite(moran_I) && moran_I > 0.10) {
     .warn(paste0(
-      "Residual spatial autocorrelation detected (Moran’s I ≈ ", round(moran_I, 2), ").\n",
+      "Residual spatial autocorrelation detected (Moran's I ≈ ", round(moran_I, 2), ").\n",
       "   Model missing local spatial structure.\n",
-      "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates."  #@@@JMB!! no estoy segura
+      "   Recommended: add a local SPDE component, refine mesh resolucion (smaller max.edges), or include missing covariates."
     ))
   }
   # posterior ≈ prior (weak data information)
@@ -1190,6 +1179,19 @@ utils::globalVariables(c(
 #' @noRd
 .signif_vars <- function(fit, scale_params_glo = NULL, scale_params_reg = NULL) {
   sf <- fit$summary.fixed
+
+  # recover GL-side and ordered_hierarchical regional-side iid covariates into Fixed effects
+  gl_iid_names <- names(fit$summary.random)[grepl("GL$|RE_oh$", names(fit$summary.random))]
+  if(length(gl_iid_names) > 0) {
+    gl_iid_rows <- do.call(rbind, lapply(gl_iid_names, function(nm) {
+      row <- fit$summary.random[[nm]]
+      cols <- intersect(colnames(sf), colnames(row))
+      row[1, cols, drop = FALSE]
+    }))
+    rownames(gl_iid_rows) <- gl_iid_names
+    sf <- rbind(sf, gl_iid_rows)
+  }
+
   has_params <- !is.null(scale_params_glo) || !is.null(scale_params_reg)
 
   # back-transform coef to original scale if vars were standardized
@@ -1409,7 +1411,7 @@ utils::globalVariables(c(
     # which coupling?
     tbl_fixed$Coupling <- vapply(base_vars, function(v) {
       if(v %in% c(vg, vr)) {
-        .resolve_coupling_predictor(v, coupling.covariates, vg)
+        .resolve_coupling_predictor(v, coupling.covariates, vg, vr)
       } else {
         "—"
       }
@@ -1536,7 +1538,7 @@ utils::globalVariables(c(
 # -----------------------------
 
 
-#' plot covariates importance  #@@@JMB eliminar????
+#' plot covariates importance
 #' @noRd
 .jmbm_vars_importance <- function(fit) {
 

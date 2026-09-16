@@ -1,14 +1,10 @@
-
 <img width="35%" align= "right" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53"/>
+
 
 # sabinaMBM: Multiscale Bayesian Species Distribution Modelling using INLA
 
 <!-- <img width="252" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53">-->
  
-
-
-
-
 
 
 ## Overview
@@ -35,7 +31,8 @@ The development version of **sabinaMBM** can be installed from GitHub using:
 
 ```r
 install.packages("remotes")
-remotes::install_github("anonbuild/sabinaMBM")
+remotes::install_github("JMoralBa/sabinaMBM")
+
 ```
 
 The package requires R (>= 4.1.0).
@@ -56,7 +53,8 @@ The package requires R (>= 4.1.0).
 
 ## Tutorials
 
-**insert link to tutorial**
+- Worked example: Supporting Information S2 — *link to be added once the DOI is assigned at publication.*
+
 
 ## Example
 
@@ -77,16 +75,16 @@ install.packages("INLA",
   dep = TRUE)
 
 # sabinaNSDM (data preparation)
-remotes::install_github("anonbuild/sabinaNSDM")
+remotes::install_github("geoSABINA/sabinaNSDM")
 
 # sabinaMBM
-remotes::install_github("anonbuild/sabinaMBM")
+remotes::install_github("JMoralBa/sabinaMBM")
+library(sabinaNSDM)
 library(terra)
-library(patchwork)
 library(inlabru)
 library(INLA)
 
-# Load species occurrences and environmental variables with sabinaNSDM
+# Load the bundled example datasets (Quercus petraea occurrences and covariates)
 SpeciesName <- "Quercus.petraea"
 
 data(Quercus.petraea.xy.global, package = "sabinaMBM")
@@ -109,7 +107,7 @@ myInput <- sabinaNSDM::NSDM.InputData(
   expl.var.global   = expl.var.global,
   expl.var.regional = expl.var.regional,
   new.env           = list(new.env),
-  new.env.names     = "scenario1"
+  new.env.names     = "Scenario1"
 )
 
 myFormatting <- sabinaNSDM::NSDM.FormattingData(
@@ -154,21 +152,21 @@ First, create the spatial mesh:
 ```r
 myMesh <- create_mesh(
   nsdm_obj        = mySelvars,
-  edge            = c(2, 10),
-  offset          = c(1, 5),
+  edge            = c(2, 10),   # max triangle size c(inner, outer), in CRS units (here degrees)
+  offset          = c(1, 5),    # domain extension c(inner, outer)
   boundary.method = "raster_mask",
-  plot            = TRUE
+  plot            = TRUE        # set FALSE to skip the mesh plot
 )
 ```
 
 Define the penalised-complexity priors for the spatial fields:
 
 ```r
-regional.pcprior.range <- c(2, 0.01)
-regional.pcprior.sigma <- c(1, 0.01)
+regional.pcprior.range <- c(2, 0.01)   # S_re range prior
+regional.pcprior.sigma <- c(1, 0.01)   # S_re variance prior
 
-shared.pcprior.range <- c(5, 0.01)
-shared.pcprior.sigma <- c(1, 0.01)
+shared.pcprior.range <- c(5, 0.01)     # S_shared range prior
+shared.pcprior.sigma <- c(1, 0.01)     # S_shared variance prior
 ```
 
 The joint model can then be fitted using the ordered-hierarchical coupling architecture:
@@ -182,8 +180,8 @@ mod_hierarchical <- MBM.Modelling(
   regional.pcprior.sigma = regional.pcprior.sigma,
   shared.pcprior.range   = shared.pcprior.range,
   shared.pcprior.sigma   = shared.pcprior.sigma,
-  coupling.intercept     = "ordered_hierarchical",
-  coupling.covariates    = "ordered_hierarchical",
+  coupling.intercept     = "ordered_hierarchical",   # how the regional intercept relates to the global one
+  coupling.covariates    = "ordered_hierarchical",   # how shared covariates relate across scales
   proj.new.env           = TRUE
 )
 summary(mod_hierarchical)
@@ -204,7 +202,7 @@ plot(mod_hierarchical, which = "pred", layer = "sd")
 Future suitability:
 
 ```r
-plot(mod_hierarchical, which = "sScenario1", layer = "mean")
+plot(mod_hierarchical, which = "Scenario1", layer = "mean")
 ```
 
 Additional outputs, including the broad- and fine-scale spatial fields, residual spatial correlogram, and global versus regional intercepts, can also be visualised from the fitted model.
@@ -228,6 +226,24 @@ covariate_effects <- list(
 )
 ```
 
+Pass it to `MBM.Modelling()` via `covariate.effects`:
+
+```r
+mod_nonlinear <- MBM.Modelling(
+  jmbm_obj               = mySelvars,
+  family                 = binomial(link = "logit"),
+  spde.mesh              = myMesh,
+  regional.pcprior.range = regional.pcprior.range,
+  regional.pcprior.sigma = regional.pcprior.sigma,
+  shared.pcprior.range   = shared.pcprior.range,
+  shared.pcprior.sigma   = shared.pcprior.sigma,
+  coupling.intercept     = "ordered_hierarchical",
+  coupling.covariates    = "ordered_hierarchical",
+  covariate.effects      = covariate_effects,
+  proj.new.env           = TRUE
+)
+```
+
 For presence-only data, a log-Gaussian Cox process can be fitted using:
 
 ```r
@@ -246,5 +262,3 @@ mod_cp <- MBM.Modelling(
 
 summary(mod_cp)
 ```
-
-
