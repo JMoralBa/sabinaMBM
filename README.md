@@ -1,13 +1,10 @@
 <img width="35%" align= "right" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53"/>
 
+
 # sabinaMBM: Multiscale Bayesian Species Distribution Modelling using INLA
 
 <!-- <img width="252" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53">-->
  
-
-
-
-
 
 
 ## Overview
@@ -35,6 +32,7 @@ The development version of **sabinaMBM** can be installed from GitHub using:
 ```r
 install.packages("remotes")
 remotes::install_github("JMoralBa/sabinaMBM")
+
 ```
 
 The package requires R (>= 4.1.0).
@@ -56,6 +54,7 @@ The package requires R (>= 4.1.0).
 ## Tutorials
 
 - Worked example: Supporting Information S2 — *link to be added once the DOI is assigned at publication.*
+
 
 ## Example
 
