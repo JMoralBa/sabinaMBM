@@ -53,7 +53,7 @@ The package requires R (>= 4.1.0).
 
 ## Tutorials
 
-- Worked example: Supporting Information S2 — *link to be added once the DOI is assigned at publication.*
+- Worked example: Supporting Information S2 — https://www.biorxiv.org/content/10.64898/2026.09.17.752384v1.supplementary-material
 
 
 ## Example
