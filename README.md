@@ -22,7 +22,7 @@ Please reference the package as following:
 While the article is under review, please cite the preprint:
 
 <code> <i> 
-[J Morales-Barbero, V Gómez-Rubio, J Seoane, A Adde, T Goicolea, RG Mateo]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. [Preprint repository], [DOI].
+[J Morales-Barbero, V Gómez-Rubio, J Seoane, A Adde, T Goicolea, RG Mateo]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. bioRxiv, https://doi.org/10.64898/2026.09.17.752384.
 </code> </i>
 
 ## Installation
