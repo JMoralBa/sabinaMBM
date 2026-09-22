@@ -1,10 +1,4 @@
-<img width="35%" align= "right" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53"/>
-
-
 # sabinaMBM: Multiscale Bayesian Species Distribution Modelling using INLA
-
-<!-- <img width="252" alt="logo_s-1" src="https://github.com/geoSABINA/sabinaNSDM/assets/168073517/d29288b9-c1a7-47aa-8753-918c931e4c53">-->
- 
 
 
 ## Overview
@@ -22,7 +16,7 @@ Please reference the package as following:
 While the article is under review, please cite the preprint:
 
 <code> <i> 
-[J Morales-Barbero, V Gómez-Rubio, J Seoane, A Adde, T Goicolea, RG Mateo]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. [Preprint repository], [DOI].
+[Author names removed for double-blind review]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. [Preprint repository], [DOI].
 </code> </i>
 
 ## Installation
@@ -31,7 +25,7 @@ The development version of **sabinaMBM** can be installed from GitHub using:
 
 ```r
 install.packages("remotes")
-remotes::install_github("JMoralBa/sabinaMBM")
+remotes::install_github("ANONBUILD/sabinaMBM")
 
 ```
 
@@ -78,7 +72,7 @@ install.packages("INLA",
 remotes::install_github("geoSABINA/sabinaNSDM")
 
 # sabinaMBM
-remotes::install_github("JMoralBa/sabinaMBM")
+remotes::install_github("ANONBUILD/sabinaMBM")
 library(sabinaNSDM)
 library(terra)
 library(inlabru)
@@ -134,7 +128,6 @@ An optional regional-only model can be fitted as a baseline for comparison. This
 ```r
 mod_baseline <- MBM.Modelling(
   jmbm_obj            = mySelvars,
-  family              = binomial(link = "logit"),
   spde.mesh           = NULL,
   coupling.intercept  = NULL,
   coupling.covariates = NULL,
@@ -174,7 +167,6 @@ The joint model can then be fitted using the ordered-hierarchical coupling archi
 ```r
 mod_hierarchical <- MBM.Modelling(
   jmbm_obj               = mySelvars,
-  family                 = binomial(link = "logit"),
   spde.mesh              = myMesh,
   regional.pcprior.range = regional.pcprior.range,
   regional.pcprior.sigma = regional.pcprior.sigma,
@@ -209,7 +201,7 @@ Additional outputs, including the broad- and fine-scale spatial fields, residual
 
 ### Advanced model configurations
 
-**sabinaMBM** also supports alternative coupling architectures and model formulations. These include non-linear covariate effects and log-Gaussian Cox process models.
+**sabinaMBM** also supports alternative coupling architectures and model formulations, including non-linear covariate effects.
 
 For example, non-linear covariate effects can be specified using random-walk smoothing:
 
@@ -231,7 +223,6 @@ Pass it to `MBM.Modelling()` via `covariate.effects`:
 ```r
 mod_nonlinear <- MBM.Modelling(
   jmbm_obj               = mySelvars,
-  family                 = binomial(link = "logit"),
   spde.mesh              = myMesh,
   regional.pcprior.range = regional.pcprior.range,
   regional.pcprior.sigma = regional.pcprior.sigma,
@@ -242,23 +233,4 @@ mod_nonlinear <- MBM.Modelling(
   covariate.effects      = covariate_effects,
   proj.new.env           = TRUE
 )
-```
-
-For presence-only data, a log-Gaussian Cox process can be fitted using:
-
-```r
-mod_cp <- MBM.Modelling(
-  jmbm_obj               = mySelvars,
-  family                 = "cp",
-  spde.mesh              = myMesh,
-  regional.pcprior.range = regional.pcprior.range,
-  regional.pcprior.sigma = regional.pcprior.sigma,
-  shared.pcprior.range   = shared.pcprior.range,
-  shared.pcprior.sigma   = shared.pcprior.sigma,
-  coupling.intercept     = "unpooled",
-  coupling.covariates    = "unpooled",
-  proj.new.env           = TRUE
-)
-
-summary(mod_cp)
 ```

@@ -320,34 +320,8 @@ plot.jmbm.inlabru <- function(x,
     "mean.mc_std_err"="MC SE of mean (η)",
     "Linear predictor (η)")
 
-  legend_int <- function(ln) switch(ln,
-    "mean"="Intensity (λ)",
-    "median"="Median intensity (λ)",
-    "q0.5"="Median intensity (λ)",
-    "sd"="Uncertainty of intensity (SD)",
-    "q0.025"="Lower 95% quantile of intensity",
-    "q0.975"="Upper 95% quantile of intensity",
-    "sd.mc_std_err"="MC SE of SD (λ)",
-    "mean.mc_std_err"="MC SE of mean (λ)",
-    "Intensity (λ)")
-
   auto_legend <- if(scope_label %in% c("Sre field", "Sshared field")) {
     legend_eta(ln)
-  } else if(grepl("binomial", fam)) {
-    legend_prob(ln)
-  } else if(grepl("poisson|cp", fam)) {
-    legend_int(ln)
-  } else if(grepl("gaussian", fam)) {
-    switch(ln,
-      "mean"="Expected value",
-      "median"="Median value",
-      "q0.5"="Median value",
-      "sd"="Uncertainty (SD)",
-      "q0.025"="Lower 95% quantile",
-      "q0.975"="Upper 95% quantile",
-      "sd.mc_std_err"="MC SE of SD",
-      "mean.mc_std_err"="MC SE of mean",
-      "Expected value")
   } else {
     legend_prob(ln)
   }

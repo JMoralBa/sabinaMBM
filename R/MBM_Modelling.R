@@ -5,7 +5,6 @@
 #' @description Fits a joint multiscale Bayesian species distribution model using spatial random fields via \code{INLA} and \code{inlabru}. Integrates global and regional scales through flexible coupling architectures with formal uncertainty propagation..
 #'
 #' @param jmbm_obj An object of class \code{nsdm.vinput}, resulting from \code{sabinaNSDM::NSDM.SelectCovariates()}.
-#' @param family A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity). 
 #' @param spde.mesh An \code{inla.mesh} object created externally with \code{create_mesh()}. Required if any spatial field (S_shared or S_re) is used. If \code{NULL} (default), the model runs without spatial structure.
 #' @param shared.pcprior.range Numeric vector of length 2. PC-prior for the range of the shared spatial field S_shared, e.g. \code{c(10, 0.01)} means P(range < 10) = 0.01. Must be substantially larger than \code{regional.pcprior.range} to ensure scale separation (Bakka et al., 2018). If \code{NULL} (and \code{regional.pcprior.range} is also \code{NULL}), no spatial fields are used.
 #' @param shared.pcprior.sigma Numeric vector of length 2. PC-prior for the marginal standard deviation of S_shared, e.g. \code{c(1, 0.01)} means P(sigma > 1) = 0.01. For multi-scale separation, set \code{shared.pcprior.sigma[1]} substantially higher than \code{regional.pcprior.sigma[1]} (e.g., c(1, 0.01) vs c(0.5, 0.01)).
@@ -49,10 +48,6 @@
 #' \item{Summary}{Named list of \code{data.frame}s with: \code{Metadata} (model configuration), \code{Model fit} (DIC, WAIC, MLPD), \code{Hyperparameters} (posterior range and sigma of spatial fields), \code{Intercepts} (IGlobal, IRegional, beta_copy), \code{Fixed effects} (covariate coefficients with CIs and significance), \code{Predictive performance} (AUC, Brier, BSS, RMSE), \code{Diagnostics} (Moran's I, SSI, r2_fields, range ratio, field correlation).}
 #'
 #' @details
-#' family/link:
-#' - \code{binomial(logit)}: Use for presence-absence (1/0) data. Output: occurrence probability.
-#' - cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
-#'
 #' SPDE structure and priors:
 #' - The mesh (\code{spde.mesh}) discretizes the spatial domain for the SPDE approximation (Lindgren et al., 2011).
 #' - Spatial architecture is determined by which priors are supplied:
@@ -128,8 +123,7 @@
 #' Series A}, 164(1), 73-85.
 #'
 #' @export
-MBM.Modelling <- function(jmbm_obj, 
-                      family = binomial(link = "logit"), # family object binomial(link="logit"), or "cp" for point-process intensity.
+MBM.Modelling <- function(jmbm_obj,
                       covariate.effects = NULL,
                       coupling.intercept = "unpooled",
                       coupling.covariates = "unpooled",
@@ -168,22 +162,8 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     .stop("The 'jmbm_obj' must be of class 'nsdm.vinput'. Please see sabinaNSDM::NSDM.SelectCovariates().")
   }
   #
-  if(inherits(family, "family")) {
-    fam <- family$family
-    lnk <- family$link
-  } else if(is.character(family) && length(family) == 1 && family == "cp") {
-    fam <- "cp"
-    lnk <- NULL
-  } else {
-    .stop("`family` must be either a standard family() object or the string 'cp'.")
-  }
-  valid_links <- list(binomial = "logit", cp = NULL)
-  if(!fam %in% names(valid_links)) {
-    .stop(paste0("Unsupported family: ", fam, ". Supported: ", paste(names(valid_links), collapse = ", "), "."))
-  }
-  if(!is.null(lnk) && !lnk %in% valid_links[[fam]]) {
-    .stop(paste0("Invalid link '", lnk, "' for family '", fam, "'. Allowed: ", paste(valid_links[[fam]], collapse = ", ")))
-  }
+  fam <- "binomial"
+  lnk <- "logit"
   #
   valid_ic <- c("unpooled", "ordered_hierarchical", "bayesian_feedback")
   if(is.null(coupling.intercept)) {
@@ -196,9 +176,6 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     if(length(vg) == 0) {
       .stop(paste0("'coupling.intercept = ", coupling.intercept, "' requires a global component. Use NULL for regional-only."))
     }
-  }
-  if(fam == "cp" && is.null(spde.mesh)) {
-    .stop("family = 'cp' (log-Gaussian Cox process) requires a spatial mesh for numerical integration. Create one with create_mesh().")
   }
   if(is.null(spde.mesh) && (!is.null(regional.pcprior.range) || !is.null(shared.pcprior.range))) {
     .stop("SPDE priors were provided but 'spde.mesh' is NULL. Create a mesh with create_mesh().")
@@ -355,11 +332,7 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
     cp_pred_str <- if(is.list(coupling.covariates)) "variable-specific" else if(is.null(coupling.covariates)) "none" else coupling.covariates
     .check(paste0("Architecture: Coupled model (Intercepts: ", coupling.intercept, " | Covariates: ", cp_pred_str, ")"))
   }
-  fam_str <- if(fam == "cp") {
-    "log-Gaussian Cox process (LGCP)"
-  } else {
-    paste0(fam, " (link: ", lnk, ")")
-  }
+  fam_str <- paste0(fam, " (link: ", lnk, ")")
   .check(paste0("Family: ", fam_str))
 
 
@@ -625,16 +598,12 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   )
   eta <- paste(stats::na.omit(eta_terms), collapse = " + ")
 
-  if(fam == "cp") {
-    pred_formula <- as.formula(paste0("~ exp(",eta,")"))
-  } else {
-    pred_formula <- switch(
-      lnk,
-      "logit" = as.formula(paste0("~ 1 / (1 + exp(-(", eta, ")))")),
-      "cloglog" = as.formula(paste0("~ 1 - exp(-exp(", eta, "))")), 
-      "log" = as.formula(paste0("~ exp(", eta, ")")),
-      "identity" = as.formula(paste0("~ ", eta)))
-  } 
+  pred_formula <- switch(
+    lnk,
+    "logit" = as.formula(paste0("~ 1 / (1 + exp(-(", eta, ")))")),
+    "cloglog" = as.formula(paste0("~ 1 - exp(-exp(", eta, "))")),
+    "log" = as.formula(paste0("~ exp(", eta, ")")),
+    "identity" = as.formula(paste0("~ ", eta)))
 
 
   ## Assemble likelihoods and fit model
@@ -661,92 +630,87 @@ if (!is.null(jmbm_obj$Selected.Variables.Global) && length(jmbm_obj$Selected.Var
   )
 
 
-  ## K-fold CV (only fam no cp)
-  if(cv.folds > 1) { 
+  ## K-fold CV
+  if(cv.folds > 1) {
     .info(sprintf("Performing spatial cross-validation (K = %d folds)...", cv.folds))
-    if(fam == "cp") {
-      .warn("Cross-validation (cv.folds > 1) is not implemented for family = 'cp'. CV results will be NULL.")
-      cv_res <- NULL
-    } else {
-      # stratified k folds
-      folds_g <- if(!is.null(coupling.intercept)) .make_stratified_kfolds(pp_glo$resp, cv.folds) else NULL
-      folds_r <- .make_stratified_kfolds(pp_reg$resp, cv.folds)
+    # stratified k folds
+    folds_g <- if(!is.null(coupling.intercept)) .make_stratified_kfolds(pp_glo$resp, cv.folds) else NULL
+    folds_r <- .make_stratified_kfolds(pp_reg$resp, cv.folds)
 
-      n_cores_cv <- min(n.threads, cv.folds)
-      inla_threads_k <- max(1, floor(n.threads / n_cores_cv))
+    n_cores_cv <- min(n.threads, cv.folds)
+    inla_threads_k <- max(1, floor(n.threads / n_cores_cv))
 
-      if(n_cores_cv > 1) {
-        future::plan(future::multisession, workers = n_cores_cv, quiet = TRUE)
-      }
-
-      both_cov <- c(sp_covglo, sp_covreg)
-      coords_all_r <- sf::st_coordinates(pp_reg)
-      valid_pts_mask <- stats::complete.cases(terra::extract(both_cov, coords_all_r, ID = FALSE))
-
-     cv_worker <- function(k) {
-        train_g <- if(!is.null(coupling.intercept)) pp_glo[folds_g != k, ] else NULL
-        train_r <- pp_reg[folds_r != k, ]
-        test_r  <- pp_reg[folds_r == k, ]
-
-        liks_k <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
-                                      train_g, train_r,
-                                      bdy_glo, bdy_reg, dom,
-                                      coupling.intercept)
-        lik_list_k <- Filter(Negate(is.null), list(liks_k$lik_glo, liks_k$lik_reg))
-
-        # fit fold k
-        fit_k <- .fit_jmbm(
-          cmp = cmp,
-          lik_list = lik_list_k,
-          coupling.intercept = coupling.intercept,
-          coupling.covariates = coupling.covariates,
-          needs_feedback = needs_feedback,
-          vr = vr,
-          n.threads = inla_threads_k,
-          seed = seed,
-          int.strategy = inla.int.strategy,
-          bf_delta_int = .bf_intercept_offset(train_g$resp, train_r$resp, bf_uses_background),
-          has_Sshared = has_Sshared,
-          spde.mesh = spde.mesh,
-          verbose = verbose
-        )
-
-        # rm NAs
-        keep_k <- valid_pts_mask[folds_r == k]
-        test_r2 <- test_r[keep_k, ]
-
-        if(nrow(test_r2) > 0) {
-          test_r2 <- sf::st_transform(test_r2, terra::crs(sp_covreg))
-          pk <- predict(fit_k, test_r2, pred_formula)
-          if(fam %in% c("binomial", "beta")) {
-            if(length(unique(test_r2$resp)) > 1) {
-              suppressMessages(as.numeric(pROC::auc(test_r2$resp, pk$mean)))
-            } else { NA_real_ }
-          } else {
-            sqrt(mean((test_r2$resp - pk$mean)^2, na.rm = TRUE))
-          }
-        } else {
-          NA_real_
-        }
-      }
-
-      if(n_cores_cv > 1) {
-        cv_metrics_list <- future.apply::future_lapply(seq_len(cv.folds), cv_worker, future.seed = TRUE)
-        future::plan(future::sequential) # Reset
-      } else {
-        cv_metrics_list <- lapply(seq_len(cv.folds), cv_worker)
-      }
-     
-      cv_metrics <- unlist(cv_metrics_list)
-      metric_name <- if(fam %in% c("binomial", "beta")) "AUC" else "RMSE"
-   
-      cv_res <- list(
-        cv.folds = cv.folds,
-        metric_name = metric_name,
-        metric_mean = mean(cv_metrics, na.rm = TRUE),
-        metric_sd = sd(cv_metrics, na.rm = TRUE)
-      )
+    if(n_cores_cv > 1) {
+      future::plan(future::multisession, workers = n_cores_cv, quiet = TRUE)
     }
+
+    both_cov <- c(sp_covglo, sp_covreg)
+    coords_all_r <- sf::st_coordinates(pp_reg)
+    valid_pts_mask <- stats::complete.cases(terra::extract(both_cov, coords_all_r, ID = FALSE))
+
+    cv_worker <- function(k) {
+      train_g <- if(!is.null(coupling.intercept)) pp_glo[folds_g != k, ] else NULL
+      train_r <- pp_reg[folds_r != k, ]
+      test_r  <- pp_reg[folds_r == k, ]
+
+      liks_k <- .build_likelihoods(fam, lnk, rhs_glo, rhs_reg,
+                                    train_g, train_r,
+                                    bdy_glo, bdy_reg, dom,
+                                    coupling.intercept)
+      lik_list_k <- Filter(Negate(is.null), list(liks_k$lik_glo, liks_k$lik_reg))
+
+      # fit fold k
+      fit_k <- .fit_jmbm(
+        cmp = cmp,
+        lik_list = lik_list_k,
+        coupling.intercept = coupling.intercept,
+        coupling.covariates = coupling.covariates,
+        needs_feedback = needs_feedback,
+        vr = vr,
+        n.threads = inla_threads_k,
+        seed = seed,
+        int.strategy = inla.int.strategy,
+        bf_delta_int = .bf_intercept_offset(train_g$resp, train_r$resp, bf_uses_background),
+        has_Sshared = has_Sshared,
+        spde.mesh = spde.mesh,
+        verbose = verbose
+      )
+
+      # rm NAs
+      keep_k <- valid_pts_mask[folds_r == k]
+      test_r2 <- test_r[keep_k, ]
+
+      if(nrow(test_r2) > 0) {
+        test_r2 <- sf::st_transform(test_r2, terra::crs(sp_covreg))
+        pk <- predict(fit_k, test_r2, pred_formula)
+        if(fam %in% c("binomial", "beta")) {
+          if(length(unique(test_r2$resp)) > 1) {
+            suppressMessages(as.numeric(pROC::auc(test_r2$resp, pk$mean)))
+          } else { NA_real_ }
+        } else {
+          sqrt(mean((test_r2$resp - pk$mean)^2, na.rm = TRUE))
+        }
+      } else {
+        NA_real_
+      }
+    }
+
+    if(n_cores_cv > 1) {
+      cv_metrics_list <- future.apply::future_lapply(seq_len(cv.folds), cv_worker, future.seed = TRUE)
+      future::plan(future::sequential) # Reset
+    } else {
+      cv_metrics_list <- lapply(seq_len(cv.folds), cv_worker)
+    }
+
+    cv_metrics <- unlist(cv_metrics_list)
+    metric_name <- if(fam %in% c("binomial", "beta")) "AUC" else "RMSE"
+
+    cv_res <- list(
+      cv.folds = cv.folds,
+      metric_name = metric_name,
+      metric_mean = mean(cv_metrics, na.rm = TRUE),
+      metric_sd = sd(cv_metrics, na.rm = TRUE)
+    )
   } else {
     cv_res <- NULL
   }

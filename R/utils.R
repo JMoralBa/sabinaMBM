@@ -140,33 +140,18 @@ utils::globalVariables(c(
                                pp_glo, pp_reg, bdy_glo, bdy_reg, dom,
                                coupling.intercept) {
   lik_glo <- NULL
-  if(fam == "cp") {
-    pres_glo <- if(!is.null(coupling.intercept)) pp_glo[pp_glo$resp != 0L, ] else NULL
-    pres_reg <- pp_reg[pp_reg$resp != 0L, ]
-    if(!is.null(coupling.intercept)) {
-      lik_glo <- inlabru::like(
-        family = "cp",
-        formula = as.formula(paste0("geometry ~ ", rhs_glo)),
-        data = pres_glo, samplers = bdy_glo, domain = dom)
-    }
-    lik_reg <- inlabru::like(
-      family = "cp",
-      formula = as.formula(paste0("geometry ~ ", rhs_reg)),
-      data = pres_reg, samplers = bdy_reg, domain = dom)
-  } else {
-    if(!is.null(coupling.intercept)) {
-      lik_glo <- inlabru::like(
-        family = fam,
-        formula = as.formula(paste0("resp ~ ", rhs_glo)),
-        data = pp_glo, samplers = bdy_glo, domain = dom,
-        control.family = list(link = lnk))
-    }
-    lik_reg <- inlabru::like(
+  if(!is.null(coupling.intercept)) {
+    lik_glo <- inlabru::like(
       family = fam,
-      formula = as.formula(paste0("resp ~ ", rhs_reg)),
-      data = pp_reg, samplers = bdy_reg, domain = dom,
+      formula = as.formula(paste0("resp ~ ", rhs_glo)),
+      data = pp_glo, samplers = bdy_glo, domain = dom,
       control.family = list(link = lnk))
   }
+  lik_reg <- inlabru::like(
+    family = fam,
+    formula = as.formula(paste0("resp ~ ", rhs_reg)),
+    data = pp_reg, samplers = bdy_reg, domain = dom,
+    control.family = list(link = lnk))
   list(lik_glo = lik_glo, lik_reg = lik_reg)
 }
 
@@ -759,110 +744,64 @@ utils::globalVariables(c(
   # significant vars
   sig_vars <- .signif_vars(fit,  scale_params_glo = scale_params_glo,  scale_params_reg = scale_params_reg)
 
-  if (fam == "cp") {
-    auc_full <- "—"; tjur_r2 <- "—"; brier <- "—"; bss <- "—"; rmse <- "—"; pred_cor <- "—"
-    cal_slope <- "—"; ks_pit <- "—"; cov50 <- "—"; cov95 <- "—"; pit_reg <- NULL; moran_I <- "—"
-    rs <- NULL
+  y_obs <- data_used$resp
+  idx_reg <- seq(n_glo + 1L, n_glo + nrow(data_used))
+  y_pred <- fit$summary.fitted.values$mean[idx_reg]
 
+  # auc_full and Tjur R2 (if binary)
+  if(all(y_obs %in% c(0,1))) {
+    auc_full <- suppressMessages(as.numeric(pROC::auc(y_obs, y_pred)))
+    tjur_r2  <- mean(y_pred[y_obs == 1L], na.rm = TRUE) - mean(y_pred[y_obs == 0L], na.rm = TRUE)
   } else {
-    y_obs <- data_used$resp
-    idx_reg <- seq(n_glo + 1L, n_glo + nrow(data_used))
-    y_pred <- fit$summary.fitted.values$mean[idx_reg]
-
-    # auc_full and Tjur R2 (if binary)
-    if(all(y_obs %in% c(0,1))) {
-      auc_full <- suppressMessages(as.numeric(pROC::auc(y_obs, y_pred)))
-      tjur_r2  <- mean(y_pred[y_obs == 1L], na.rm = TRUE) - mean(y_pred[y_obs == 0L], na.rm = TRUE)
-    } else {
-      auc_full <- "—"
-      tjur_r2  <- "—"
-    }
-
-    # Brier, pred correlation, RMSE, Brier Skill Score
-    brier <- mean((y_pred - y_obs)^2, na.rm = TRUE)
-    pred_cor <- stats::cor(y_obs, y_pred, use = "complete.obs")
-    rmse <- sqrt(mean((y_obs - y_pred)^2, na.rm = TRUE))
-    prevalence <- mean(y_obs, na.rm = TRUE)
-    brier_ref <- mean((prevalence - y_obs)^2, na.rm = TRUE)
-    bss <- if(is.finite(brier_ref) && brier_ref > 0) 1 - (brier / brier_ref) else NA_real_
-
-    # pit
-    pit_vals <- fit$cpo$pit
-    if(!is.null(pit_vals)) {
-      pit_reg <- pit_vals[idx_reg]
-      pit_reg <- pit_reg[is.finite(pit_reg)]
-      ks_pit <- if(length(pit_reg) > 3) suppressWarnings(ks.test(pit_reg, "punif")$p.value) else "—"
-    } else {
-      ks_pit <- "—"
-    }
-
-    # Moran's I residual autocorrelation
-    moran_I <- NA_real_
-    rs <- y_obs - y_pred
-    valid_idx <- is.finite(rs)
-    rs <- rs[valid_idx]
-    xy <- as.matrix(data_used[valid_idx, c("x", "y")])
-    maxdist <- if(has_Sre) {
-      range_res_mean
-    } else if(has_Sshared) {
-      range_lat_mean
-    } else {
-    # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal
-      bb <- apply(xy, 2, range, na.rm = TRUE)
-      sqrt(sum((bb[2,] - bb[1,])^2)) / 4
-    }   
-    if(is.finite(maxdist) && maxdist > 0) {
-      nb <- spdep::dnearneigh(xy, 0, maxdist, longlat = FALSE)
-      lw <- spdep::nb2listw(nb, style = "W", zero.policy = TRUE)
-      mi <- spdep::moran(rs, lw, n = length(rs), S0 = spdep::Szero(lw))
-      moran_I <- as.numeric(mi$I)
-    }
-
-    # calibration & coverage (disable for binomial, enable for continuous)
-    if (fam == "binomial") {
-      cal_slope <- "—"
-      ks_pit <- "—"
-      cov50 <- "—"
-      cov95 <- "—"
-    } else { # for continuous families (gaussian,...)
-      if(all(y_pred > 0 & y_pred < 1)) {
-        df_cal <- data.frame(
-          logit_p = qlogis(y_pred),
-          y = y_obs
-        )
-        cal_mod <- lm(logit_p ~ y, data = df_cal)
-        cal_slope <- coef(cal_mod)[2]
-      } else {
-        cal_slope <- "—"
-      }
-
-      # pit ks-test
-      if(!is.null(pit_reg) && length(pit_reg) > 3) {
-        ks_pit <- suppressWarnings(ks.test(pit_reg, "punif")$p.value)
-      } else {
-        ks_pit <- "—"
-      }
-
-      # coverage 95%
-      idx_reg <- seq(n_glo + 1L, n_glo + nrow(data_used))
-      if(all(c("0.025quant", "0.975quant") %in% colnames(fit$summary.fitted.values))) {
-        low95 <- fit$summary.fitted.values[idx_reg, "0.025quant"]
-        up95 <- fit$summary.fitted.values[idx_reg, "0.975quant"]
-        cov95 <- mean(y_obs >= low95 & y_obs <= up95, na.rm = TRUE)
-      } else {
-        cov95 <- "—"
-      }
-
-      # coverage 50%
-      if(all(c("0.25quant", "0.75quant") %in% colnames(fit$summary.fitted.values))) {
-        low50 <- fit$summary.fitted.values[idx_reg, "0.25quant"]
-        up50 <- fit$summary.fitted.values[idx_reg, "0.75quant"]
-        cov50 <- mean(y_obs >= low50 & y_obs <= up50, na.rm = TRUE)
-      } else {
-        cov50 <- "—"
-      }
-    }
+    auc_full <- "—"
+    tjur_r2  <- "—"
   }
+
+  # Brier, pred correlation, RMSE, Brier Skill Score
+  brier <- mean((y_pred - y_obs)^2, na.rm = TRUE)
+  pred_cor <- stats::cor(y_obs, y_pred, use = "complete.obs")
+  rmse <- sqrt(mean((y_obs - y_pred)^2, na.rm = TRUE))
+  prevalence <- mean(y_obs, na.rm = TRUE)
+  brier_ref <- mean((prevalence - y_obs)^2, na.rm = TRUE)
+  bss <- if(is.finite(brier_ref) && brier_ref > 0) 1 - (brier / brier_ref) else NA_real_
+
+  # pit
+  pit_vals <- fit$cpo$pit
+  if(!is.null(pit_vals)) {
+    pit_reg <- pit_vals[idx_reg]
+    pit_reg <- pit_reg[is.finite(pit_reg)]
+    ks_pit <- if(length(pit_reg) > 3) suppressWarnings(ks.test(pit_reg, "punif")$p.value) else "—"
+  } else {
+    ks_pit <- "—"
+  }
+
+  # Moran's I residual autocorrelation
+  moran_I <- NA_real_
+  rs <- y_obs - y_pred
+  valid_idx <- is.finite(rs)
+  rs <- rs[valid_idx]
+  xy <- as.matrix(data_used[valid_idx, c("x", "y")])
+  maxdist <- if(has_Sre) {
+    range_res_mean
+  } else if(has_Sshared) {
+    range_lat_mean
+  } else {
+  # range unknown: default Moran's I threshold to 1/4 of bounding box diagonal
+    bb <- apply(xy, 2, range, na.rm = TRUE)
+    sqrt(sum((bb[2,] - bb[1,])^2)) / 4
+  }
+  if(is.finite(maxdist) && maxdist > 0) {
+    nb <- spdep::dnearneigh(xy, 0, maxdist, longlat = FALSE)
+    lw <- spdep::nb2listw(nb, style = "W", zero.policy = TRUE)
+    mi <- spdep::moran(rs, lw, n = length(rs), S0 = spdep::Szero(lw))
+    moran_I <- as.numeric(mi$I)
+  }
+
+  # calibration & coverage (disabled: only binomial supported)
+  cal_slope <- "—"
+  ks_pit <- "—"
+  cov50 <- "—"
+  cov95 <- "—"
 
   # CI/median ratios
   ci_ratios <- c(range_Sre = ci_ratio("Range for Sre"),
@@ -1033,7 +972,6 @@ utils::globalVariables(c(
   ordered_hierarchical <- any(grepl("copy", rownames(fit$summary.hyperpar), ignore.case = TRUE)) ||
                    "IGlobal" %in% names(fit$summary.random)
 
-  if (!is.null(rs)) {
   cor_df <- data.frame()
   coords <- as.matrix(data_used[, c("x", "y")])
   if(is.finite(moran_I)) {
@@ -1112,16 +1050,7 @@ utils::globalVariables(c(
   attr(sv_df, "range_res_mean") <- if(has_Sre) range_res_mean else NA_real_
   attr(sv_df, "range_lat_mean") <- if(has_Sshared) range_lat_mean else NA_real_
 
-
-  } else {
-    # if family cp
-    cor_df <- NULL
-    sv_df <- NULL
-    df_r  <- NULL
-    df_qq <- NULL
-  }  
-
-  # 
+  #
   out <- list(
     bayes_fit = list(dic_val = dic_val,
                       waic_val = waic_val,
@@ -1446,25 +1375,8 @@ utils::globalVariables(c(
     stringsAsFactors = FALSE
   )
 
-  # calibration & coverage
-  if (fam %in% c("cp", "binomial")) {
-    tbl_cal <- NULL
-  } else {
-    cal_block <- diag_block$calibration
-    cov_block <- diag_block$coverage
-
-    tbl_cal <- data.frame(
-      Metric = c("Calibration slope",
-                 "PIT KS p-value",
-                 "Coverage (central 50%)",
-                 "Coverage (central 95%)"),
-      Value = c(fmt_val(cal_block$slope),
-                fmt_val(cal_block$ks_pit),
-                fmt_val(cov_block$cov50),
-                fmt_val(cov_block$cov95)),
-      stringsAsFactors = FALSE
-    )
-  }
+  # calibration & coverage (disabled: only binomial supported)
+  tbl_cal <- NULL
 
   # diagnostics
   tbl_diag <- data.frame(
