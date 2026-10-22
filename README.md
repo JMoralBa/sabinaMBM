@@ -16,7 +16,7 @@ Please reference the package as following:
 While the article is under review, please cite the preprint:
 
 <code> <i> 
-[Author names removed for double-blind review]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. [Preprint repository], [DOI].
+[J Morales-Barbero, V Gómez-Rubio, J Seoane, A Adde, T Goicolea, RG Mateo]. (2026). Multiscale Bayesian Species Distribution Modelling using INLA. Preprint. bioRxiv, https://doi.org/10.64898/2026.09.17.752384.
 </code> </i>
 
 ## Installation
@@ -48,8 +48,7 @@ The package requires R (>= 4.1.0).
 
 
 ## Tutorials
-
-- Worked example: Supporting Information S2 — *link to be added once the DOI is assigned at publication.* This is extended documentation distributed with the manuscript, not a package vignette (`vignette()` does not build it).
+- Worked example: Supporting Information S2 — https://www.biorxiv.org/content/10.64898/2026.09.17.752384v1.supplementary-material
 
 
 ## Example
