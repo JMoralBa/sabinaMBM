@@ -278,7 +278,7 @@ utils::globalVariables(c(
       fregional <- c(fregional, paste0(X, "GL_copy_reg"), paste0(X, "_delta"))
     }
 
-    ## ordered_hierarchical: beta_RE = beta_copy * beta_GL via copy= real, beta_copy free (Krainski et al. 2018; Knorr-Held & Best 2001).
+    ## ordered_hierarchical: beta_RE = beta_copy * beta_GL via copy= real, beta_copy free (Krainski et al. 2019; Knorr-Held & Best 2001).
     else if(cp_mode == "ordered_hierarchical") {
       cmpregional <- c(cmpregional,
         paste0(X, "RE_oh(main = rep(1L, nrow(.data.)), model = 'iid', weights = as.numeric(terra::extract(", spobjreg, ", .data., ID = FALSE)[['", X, "']]), copy = '", X, "GL', hyper = list(beta = list(prior = 'normal', param = c(1, 4))))"))
@@ -829,10 +829,10 @@ utils::globalVariables(c(
   )
 
   # variance and range ratios
-  # sigma Sshared mean / sigma Sre mean > 1.5 --> Sshared field dominates (Blangiardo & Cameletti 2015)
+  # sigma Sshared mean / sigma Sre mean > 1.5 --> Sshared field dominates
   sigma_ratio <- if(has_Sre && has_Sshared && is.finite(sigma_lat_mean) && is.finite(sigma_res_mean) && sigma_res_mean > 0)
     sigma_lat_mean / sigma_res_mean else "—"
-  # 0.5 < range_Sshared / range_Sre < 2 --> poor scale separation (Bakka et al. 2018)
+  # 0.5 < range_Sshared / range_Sre < 2 --> poor scale separation
   range_ratio <- if(has_Sre && has_Sshared && is.finite(range_lat_mean) && is.finite(range_res_mean) && range_res_mean > 0)
     range_lat_mean / range_res_mean else "—"
 
@@ -882,7 +882,7 @@ utils::globalVariables(c(
     .warn(paste0(
       "Insufficient Sre scale separation: Sshared/Sre range ratio = ",round(range_ratio, 2), ").\n",
       "   Scales are overlapping (ideal: ratio > 3–5).\n",
-      "   Recomended actions: (1) Tighten regional.pcprior.range[1] (e.g., 2 → 1.5),\n",
+      "   Recommended actions: (1) Tighten regional.pcprior.range[1] (e.g., 2 → 1.5),\n",
       "   (2) Increase shared.pcprior.range[1] (e.g., 50 → 100),\n",
       "   (3) Run prior sensitivity analysis,\n",
       "   (4) Evaluate if study domain truly supports two scales.\n"

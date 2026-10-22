@@ -24,6 +24,8 @@ While the article is under review, please cite the preprint:
 The development version of **sabinaMBM** can be installed from GitHub using:
 
 ```r
+install.packages("INLA", repos = c(getOption("repos"), INLA = "https://inla.r-inla-download.org/R/stable"), dep = TRUE)
+remotes::install_version("biomod2", version = "4.2-6")
 install.packages("remotes")
 remotes::install_github("ANONBUILD/sabinaMBM")
 
@@ -47,7 +49,7 @@ The package requires R (>= 4.1.0).
 
 ## Tutorials
 
-- Worked example: Supporting Information S2 — *link to be added once the DOI is assigned at publication.*
+- Worked example: Supporting Information S2 — *link to be added once the DOI is assigned at publication.* This is extended documentation distributed with the manuscript, not a package vignette (`vignette()` does not build it).
 
 
 ## Example

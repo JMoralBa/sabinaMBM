@@ -43,6 +43,4 @@ Suggests:
     sabinaNSDM,
     mgcv
 Remotes:
-    geoSABINA/sabinaNSDM,
-    r-inla-org/r-inla
-
+    geoSABINA/sabinaNSDM
