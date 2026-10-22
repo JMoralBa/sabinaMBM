@@ -6,7 +6,6 @@
 \usage{
 MBM.Modelling(
   jmbm_obj,
-  family = binomial(link = "logit"),
   covariate.effects = NULL,
   coupling.intercept = "unpooled",
   coupling.covariates = "unpooled",
@@ -26,8 +25,6 @@ MBM.Modelling(
 }
 \arguments{
 \item{jmbm_obj}{An object of class \code{nsdm.vinput}, resulting from \code{sabinaNSDM::NSDM.SelectCovariates()}.}
-
-\item{family}{A standard R \code{family} object (e.g. \code{binomial(link="logit")}), or the character string \code{"cp"} to fit a Cox point process (intensity).}
 
 \item{covariate.effects}{Optional named list controlling the functional form of covariate effects. If \code{NULL} (default), all effects are linear. Accepts entries \code{"global"}, \code{"regional"}, and/or \code{"default"}, each set to \code{"linear"}, \code{"drop"}, \code{"rw2"} (non-linear RW2 with default PC prior \code{u = 5}, \code{alpha = 0.01}), or \code{list(model = "rw2", u = ..., alpha = ...)} for custom PC prior parameters.}
 
@@ -90,12 +87,6 @@ A named list of class \code{jmbm.inlabru} with the following elements:
 Fits a joint multiscale Bayesian species distribution model using spatial random fields via \code{INLA} and \code{inlabru}. Integrates global and regional scales through flexible coupling architectures with formal uncertainty propagation..
 }
 \details{
-family/link:
-\itemize{
-\item \code{binomial(logit)}: Use for presence-absence (1/0) data. Output: occurrence probability.
-\item cp: (Cox process) Use for presence-only data or spatial point patterns. Output: intensity.
-}
-
 SPDE structure and priors:
 \itemize{
 \item The mesh (\code{spde.mesh}) discretizes the spatial domain for the SPDE approximation (Lindgren et al., 2011).
